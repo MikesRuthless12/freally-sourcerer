@@ -15,5 +15,16 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+clap = { workspace = true }
+futures = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+sourcerer-journal-win = { path = "../sourcerer-journal-win" }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Services",
+] }
