@@ -12,23 +12,23 @@
 #![cfg(windows)]
 
 use std::ffi::{c_void, OsStr};
-use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, ERROR_SERVICE_DOES_NOT_EXIST, NO_ERROR};
-use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
+use windows::Win32::Foundation::{ERROR_SERVICE_DOES_NOT_EXIST, NO_ERROR};
 use windows::Win32::System::Services::{
     ChangeServiceConfig2W, CloseServiceHandle, CreateServiceW, DeleteService, OpenSCManagerW,
     OpenServiceW, RegisterServiceCtrlHandlerExW, SetServiceStatus, StartServiceCtrlDispatcherW,
-    ENUM_SERVICE_TYPE, SC_HANDLE, SERVICE_ACCEPT_STOP, SERVICE_AUTO_START, SERVICE_CONFIG,
-    SERVICE_CONTROL_INTERROGATE, SERVICE_CONTROL_STOP, SERVICE_DESCRIPTIONW, SERVICE_ERROR_NORMAL,
-    SERVICE_RUNNING, SERVICE_START_PENDING, SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE,
-    SERVICE_STATUS_HANDLE, SERVICE_STOPPED, SERVICE_STOP_PENDING, SERVICE_TABLE_ENTRYW,
-    SERVICE_WIN32_OWN_PROCESS, SC_MANAGER_ALL_ACCESS, SERVICE_ALL_ACCESS,
+    ENUM_SERVICE_TYPE, SC_HANDLE, SERVICE_ACCEPT_SHUTDOWN, SERVICE_ACCEPT_STOP,
+    SERVICE_AUTO_START, SERVICE_CONFIG, SERVICE_CONTROL_INTERROGATE, SERVICE_CONTROL_SHUTDOWN,
+    SERVICE_CONTROL_STOP, SERVICE_DESCRIPTIONW, SERVICE_ERROR_NORMAL, SERVICE_RUNNING,
+    SERVICE_START_PENDING, SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE, SERVICE_STATUS_HANDLE,
+    SERVICE_STOPPED, SERVICE_STOP_PENDING, SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS,
+    SC_MANAGER_ALL_ACCESS, SERVICE_ALL_ACCESS,
 };
 
 const SERVICE_NAME: &str = "Sourcerer-Indexd";
@@ -159,7 +159,13 @@ unsafe extern "system" fn service_main(
     SERVICE_HANDLE.set(h.0 as usize).ok();
 
     set_state(SERVICE_START_PENDING, 0, 3000);
-    set_state(SERVICE_RUNNING, SERVICE_ACCEPT_STOP, 0);
+    // Accept both Stop and Shutdown so a system shutdown drives us through
+    // our normal stop path instead of getting force-killed.
+    set_state(
+        SERVICE_RUNNING,
+        SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN,
+        0,
+    );
 
     while !STOP_REQUESTED.load(Ordering::SeqCst) {
         // Phase 1: SCM-shape only. Phase 4 will spawn per-volume
@@ -178,7 +184,7 @@ unsafe extern "system" fn service_ctrl_handler(
     _context: *mut c_void,
 ) -> u32 {
     match control {
-        SERVICE_CONTROL_STOP => {
+        SERVICE_CONTROL_STOP | SERVICE_CONTROL_SHUTDOWN => {
             STOP_REQUESTED.store(true, Ordering::SeqCst);
             set_state(SERVICE_STOP_PENDING, 0, 1500);
             NO_ERROR.0
@@ -218,26 +224,9 @@ impl Drop for ScHandleGuard {
 }
 
 fn current_exe() -> Result<PathBuf> {
-    let mut buf = vec![0u16; 1024];
-    // Safety: out-buffer length is in u16s; GetModuleFileNameW writes up to
-    // that many code units.
-    let len = unsafe { GetModuleFileNameW(None, &mut buf) };
-    if len == 0 {
-        return Err(std::io::Error::last_os_error()).context("GetModuleFileNameW");
-    }
-    Ok(PathBuf::from(std::ffi::OsString::from_wide(
-        &buf[..len as usize],
-    )))
+    std::env::current_exe().context("std::env::current_exe")
 }
 
 fn wide_z(s: &str) -> Vec<u16> {
     OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
-}
-
-// Keep `CloseHandle` referenced so the linker resolves Foundation imports
-// from windows-rs even on minimal feature combos.
-#[allow(dead_code)]
-fn _ensure_close_handle_linked() {
-    let h = windows::Win32::Foundation::HANDLE::default();
-    let _ = unsafe { CloseHandle(h) };
 }

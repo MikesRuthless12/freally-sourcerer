@@ -7,7 +7,7 @@
 
 #![cfg(windows)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -144,11 +144,14 @@ fn main() {
     }
 
     // Delete: the last `deletes` files in the original list, skipping any
-    // that already moved into rename territory.
+    // that already moved into rename territory. HashSet lookup keeps this
+    // O(creates), not O(creates × renames).
+    let renamed: HashSet<&Path> =
+        rename_pairs.iter().map(|(old, _)| old.as_path()).collect();
     let delete_targets: Vec<PathBuf> = created_paths
         .iter()
         .rev()
-        .filter(|p| !rename_pairs.iter().any(|(o, _)| o == *p))
+        .filter(|p| !renamed.contains(p.as_path()))
         .take(args.deletes)
         .cloned()
         .collect();
@@ -174,33 +177,27 @@ fn main() {
     let mut counts: HashMap<&'static str, usize> = HashMap::new();
     loop {
         counts.clear();
-        let evs: Vec<JournalEvent> = collected.lock().unwrap().clone();
-        for ev in &evs {
-            let path_lower = match ev {
-                JournalEvent::Rename { new_path, .. } => {
-                    new_path.to_string_lossy().to_lowercase()
+        // Hold the lock and count in place — avoids cloning a potentially-
+        // huge Vec<JournalEvent> on every poll. The collector thread's only
+        // contention is `push`, which is fast.
+        let total = {
+            let evs = collected.lock().unwrap();
+            for ev in evs.iter() {
+                if !path_in_scope(ev, &scratch_lower) {
+                    continue;
                 }
-                JournalEvent::Create { path, .. }
-                | JournalEvent::Modify { path, .. }
-                | JournalEvent::Delete { path }
-                | JournalEvent::AttrChange { path, .. } => {
-                    path.to_string_lossy().to_lowercase()
-                }
-            };
-            if !path_lower.starts_with(&scratch_lower) {
-                continue;
+                *counts.entry(ev.variant_name()).or_insert(0) += 1;
             }
-            *counts.entry(ev.variant_name()).or_insert(0) += 1;
-        }
+            evs.len()
+        };
 
         let met = want
             .iter()
             .all(|(k, v)| counts.get(k).copied().unwrap_or(0) >= *v);
         if met {
             println!(
-                "PASS: all event counts met within {:?} after workload completion ({} events total)",
-                assertion_start.elapsed(),
-                evs.len()
+                "PASS: all event counts met within {:?} after workload completion ({total} events total)",
+                assertion_start.elapsed()
             );
             // Per spec: counts must be met within 2 s of the last filesystem
             // op. Surface a soft warning if we crossed 2 s.
@@ -235,4 +232,17 @@ fn main() {
 
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+fn path_in_scope(ev: &JournalEvent, scratch_lower: &str) -> bool {
+    let path_lower = match ev {
+        JournalEvent::Rename { new_path, .. } => {
+            new_path.to_string_lossy().to_lowercase()
+        }
+        JournalEvent::Create { path, .. }
+        | JournalEvent::Modify { path, .. }
+        | JournalEvent::Delete { path }
+        | JournalEvent::AttrChange { path, .. } => path.to_string_lossy().to_lowercase(),
+    };
+    path_lower.starts_with(scratch_lower)
 }

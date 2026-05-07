@@ -31,7 +31,13 @@ pub struct JournalSubscriber {
     volume_root: PathBuf,
     journal: JournalState,
     cursor_root: PathBuf,
-    cursor: Mutex<VolumeCursor>,
+    /// Shared with the subscribe-thread so `cursor()` always reflects the
+    /// latest persisted position, not the value at `open()`.
+    cursor: Arc<Mutex<VolumeCursor>>,
+    /// FRN → last-known-path cache shared between `bootstrap()` and
+    /// `subscribe()` so post-bootstrap subscribes can resolve renames /
+    /// deletes against parent paths the MFT walk already populated.
+    cache: PathCache,
 }
 
 impl JournalSubscriber {
@@ -98,7 +104,8 @@ pub fn open_with_cursor_root(
         volume_root: volume.to_path_buf(),
         journal,
         cursor_root: cursor_root.to_path_buf(),
-        cursor: Mutex::new(cursor),
+        cursor: Arc::new(Mutex::new(cursor)),
+        cache: PathCache::default(),
     })
 }
 
@@ -118,18 +125,32 @@ const READ_TIMEOUT_100NS: u64 = 1_000_000;
 
 impl JournalSubscriber {
     /// One-shot stream of synthetic `Create` events for every file currently
-    /// in the volume's MFT. Skips reserved system entries (FRN < 24).
+    /// in the volume's MFT. Skips reserved system entries (FRN < 24). After
+    /// the walk, advances the persisted cursor to the journal snapshot's
+    /// `next_usn` so a follow-up `subscribe()` doesn't replay every event
+    /// the MFT walk already covered.
     pub fn bootstrap(&self) -> impl Stream<Item = JournalEvent> + Send + 'static {
         let (tx, rx) = mpsc::unbounded::<JournalEvent>();
         let volume_root = self.volume_root.clone();
         let journal = self.journal;
-        let cache = PathCache::default();
+        let cache = self.cache.clone();
+        let cursor = self.cursor.clone();
+        let cursor_root = self.cursor_root.clone();
 
         std::thread::Builder::new()
             .name("sourcerer-journal-win/bootstrap".into())
             .spawn(move || {
                 if let Err(err) = bootstrap_thread(&volume_root, &journal, &cache, &tx) {
                     tracing::warn!(error = %err, "bootstrap MFT walk failed");
+                    return;
+                }
+                // Advance the cursor past the snapshot so subscribe() picks
+                // up only events that happened *after* the MFT walk.
+                if let Ok(mut c) = cursor.lock() {
+                    if c.next_usn < journal.next_usn {
+                        c.next_usn = journal.next_usn;
+                        let _ = c.save(&cursor_root);
+                    }
                 }
             })
             .expect("spawn bootstrap thread");
@@ -143,9 +164,9 @@ impl JournalSubscriber {
         let volume_root = self.volume_root.clone();
         let journal = self.journal;
         let cursor_root = self.cursor_root.clone();
-        let cache = PathCache::default();
+        let cache = self.cache.clone();
         let renames = RenameTable::default();
-        let initial_cursor = self.cursor();
+        let cursor = self.cursor.clone();
 
         std::thread::Builder::new()
             .name("sourcerer-journal-win/subscribe".into())
@@ -153,7 +174,7 @@ impl JournalSubscriber {
                 if let Err(err) = subscribe_thread(
                     &volume_root,
                     &journal,
-                    initial_cursor,
+                    cursor,
                     &cursor_root,
                     &cache,
                     &renames,
@@ -195,9 +216,8 @@ fn bootstrap_thread(
             continue;
         }
 
-        let records: Vec<ParsedUsnRecord> =
-            UsnRecordIter::after_initial_frn(&buf[..byte_count]).collect();
-        for rec in records {
+        // Iterate the buffer directly — no Vec allocation per round.
+        for rec in UsnRecordIter::after_initial_frn(&buf[..byte_count]) {
             // Skip NTFS reserved entries (system files like $MFT, $LogFile,
             // ...). They live below FRN 24 (16 + 8 reserved) and aren't
             // useful to the index.
@@ -244,15 +264,17 @@ fn bootstrap_thread(
 fn subscribe_thread(
     volume_root: &Path,
     journal: &JournalState,
-    initial_cursor: VolumeCursor,
+    cursor: Arc<Mutex<VolumeCursor>>,
     cursor_root: &Path,
     cache: &PathCache,
     renames: &RenameTable,
     tx: &mpsc::UnboundedSender<JournalEvent>,
 ) -> Result<(), JournalError> {
-    let mut cursor = initial_cursor;
     let mut buf = vec![0u8; READ_BUFFER_BYTES];
     let mut backoff_attempts: u32 = 0;
+    // Local snapshot of the live cursor; written back to the shared mutex
+    // every time we persist. Avoids holding the lock while doing I/O.
+    let mut local = cursor.lock().expect("cursor mutex poisoned").clone();
 
     loop {
         let handle = match VolumeHandle::open(volume_root) {
@@ -280,14 +302,14 @@ fn subscribe_thread(
                 continue;
             }
         };
-        if live.journal_id != cursor.journal_id || cursor.next_usn < live.first_usn {
+        if live.journal_id != local.journal_id || local.next_usn < live.first_usn {
             tracing::info!(
-                old = cursor.journal_id, new = live.journal_id,
+                old = local.journal_id, new = live.journal_id,
                 "USN journal recreated or wrapped; reseating cursor to FirstUsn"
             );
-            cursor.journal_id = live.journal_id;
-            cursor.next_usn = live.first_usn;
-            let _ = cursor.save(cursor_root);
+            local.journal_id = live.journal_id;
+            local.next_usn = live.first_usn;
+            persist(&local, &cursor, cursor_root);
         }
 
         backoff_attempts = 0;
@@ -299,7 +321,7 @@ fn subscribe_thread(
             }
 
             let (next_usn, bytes) =
-                match read_usn_journal(&handle, cursor.journal_id, cursor.next_usn,
+                match read_usn_journal(&handle, local.journal_id, local.next_usn,
                                        &mut buf, READ_TIMEOUT_100NS) {
                     Ok(v) => v,
                     Err(e) => {
@@ -310,7 +332,7 @@ fn subscribe_thread(
                 };
 
             if bytes <= std::mem::size_of::<i64>() {
-                cursor.next_usn = next_usn;
+                local.next_usn = next_usn;
                 continue;
             }
 
@@ -322,12 +344,22 @@ fn subscribe_thread(
                 }
             }
 
-            cursor.next_usn = next_usn;
-            // Persist roughly once per batch. Crash-safe `save()` is rename-
-            // atomic so partial writes can't strand the cursor.
-            let _ = cursor.save(cursor_root);
+            local.next_usn = next_usn;
+            // Persist roughly once per batch. Process-crash-safe via
+            // tmp-then-rename in `VolumeCursor::save`.
+            persist(&local, &cursor, cursor_root);
         }
     }
+}
+
+/// Updates the shared cursor mutex and writes the JSON file. Called on every
+/// batch of consumed events so external observers (`subscriber.cursor()`)
+/// see the live position.
+fn persist(local: &VolumeCursor, shared: &Arc<Mutex<VolumeCursor>>, root: &Path) {
+    if let Ok(mut guard) = shared.lock() {
+        *guard = local.clone();
+    }
+    let _ = local.save(root);
 }
 
 /// Sleeps with a doubling backoff (capped at ~5s) and returns false if the

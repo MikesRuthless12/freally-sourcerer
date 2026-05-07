@@ -60,9 +60,16 @@ impl VolumeCursor {
         }
     }
 
-    /// Atomically persists the cursor: writes to `<file>.tmp` then renames
-    /// over the target. Avoids the truncate-then-write race where a crash
-    /// between the two leaves a zero-byte cursor file.
+    /// Persists the cursor with process-crash atomicity: writes to
+    /// `<file>.tmp` then renames over the target. A panic / kill -9
+    /// mid-save can never strand a zero-byte cursor file.
+    ///
+    /// **Not power-fail-atomic.** This call does not `FlushFileBuffers`
+    /// the data or the parent directory; a hard power loss between
+    /// `rename` and the on-disk flush can still lose the most recent
+    /// update (you'd resume from the previous saved cursor). The journal
+    /// subscriber recovers from a stale cursor by replaying USN events,
+    /// or — if the journal was recreated — re-bootstrapping the MFT.
     pub fn save(&self, root: &Path) -> Result<(), CursorError> {
         std::fs::create_dir_all(root)?;
         let path = Self::path_in(root, self.volume_serial);
