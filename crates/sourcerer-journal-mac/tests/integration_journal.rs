@@ -16,12 +16,22 @@ use sourcerer_journal_mac::{JournalEvent, open_with_cursor_root};
 
 #[test]
 fn realtime_create_modify_rename_delete_round_trip() {
+    // Two distinct tempdirs:
+    //   `scratch`        — the watched root (FSEvents stream root).
+    //   `cursor_holder`  — where the per-watch cursor JSON lives.
+    // The cursor MUST live outside the watched root, otherwise every
+    // `cursor.save()` triggers its own FSEvents (rename of `<file>.tmp`
+    // over `<file>.json`) and floods the test's expected event counts.
     let scratch = tempfile::tempdir().expect("create scratch tempdir");
+    let cursor_holder = tempfile::tempdir().expect("create cursor tempdir");
     let scratch_path: PathBuf = scratch
         .path()
         .canonicalize()
         .expect("canonicalize scratch tempdir");
-    let cursor_root = scratch.path().join("cursors");
+    let cursor_root = cursor_holder
+        .path()
+        .canonicalize()
+        .expect("canonicalize cursor tempdir");
 
     let subscriber = match open_with_cursor_root(&scratch_path, &cursor_root) {
         Ok(s) => s,
@@ -50,7 +60,7 @@ fn realtime_create_modify_rename_delete_round_trip() {
     // FSEvents has a 0.5 s coalesce window; give the stream time to start.
     std::thread::sleep(Duration::from_millis(500));
 
-    // -- Create
+    // -- Create burst
     let a = scratch_path.join("alpha.txt");
     let b = scratch_path.join("bravo.txt");
     let c = scratch_path.join("charlie.txt");
@@ -58,7 +68,14 @@ fn realtime_create_modify_rename_delete_round_trip() {
     std::fs::write(&b, b"world").unwrap();
     std::fs::write(&c, b"sourcerer").unwrap();
 
-    // -- Modify (a)
+    // Wait one full coalesce window so the Create batch settles before we
+    // emit the Modify on `alpha.txt`. Without this gap, FSEvents coalesces
+    // Create + Modify into a single bitmask and our flag classifier
+    // (precedence: Create > Modify) renders only the Create — we'd never
+    // see a `Modify` event for this run.
+    std::thread::sleep(Duration::from_millis(700));
+
+    // -- Modify (a) — now in its own batch
     std::fs::write(&a, b"hello-updated").unwrap();
 
     // -- Rename (b -> b2)
@@ -158,12 +175,18 @@ fn dropping_subscriber_stops_the_subscribe_thread() {
     // thread should observe the run-loop stop signal (or the receiver
     // closing on the next 1-second slice tick) and exit, dropping its
     // `tx` end and ending the stream from the consumer's perspective.
+    // Cursor outside the watched tree so its `cursor.save()` doesn't
+    // generate self-loop FSEvents (same fix as the realtime test).
     let scratch = tempfile::tempdir().expect("create scratch tempdir");
+    let cursor_holder = tempfile::tempdir().expect("create cursor tempdir");
     let scratch_path: PathBuf = scratch
         .path()
         .canonicalize()
         .expect("canonicalize scratch tempdir");
-    let cursor_root = scratch.path().join("cursors");
+    let cursor_root = cursor_holder
+        .path()
+        .canonicalize()
+        .expect("canonicalize cursor tempdir");
 
     let subscriber = match open_with_cursor_root(&scratch_path, &cursor_root) {
         Ok(s) => s,

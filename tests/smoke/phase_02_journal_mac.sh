@@ -33,6 +33,10 @@ stamp="$(date +%Y%m%d-%H%M%S)"
 scratch="${TMPDIR:-/tmp}/sourcerer-phase02-$stamp"
 mkdir -p "$scratch"
 events_file="$scratch.events.jsonl"
+# The smoke driver writes the cursor to a sibling dir
+# (`<scratch>_cursors`) — outside the watched root — so cursor saves
+# don't generate self-loop FSEvents events that would inflate counts.
+cursor_dir="${scratch}_cursors"
 
 # Baseline marker for the find-newer ground-truth comparison.
 baseline="$scratch/.baseline"
@@ -40,7 +44,7 @@ touch "$baseline"
 sleep 1   # ensure subsequent file mtimes are strictly newer
 
 cleanup() {
-    rm -rf "$scratch" "$events_file"
+    rm -rf "$scratch" "$events_file" "$cursor_dir"
 }
 trap cleanup EXIT
 

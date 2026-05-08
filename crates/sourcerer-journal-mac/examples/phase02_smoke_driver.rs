@@ -93,7 +93,25 @@ fn main() {
         .scratch
         .canonicalize()
         .expect("canonicalize scratch path");
-    let cursor_root = canonical_scratch.join("_cursors");
+
+    // Cursor MUST live outside the watched tree, otherwise every
+    // `cursor.save()` writes a `<file>.tmp` then renames it over
+    // `<file>.json` — that's a Rename + Create event the subscriber
+    // observes inside its own watched root, polluting the smoke's
+    // event-coverage gate. The shell harness already arranges
+    // `--scratch` and we put cursors next to it (sibling, not child).
+    let cursor_root = canonical_scratch
+        .parent()
+        .map(|p| {
+            p.join(format!(
+                "{}_cursors",
+                canonical_scratch
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            ))
+        })
+        .unwrap_or_else(|| std::env::temp_dir().join("sourcerer-phase02-cursors"));
 
     let subscriber = match open_with_cursor_root(&canonical_scratch, &cursor_root) {
         Ok(s) => s,
@@ -140,6 +158,13 @@ fn main() {
         args.creates,
         workload_start.elapsed()
     );
+
+    // Wait one full FSEvents coalesce window so the Create batch settles
+    // before we issue Modify writes on the same files. Without this gap,
+    // FSEvents coalesces Create + Modify into a single bitmask per file
+    // and our flag classifier (precedence: Create > Modify) renders only
+    // the Create — Modify counts would never reach the 99% gate.
+    std::thread::sleep(Duration::from_millis(700));
 
     for p in created_paths.iter().take(args.modifies) {
         std::fs::write(p, b"sourcerer phase 2 smoke - modified").expect("write modify");
