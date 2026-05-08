@@ -1,0 +1,47 @@
+# Force Unix line endings (LF) for source + config files cross-platform.
+# Without this, Windows checkouts under default `core.autocrlf=true` get
+# CRLF, and `cargo fmt --all -- --check` fails ("Incorrect newline style")
+# because rustfmt.toml pins `newline_style = "Unix"`. CI on macos-14 +
+# ubuntu-22.04 already uses LF naturally; this normalizes Windows.
+
+*               text=auto eol=lf
+
+# Source code
+*.rs            text eol=lf
+*.toml          text eol=lf
+*.lock          text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.json          text eol=lf
+*.md            text eol=lf
+
+# Tauri / web
+*.html          text eol=lf
+*.css           text eol=lf
+*.js            text eol=lf
+*.ts            text eol=lf
+*.svelte        text eol=lf
+*.svg           text eol=lf
+
+# Smoke / scripts
+*.sh            text eol=lf
+
+# Locales
+*.ftl           text eol=lf
+
+# Native scripts: keep their platform-native endings.
+*.ps1           text eol=crlf
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+
+# Binary assets — never normalize.
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.icns          binary
+*.woff          binary
+*.woff2         binary
+*.ttf           binary
+*.otf           binary

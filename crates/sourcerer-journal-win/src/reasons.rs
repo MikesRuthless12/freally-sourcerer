@@ -11,9 +11,9 @@ use windows::Win32::System::Ioctl::{
     USN_REASON_BASIC_INFO_CHANGE, USN_REASON_CLOSE, USN_REASON_DATA_EXTEND,
     USN_REASON_DATA_OVERWRITE, USN_REASON_DATA_TRUNCATION, USN_REASON_EA_CHANGE,
     USN_REASON_FILE_CREATE, USN_REASON_FILE_DELETE, USN_REASON_NAMED_DATA_EXTEND,
-    USN_REASON_NAMED_DATA_OVERWRITE, USN_REASON_NAMED_DATA_TRUNCATION,
-    USN_REASON_RENAME_NEW_NAME, USN_REASON_RENAME_OLD_NAME, USN_REASON_REPARSE_POINT_CHANGE,
-    USN_REASON_SECURITY_CHANGE, USN_REASON_STREAM_CHANGE,
+    USN_REASON_NAMED_DATA_OVERWRITE, USN_REASON_NAMED_DATA_TRUNCATION, USN_REASON_RENAME_NEW_NAME,
+    USN_REASON_RENAME_OLD_NAME, USN_REASON_REPARSE_POINT_CHANGE, USN_REASON_SECURITY_CHANGE,
+    USN_REASON_STREAM_CHANGE,
 };
 
 // Make the constants available as plain `u32`s on every platform so unit
@@ -74,13 +74,23 @@ pub enum ReasonKind {
 
 /// Classify a USN record's `Reason` field. The classifier respects this
 /// precedence (within a CLOSE record):
-///   FILE_DELETE > FILE_CREATE > RENAME_NEW_NAME > RENAME_OLD_NAME
+///   FILE_DELETE > RENAME_NEW_NAME > RENAME_OLD_NAME > FILE_CREATE
 ///   > DATA_*/STREAM/EA > BASIC_INFO/SECURITY
 ///
-/// Rationale: a single CLOSE record can carry CREATE+DATA_EXTEND+CLOSE for a
-/// file that was created and immediately written; we treat that as a Create
-/// (the Modify is implicit in the create's size). DELETE outranks CREATE for
-/// the rare case where both bits are set in the final record.
+/// Rationale:
+/// - **DELETE outranks everything**: terminal state — file is gone.
+/// - **RENAME outranks CREATE**: NTFS accumulates reasons within a
+///   session, so a record for a file that was created-then-renamed
+///   ends up with `FILE_CREATE | RENAME_OLD_NAME | CLOSE` (or
+///   `FILE_CREATE | RENAME_NEW_NAME | CLOSE` for the new-name half).
+///   The user-visible truth is the rename — the file moved. If we
+///   prioritize CREATE here, the rename pairing logic never sees the
+///   old-half, the file appears under both names, and the Rename
+///   variant is never emitted. Phase 1's integration test caught this:
+///   a `write(b)` immediately followed by `rename(b, b2)` produced a
+///   solitary `Create b` event with no Rename.
+/// - **CREATE outranks DATA_***: a freshly-created file's data-extend
+///   is implicit in the Create; we don't need a separate Modify.
 pub fn classify(reason: u32) -> ReasonKind {
     if reason & USN_REASON_CLOSE == 0 {
         return ReasonKind::Pending;
@@ -89,14 +99,14 @@ pub fn classify(reason: u32) -> ReasonKind {
     if reason & USN_REASON_FILE_DELETE != 0 {
         return ReasonKind::Delete;
     }
-    if reason & USN_REASON_FILE_CREATE != 0 {
-        return ReasonKind::Create;
-    }
     if reason & USN_REASON_RENAME_NEW_NAME != 0 {
         return ReasonKind::RenameNew;
     }
     if reason & USN_REASON_RENAME_OLD_NAME != 0 {
         return ReasonKind::RenameOld;
+    }
+    if reason & USN_REASON_FILE_CREATE != 0 {
+        return ReasonKind::Create;
     }
     if reason & DATA_CHANGE_MASK != 0 {
         return ReasonKind::Modify;
@@ -137,6 +147,21 @@ mod tests {
         let old = USN_REASON_RENAME_OLD_NAME | USN_REASON_CLOSE;
         let new = USN_REASON_RENAME_NEW_NAME | USN_REASON_CLOSE;
         assert_eq!(classify(old), ReasonKind::RenameOld);
+        assert_eq!(classify(new), ReasonKind::RenameNew);
+    }
+
+    #[test]
+    fn rename_outranks_create_in_a_close_record() {
+        // NTFS accumulates reasons within a session: a file created then
+        // immediately renamed (within the time the journal hadn't yet
+        // emitted a closing record) ends up with
+        // `FILE_CREATE | RENAME_OLD_NAME | CLOSE` for the old-half.
+        // The user-visible truth is the rename — pairing must see this
+        // as RenameOld so the matching RenameNew on the new-half closes
+        // out a Rename event.
+        let old = USN_REASON_FILE_CREATE | USN_REASON_RENAME_OLD_NAME | USN_REASON_CLOSE;
+        assert_eq!(classify(old), ReasonKind::RenameOld);
+        let new = USN_REASON_FILE_CREATE | USN_REASON_RENAME_NEW_NAME | USN_REASON_CLOSE;
         assert_eq!(classify(new), ReasonKind::RenameNew);
     }
 

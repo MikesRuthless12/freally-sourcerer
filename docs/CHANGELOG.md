@@ -11,14 +11,14 @@ All notable changes documented here. Format: [Keep a Changelog](https://keepacha
 - **[all platforms]** Phase 0 scaffold: Cargo workspace; Tauri 2 + Svelte 5 UI shell at 1100×720 dark; 18 locale `.ftl` stubs; `xtask` (`i18n-lint`, `third-party-notices`, `icon-build`, `release`); 3-OS GitHub Actions CI; `deny.toml` license policy (AGPL hard-banned); baby-blue magnifying-glass icon family. First public tag will be **v0.19.84**.
 - **[Windows-only]** Phase 1 NTFS USN journal subscriber (`sourcerer-journal-win`): `JournalSubscriber::open` queries the journal via `FSCTL_QUERY_USN_JOURNAL`, `bootstrap()` enumerates the MFT via `FSCTL_ENUM_USN_DATA`, `subscribe()` streams incremental events via `FSCTL_READ_USN_JOURNAL`, and a per-volume cursor (volume serial + journal ID + next USN) persists under `%LOCALAPPDATA%\Sourcerer\cursors\<serial>.json` with rename-atomic save. Reason flags map to `JournalEvent::{Create, Modify, Delete, Rename, AttrChange}`. Will be balanced by the macOS FSEvents subscriber in Phase 2 and Linux inotify/fanotify subscriber in Phase 3.
 - **[Windows-only]** `sourcerer-indexd` Service Control Manager wiring: `install` / `uninstall` / `service` subcommands register and run the `Sourcerer-Indexd` Windows Service (auto-start, accepts SCM stop). Phase 4 fills in the per-volume subscriber + index core inside the service body.
+- **[macOS-only]** Phase 2 FSEvents journal subscriber (`sourcerer-journal-mac`): `JournalSubscriber::open` resolves an absolute watch root, captures its `stat.st_dev` + `statfs.f_fstypename`, and loads (or first-runs) a per-watch cursor under `~/Library/Application Support/Sourcerer/cursors/<root_hash>.json`. `bootstrap()` walks the tree and emits synthetic `JournalEvent::Create` events. `subscribe()` spawns a dedicated CFRunLoop thread that runs an `FSEventStreamCreate(latency=0.5s, FileEvents | NoDefer | UseCFTypes | WatchRoot)`, classifies each batch's flag bitmask via the FSEvents-flag → `JournalEvent` table, does **per-batch rename pairing** (matching the two halves of an `ItemRenamed` pair by inode), inline-rescans subtrees on `MustScanSubDirs`, and persists `last_event_id` for resume across restarts. Cross-batch rename pairs degrade to `Delete + Create` (a Phase-13 perf-pass note). Runtime deps `core-foundation = "0.10"`, `core-foundation-sys = "0.8"`, `fsevent-sys = "4"`, `libc = "0.2"` — all MIT/Apache-2.0, deny.toml-allowlisted.
+- **[macOS-only]** `sourcerer-indexd` launchd-agent wiring: `install` / `uninstall` / `service` subcommands register and run a per-user launchd agent at `~/Library/LaunchAgents/io.mikeweaver.sourcerer.indexd.plist` with `RunAtLoad=true` + `KeepAlive=true`. Phase 4 fills in the per-root subscriber + index core inside the agent body. The foreground `run --root <path>` mode prints FSEvents events to stdout for manual / smoke-test inspection.
+- **[all platforms]** `sourcerer-journal` facade now re-exports the canonical `open` / `JournalEvent` / `JournalError` / `JournalSubscriber` from `sourcerer-journal-mac` on `cfg(target_os = "macos")`. Linux still uses the typed-but-stubbed surface; Phase 3 will replace it.
 
 ### Changed
 
-- **[all platforms]** `sourcerer-journal` facade now re-exports the canonical `JournalEvent` / `JournalError` / `JournalSubscriber` from the Windows subscriber on `cfg(windows)`; non-Windows hosts keep a typed-but-stubbed surface so the workspace builds clean cross-OS.
-
-### Changed
-
-- _(empty)_
+- **[all platforms]** `sourcerer-journal` facade now re-exports the canonical `JournalEvent` / `JournalError` / `JournalSubscriber` from the Windows subscriber on `cfg(windows)` and from the macOS subscriber on `cfg(target_os = "macos")`; Linux hosts keep the typed-but-stubbed surface until Phase 3.
+- **[macOS-only]** `sourcerer-indexd` `Run` subcommand grew a `--root <path>` flag (preferred on macOS); the existing `--volume` continues to work as a synonym.
 
 ### Fixed
 

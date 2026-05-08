@@ -24,8 +24,8 @@ pub fn run(locales: Option<PathBuf>) -> Result<()> {
     let mut errors: Vec<String> = Vec::new();
     let mut checked = 0usize;
 
-    let entries = fs::read_dir(&root)
-        .with_context(|| format!("read locales dir {}", root.display()))?;
+    let entries =
+        fs::read_dir(&root).with_context(|| format!("read locales dir {}", root.display()))?;
     for entry in entries {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {
@@ -45,18 +45,10 @@ pub fn run(locales: Option<PathBuf>) -> Result<()> {
         let missing: Vec<_> = source_keys.difference(&keys).cloned().collect();
         let extra: Vec<_> = keys.difference(&source_keys).cloned().collect();
         if !missing.is_empty() {
-            errors.push(format!(
-                "[{}] missing keys: {}",
-                locale,
-                missing.join(", ")
-            ));
+            errors.push(format!("[{}] missing keys: {}", locale, missing.join(", ")));
         }
         if !extra.is_empty() {
-            errors.push(format!(
-                "[{}] unknown keys: {}",
-                locale,
-                extra.join(", ")
-            ));
+            errors.push(format!("[{}] unknown keys: {}", locale, extra.join(", ")));
         }
         checked += 1;
     }
@@ -82,7 +74,11 @@ fn extract_keys(body: &str) -> BTreeSet<String> {
     let mut keys = BTreeSet::new();
     for raw in body.lines() {
         let line = raw.trim_end();
-        if line.is_empty() || line.starts_with('#') || line.starts_with(' ') || line.starts_with('\t') {
+        if line.is_empty()
+            || line.starts_with('#')
+            || line.starts_with(' ')
+            || line.starts_with('\t')
+        {
             continue;
         }
         if let Some(eq) = line.find('=') {

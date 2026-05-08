@@ -72,6 +72,11 @@ jobs:
         run: cargo run -p xtask -- i18n-lint
 
       - name: Install cargo-deny
+        # `EmbarkStudios/cargo-deny-action@v2` is a Docker container
+        # action — `Container action is only supported on Linux` on
+        # macOS / Windows runners. License + advisory checks are OS-
+        # agnostic, so one Linux run covers the workspace.
+        if: runner.os == 'Linux'
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
@@ -84,3 +89,7 @@ jobs:
       - name: tauri build (debug, current OS only)
         working-directory: apps/sourcerer-ui
         run: pnpm tauri build --debug
+
+      - name: Phase 2 smoke — FSEvents subscriber (macOS only)
+        if: runner.os == 'macOS'
+        run: bash tests/smoke/phase_02_journal_mac.sh

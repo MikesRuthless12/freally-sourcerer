@@ -82,8 +82,7 @@ fn write_ico(tree: &Tree, path: &Path) -> Result<()> {
     let mut dir = ico::IconDir::new(ico::ResourceType::Icon);
     for &size in ICO_SIZES {
         let pixmap = render(tree, size)?;
-        let image =
-            ico::IconImage::from_rgba_data(size, size, pixmap.data().to_vec());
+        let image = ico::IconImage::from_rgba_data(size, size, pixmap.data().to_vec());
         let entry = ico::IconDirEntry::encode(&image)
             .with_context(|| format!("encode .ico size {size}"))?;
         dir.add_entry(entry);
@@ -115,8 +114,7 @@ fn write_icns(tree: &Tree, path: &Path) -> Result<()> {
             bail!("icns add {size}px: {e}");
         }
     }
-    let mut file =
-        fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
+    let mut file = fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
     family.write(&mut file).context("write .icns")?;
     println!("wrote {}", path.display());
     Ok(())

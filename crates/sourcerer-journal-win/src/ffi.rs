@@ -4,24 +4,24 @@
 
 #![cfg(windows)]
 
-use std::ffi::{c_void, OsStr, OsString};
+use std::ffi::{OsStr, OsString, c_void};
 use std::io;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, HANDLE};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, GetFinalPathNameByHandleW, GetVolumeInformationW, OpenFileById,
-    FILE_ATTRIBUTE_DIRECTORY, FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_ID_DESCRIPTOR, FILE_ID_DESCRIPTOR_0, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FileIdType, GETFINALPATHNAMEBYHANDLE_FLAGS, OPEN_EXISTING,
+    CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAGS_AND_ATTRIBUTES,
+    FILE_ID_DESCRIPTOR, FILE_ID_DESCRIPTOR_0, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    FileIdType, GETFINALPATHNAMEBYHANDLE_FLAGS, GetFinalPathNameByHandleW, GetVolumeInformationW,
+    OPEN_EXISTING, OpenFileById,
 };
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Ioctl::{
     FSCTL_ENUM_USN_DATA, FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_USN_JOURNAL, MFT_ENUM_DATA_V0,
     READ_USN_JOURNAL_DATA_V0, USN_JOURNAL_DATA_V0, USN_RECORD_V2,
 };
+use windows::core::PCWSTR;
 
 const VOLUME_HANDLE_SHARE: u32 = FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0;
 
@@ -265,9 +265,9 @@ impl Iterator for UsnRecordIter<'_> {
             if self.offset + std::mem::size_of::<u32>() > self.buf.len() {
                 return None;
             }
-            let record_len = u32::from_le_bytes(
-                self.buf[self.offset..self.offset + 4].try_into().ok()?,
-            ) as usize;
+            let record_len =
+                u32::from_le_bytes(self.buf[self.offset..self.offset + 4].try_into().ok()?)
+                    as usize;
             if record_len == 0 || self.offset + record_len > self.buf.len() {
                 return None;
             }
@@ -327,9 +327,7 @@ pub fn resolve_path_by_frn(volume: &VolumeHandle, frn: u64) -> io::Result<Option
     let descriptor = FILE_ID_DESCRIPTOR {
         dwSize: std::mem::size_of::<FILE_ID_DESCRIPTOR>() as u32,
         Type: FileIdType,
-        Anonymous: FILE_ID_DESCRIPTOR_0 {
-            FileId: frn as i64,
-        },
+        Anonymous: FILE_ID_DESCRIPTOR_0 { FileId: frn as i64 },
     };
     let result = unsafe {
         OpenFileById(
@@ -361,9 +359,8 @@ pub fn resolve_path_by_frn(volume: &VolumeHandle, frn: u64) -> io::Result<Option
     // the buffer is too small is the needed length, including NUL).
     let mut buf = [0u16; 1024];
     // SAFETY: out-buffer length is in u16s.
-    let needed = unsafe {
-        GetFinalPathNameByHandleW(h, &mut buf, GETFINALPATHNAMEBYHANDLE_FLAGS(0))
-    };
+    let needed =
+        unsafe { GetFinalPathNameByHandleW(h, &mut buf, GETFINALPATHNAMEBYHANDLE_FLAGS(0)) };
     let resolved: Vec<u16> = if needed == 0 {
         let _ = unsafe { CloseHandle(h) };
         return Err(io::Error::last_os_error());
@@ -373,9 +370,8 @@ pub fn resolve_path_by_frn(volume: &VolumeHandle, frn: u64) -> io::Result<Option
         // NTFS extended paths can be up to 32k UTF-16 chars; resize and retry.
         let mut big = vec![0u16; needed as usize + 1];
         // SAFETY: same call, larger out-buffer.
-        let written = unsafe {
-            GetFinalPathNameByHandleW(h, &mut big, GETFINALPATHNAMEBYHANDLE_FLAGS(0))
-        };
+        let written =
+            unsafe { GetFinalPathNameByHandleW(h, &mut big, GETFINALPATHNAMEBYHANDLE_FLAGS(0)) };
         if written == 0 || written as usize >= big.len() {
             let _ = unsafe { CloseHandle(h) };
             return Err(io::Error::new(
@@ -460,7 +456,10 @@ fn drive_letter_from_root(p: &Path) -> Option<char> {
 }
 
 fn to_pcwstr(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 fn wide_str_truncated_to_string(buf: &[u16]) -> String {
@@ -545,8 +544,7 @@ mod tests {
         }
         buf.extend_from_slice(&build_v2_record("world.txt"));
 
-        let recs: Vec<ParsedUsnRecord> =
-            UsnRecordIter::after_initial_frn(&buf).collect();
+        let recs: Vec<ParsedUsnRecord> = UsnRecordIter::after_initial_frn(&buf).collect();
         assert_eq!(recs.len(), 2);
         assert_eq!(recs[0].major_version, 2);
         assert_eq!(recs[0].file_ref, 0x4242_4242_4242_4242);

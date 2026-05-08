@@ -34,7 +34,7 @@ pub use cursor::{CursorError, VolumeCursor};
 pub use event::{JournalError, JournalEvent};
 
 #[cfg(windows)]
-pub use subscriber::{open, open_with_cursor_root, JournalSubscriber};
+pub use subscriber::{JournalSubscriber, open, open_with_cursor_root};
 
 /// Stub `open()` for non-Windows hosts so the workspace builds cross-OS.
 /// The real subscriber is Windows-only by design.
@@ -50,14 +50,10 @@ pub struct JournalSubscriber {
 
 #[cfg(not(windows))]
 impl JournalSubscriber {
-    pub fn bootstrap(
-        &self,
-    ) -> impl futures::Stream<Item = JournalEvent> + Send + 'static {
+    pub fn bootstrap(&self) -> impl futures::Stream<Item = JournalEvent> + Send + 'static {
         futures::stream::empty()
     }
-    pub fn subscribe(
-        &self,
-    ) -> impl futures::Stream<Item = JournalEvent> + Send + 'static {
+    pub fn subscribe(&self) -> impl futures::Stream<Item = JournalEvent> + Send + 'static {
         futures::stream::empty()
     }
 }

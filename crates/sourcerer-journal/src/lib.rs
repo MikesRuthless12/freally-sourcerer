@@ -1,25 +1,23 @@
 //! Sourcerer journal facade — OS-agnostic event types and per-OS routing.
 //!
-//! Phase 0 shipped this as scaffolding only. Phase 1 wires the Windows
-//! NTFS USN journal subscriber as the canonical implementation on
-//! `cfg(windows)`; Phases 2 and 3 will mirror with FSEvents (macOS) and
-//! inotify/fanotify (Linux).
+//! Phase 0 shipped this as scaffolding only. Phase 1 wired the Windows NTFS
+//! USN journal subscriber as the canonical implementation on `cfg(windows)`;
+//! Phase 2 wires the macOS FSEvents subscriber on `cfg(target_os = "macos")`.
+//! Phase 3 will fill in the Linux inotify/fanotify path; until then, Linux
+//! uses the typed-but-stubbed surface in `portable_stub` so the rest of the
+//! workspace (clippy, tests, docs) compiles cross-OS without `cfg`-fences.
 
 #[cfg(windows)]
 pub use sourcerer_journal_win::{
-    open, JournalError, JournalEvent, JournalSubscriber, VolumeCursor,
+    JournalError, JournalEvent, JournalSubscriber, VolumeCursor, open, open_with_cursor_root,
 };
 
 #[cfg(target_os = "macos")]
-pub use sourcerer_journal_mac::placeholder as macos_placeholder;
+pub use sourcerer_journal_mac::{
+    JournalError, JournalEvent, JournalSubscriber, StreamCursor, open, open_with_cursor_root,
+};
 
-#[cfg(target_os = "linux")]
-pub use sourcerer_journal_lin::placeholder as linux_placeholder;
-
-// On non-Windows hosts, expose a typed-but-stubbed surface so the rest of the
-// workspace (clippy, tests, docs) can compile without `cfg`-fences. Phase 2
-// and Phase 3 replace this with real subscribers.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 mod portable_stub {
     use std::path::{Path, PathBuf};
 
@@ -61,13 +59,13 @@ mod portable_stub {
 
     pub struct JournalSubscriber;
 
-    pub fn open(_volume: &Path) -> Result<JournalSubscriber, JournalError> {
+    pub fn open(_root: &Path) -> Result<JournalSubscriber, JournalError> {
         Err(JournalError::Unimplemented)
     }
 }
 
-#[cfg(not(windows))]
-pub use portable_stub::{open, JournalError, JournalEvent, JournalSubscriber};
+#[cfg(all(not(windows), not(target_os = "macos")))]
+pub use portable_stub::{JournalError, JournalEvent, JournalSubscriber, open};
 
 #[cfg(test)]
 mod tests {
