@@ -80,19 +80,27 @@ pub fn open_with_cursor_root(
                 volume = %volume.display(),
                 old_journal = stale.journal_id,
                 new_journal = journal.journal_id,
-                "persisted USN cursor is stale (journal recreated); resetting to FirstUsn"
+                "persisted USN cursor is stale (journal recreated); resetting to NextUsn (now)"
             );
             VolumeCursor {
                 volume_serial: info.serial,
                 journal_id: journal.journal_id,
-                next_usn: journal.first_usn,
+                // Default to "now": skipping straight from open() to
+                // subscribe() means the caller wants live events, not
+                // history. The dedicated bootstrap() path is what replays
+                // existing files via the MFT walk and advances the cursor
+                // to journal.next_usn upon completion. Defaulting to
+                // journal.first_usn here forced subscribe-only callers to
+                // chew through the entire journal's history on every fresh
+                // open — minutes-to-hours of replay on a system volume.
+                next_usn: journal.next_usn,
                 fs_name: info.fs_name.clone(),
             }
         }
         None => VolumeCursor {
             volume_serial: info.serial,
             journal_id: journal.journal_id,
-            next_usn: journal.first_usn,
+            next_usn: journal.next_usn,
             fs_name: info.fs_name.clone(),
         },
     };

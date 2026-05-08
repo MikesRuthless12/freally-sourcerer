@@ -40,10 +40,10 @@
 
 #![cfg(target_os = "macos")]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use core_foundation::base::TCFType;
@@ -84,6 +84,15 @@ pub struct JournalSubscriber {
     /// Set by the subscribe-thread once it has captured its run loop;
     /// `Drop` reads it back to call `CFRunLoopStop` from a control thread.
     run_loop_ptr: Arc<AtomicUsize>,
+    /// Belt-and-braces stop flag. `Drop` sets it; the subscribe-thread's
+    /// run-loop slice polls it every cycle. We rely primarily on
+    /// `CFRunLoopStop` for fast shutdown, but a host where the stop
+    /// signal lands before the subscribe thread has captured its run
+    /// loop (or where CFRunLoopStop drops a wakeup under load) would
+    /// otherwise hang the subscribe thread until process exit; the
+    /// AtomicBool-driven fallback bounds shutdown latency at one cycle
+    /// (see `RUN_LOOP_CYCLE_SECS`).
+    stop_flag: Arc<AtomicBool>,
 }
 
 impl JournalSubscriber {
@@ -98,6 +107,10 @@ impl JournalSubscriber {
 
 impl Drop for JournalSubscriber {
     fn drop(&mut self) {
+        // Set the flag first so a subscribe-thread that observes it on
+        // the next slice tick exits even if `signal_stop` below is a
+        // no-op (race: thread hasn't yet captured its run loop).
+        self.stop_flag.store(true, Ordering::SeqCst);
         let raw = self.run_loop_ptr.load(Ordering::SeqCst);
         if raw == 0 {
             return;
@@ -175,6 +188,7 @@ pub fn open_with_cursor_root(
         cursor_root: cursor_root.to_path_buf(),
         cursor: Arc::new(Mutex::new(cursor)),
         run_loop_ptr: Arc::new(AtomicUsize::new(0)),
+        stop_flag: Arc::new(AtomicBool::new(false)),
     })
 }
 
@@ -214,13 +228,19 @@ impl JournalSubscriber {
         let cursor = self.cursor.clone();
         let cursor_root = self.cursor_root.clone();
         let run_loop_ptr = self.run_loop_ptr.clone();
+        let stop_flag = self.stop_flag.clone();
 
         std::thread::Builder::new()
             .name("sourcerer-journal-mac/subscribe".into())
             .spawn(move || {
-                if let Err(err) =
-                    subscribe_thread(&root, cursor, &cursor_root, run_loop_ptr, tx.clone())
-                {
+                if let Err(err) = subscribe_thread(
+                    &root,
+                    cursor,
+                    &cursor_root,
+                    run_loop_ptr,
+                    stop_flag,
+                    tx.clone(),
+                ) {
                     tracing::warn!(error = %err, "FSEvents subscribe loop exited");
                 }
                 drop(tx);
@@ -368,6 +388,7 @@ fn subscribe_thread(
     cursor: Arc<Mutex<StreamCursor>>,
     cursor_root: &Path,
     run_loop_ptr: Arc<AtomicUsize>,
+    stop_flag: Arc<AtomicBool>,
     tx: mpsc::UnboundedSender<JournalEvent>,
 ) -> Result<(), JournalError> {
     let paths =
@@ -422,15 +443,19 @@ fn subscribe_thread(
         return Err(JournalError::StreamStartFailed(root.to_path_buf()));
     }
 
-    // Pump the run loop in slices so we can poll `tx.is_closed()` between
-    // batches. The FSEvents callback itself can also stop the loop when
-    // it observes a closed receiver.
+    // Pump the run loop in slices so we can poll `tx.is_closed()` and
+    // `stop_flag` between batches. The FSEvents callback itself can also
+    // stop the loop when it observes a closed receiver, and Drop on
+    // JournalSubscriber sets `stop_flag` + calls CFRunLoopStop.
     loop {
         // SAFETY: we are on the run-loop's owning thread.
         let exit = unsafe { run_until_stopped(RUN_LOOP_CYCLE_SECS) };
         match exit {
             RunLoopExit::Stopped | RunLoopExit::Finished => break,
             RunLoopExit::TimedOut => {
+                if stop_flag.load(Ordering::SeqCst) {
+                    break;
+                }
                 if tx.is_closed() {
                     break;
                 }
@@ -483,6 +508,16 @@ struct CallbackContext {
     /// when an `ItemRenamed` arrives whose pair-half is not in the same
     /// batch but matches a previously-seen inode.
     known_inodes: HashMap<u64, PathBuf>,
+    /// Paths we've already emitted a `Create` for. FSEvents on
+    /// macOS 10.13+ keeps `kFSEventStreamEventFlagItemCreated` set in
+    /// every subsequent event for the same path while it remains on
+    /// disk — see Apple's CoreServices/FSEvents.h. Without de-dup, a
+    /// post-creation `ItemModified` arrives with `Created | Modified`
+    /// in the bitmask and our flag classifier (precedence: Create >
+    /// Modify) renders it as Create, swallowing the Modify the consumer
+    /// is waiting for. We track seen paths here and demote second-and-
+    /// subsequent Create-flagged events to Modify.
+    seen_paths: HashSet<PathBuf>,
 }
 
 impl CallbackContext {
@@ -491,6 +526,7 @@ impl CallbackContext {
             tx,
             cursor,
             known_inodes: HashMap::new(),
+            seen_paths: HashSet::new(),
         }
     }
 }
@@ -647,11 +683,14 @@ extern "C" fn fsevents_callback(
             } else {
                 (path_i, path_j)
             };
-            // Refresh inode cache: drop the old path, register the new.
+            // Refresh inode + seen-path caches: drop the old path,
+            // register the new.
             ctx.known_inodes.retain(|_, p| p != &old_path);
+            ctx.seen_paths.remove(&old_path);
             if let Some(ino) = inode_of(&new_path) {
                 ctx.known_inodes.insert(ino, new_path.clone());
             }
+            ctx.seen_paths.insert(new_path.clone());
             emit.push(JournalEvent::Rename { old_path, new_path });
             continue;
         }
@@ -666,11 +705,19 @@ extern "C" fn fsevents_callback(
                     if let Some(ino) = inode_i {
                         ctx.known_inodes.insert(ino, path.clone());
                     }
-                    emit.push(file_create_event(&path, &meta));
+                    if ctx.seen_paths.insert(path.clone()) {
+                        emit.push(file_create_event(&path, &meta));
+                    } else {
+                        // We've already emitted Create for this path. The
+                        // sticky `ItemCreated` bit just rode along with a
+                        // post-creation modification — render as Modify.
+                        emit.push(modify_event_for(path.clone()));
+                    }
                 }
             }
         } else {
             ctx.known_inodes.retain(|_, p| p != &path);
+            ctx.seen_paths.remove(&path);
             emit.push(JournalEvent::Delete { path });
         }
     }
@@ -691,13 +738,20 @@ extern "C" fn fsevents_callback(
                         if let Some(ino) = inode_of(&d.path) {
                             ctx.known_inodes.insert(ino, d.path.clone());
                         }
-                        emit.push(file_create_event(&d.path, &meta));
+                        // Demote sticky-Create-bit re-events to Modify
+                        // (see `seen_paths` doc on `CallbackContext`).
+                        if ctx.seen_paths.insert(d.path.clone()) {
+                            emit.push(file_create_event(&d.path, &meta));
+                        } else {
+                            emit.push(modify_event_for(d.path.clone()));
+                        }
                     }
                 }
             }
             FlagKind::Modify => emit.push(modify_event_for(d.path.clone())),
             FlagKind::Delete => {
                 ctx.known_inodes.retain(|_, p| p != &d.path);
+                ctx.seen_paths.remove(&d.path);
                 emit.push(JournalEvent::Delete {
                     path: d.path.clone(),
                 });
