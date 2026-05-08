@@ -45,17 +45,6 @@ fn canonicalize_stripped(p: &Path) -> PathBuf {
     canonical
 }
 
-// Phase-1 follow-up (TODO): on the GitHub-hosted `windows-latest`
-// runner, `std::fs::rename(b, b2)` does not surface as a `Rename`
-// event through the USN journal — the resulting USN records appear to
-// land in a form (or order) the current pairing logic misses, even
-// though `Create` / `Modify` / `Delete` all flow through correctly.
-// Locally with admin (`cargo test -p sourcerer-journal-win --
-// --ignored`), this test passes. Marking `#[ignore]` keeps CI green
-// for Phase 2 while the rename pairing gets a focused investigation
-// in a follow-up PR (likely needs raw-USN-record dumping to nail
-// down which Reason mask the runner emits).
-#[ignore = "USN rename pairing flakes on GH `windows-latest` — Phase-1 follow-up"]
 #[test]
 fn realtime_create_modify_rename_delete_round_trip() {
     // Run the test against the temp dir's host volume so CI on either

@@ -73,37 +73,50 @@ pub enum ReasonKind {
 }
 
 /// Classify a USN record's `Reason` field. The classifier respects this
-/// precedence (within a CLOSE record):
-///   FILE_DELETE > RENAME_NEW_NAME > RENAME_OLD_NAME > FILE_CREATE
-///   > DATA_*/STREAM/EA > BASIC_INFO/SECURITY
+/// Two-tier precedence:
+/// - **Inherently terminal** events (file is gone — no further
+///   accumulation possible): `FILE_DELETE` and `RENAME_OLD_NAME`.
+///   These emit immediately; the `CLOSE` bit is NOT required. NTFS
+///   does not emit a closing record for the OLD name half of a rename
+///   (the old path is terminal — nothing more will happen at that
+///   path), and `FILE_DELETE` records for POSIX-style deletes can
+///   arrive without a paired CLOSE record.
+/// - **Settled-state** events (we want the LAST record per session):
+///   `FILE_CREATE`, `RENAME_NEW_NAME`, `DATA_*`, `ATTR_*`. Gated on
+///   `USN_REASON_CLOSE` so a write-write-write-close sequence emits
+///   exactly one `Modify`, not three.
 ///
-/// Rationale:
-/// - **DELETE outranks everything**: terminal state — file is gone.
-/// - **RENAME outranks CREATE**: NTFS accumulates reasons within a
-///   session, so a record for a file that was created-then-renamed
-///   ends up with `FILE_CREATE | RENAME_OLD_NAME | CLOSE` (or
-///   `FILE_CREATE | RENAME_NEW_NAME | CLOSE` for the new-name half).
-///   The user-visible truth is the rename — the file moved. If we
-///   prioritize CREATE here, the rename pairing logic never sees the
-///   old-half, the file appears under both names, and the Rename
-///   variant is never emitted. Phase 1's integration test caught this:
-///   a `write(b)` immediately followed by `rename(b, b2)` produced a
-///   solitary `Create b` event with no Rename.
-/// - **CREATE outranks DATA_***: a freshly-created file's data-extend
-///   is implicit in the Create; we don't need a separate Modify.
+/// Within each tier, precedence is:
+///
+/// - Terminal tier: `FILE_DELETE > RENAME_OLD_NAME`. A
+///   created-then-renamed-then-deleted-in-one-session record has
+///   `FILE_DELETE | RENAME_OLD_NAME` set; net result is gone.
+/// - Settled tier: `RENAME_NEW_NAME > FILE_CREATE > DATA_* > ATTR_*`.
+///   NTFS accumulates reasons within a session, so a record for a
+///   file that was created-then-renamed ends up with
+///   `FILE_CREATE | RENAME_NEW_NAME | CLOSE` for the new-name half.
+///   The user-visible truth is the rename; pairing logic needs to
+///   see this as `RenameNew` so it can match the corresponding
+///   `RenameOld` from the terminal tier.
 pub fn classify(reason: u32) -> ReasonKind {
+    // --- Terminal tier (no CLOSE required) ---
+    if reason & USN_REASON_FILE_DELETE != 0 {
+        return ReasonKind::Delete;
+    }
+    // RENAME_OLD without RENAME_NEW: the old-name session is closed
+    // implicitly. With both bits set we defer to RENAME_NEW handling
+    // below (the new-name session carries the close).
+    if reason & USN_REASON_RENAME_OLD_NAME != 0 && reason & USN_REASON_RENAME_NEW_NAME == 0 {
+        return ReasonKind::RenameOld;
+    }
+
+    // --- Settled tier (CLOSE required) ---
     if reason & USN_REASON_CLOSE == 0 {
         return ReasonKind::Pending;
     }
 
-    if reason & USN_REASON_FILE_DELETE != 0 {
-        return ReasonKind::Delete;
-    }
     if reason & USN_REASON_RENAME_NEW_NAME != 0 {
         return ReasonKind::RenameNew;
-    }
-    if reason & USN_REASON_RENAME_OLD_NAME != 0 {
-        return ReasonKind::RenameOld;
     }
     if reason & USN_REASON_FILE_CREATE != 0 {
         return ReasonKind::Create;
@@ -181,5 +194,39 @@ mod tests {
     fn close_only_is_ignored() {
         // Just a close-without-changes — nothing to surface.
         assert_eq!(classify(USN_REASON_CLOSE), ReasonKind::Ignore);
+    }
+
+    #[test]
+    fn rename_old_without_close_is_terminal() {
+        // The OLD-name half of a rename never sees a CLOSE record —
+        // there's nothing more to wait for at that path. Phase 1's
+        // integration test confirmed via raw USN dump on a real volume:
+        // a `rename(b, b2)` produces three records:
+        //   usn N    : 0x00001000 (RENAME_OLD_NAME, no CLOSE)  ← old half
+        //   usn N+1  : 0x00002000 (RENAME_NEW_NAME, no CLOSE)
+        //   usn N+2  : 0x80002000 (RENAME_NEW_NAME | CLOSE)    ← new half
+        // Without this terminal-tier handling, the old half was dropped
+        // as Pending, the pairing table was empty when the new half's
+        // CLOSE record arrived, and no `JournalEvent::Rename` was ever
+        // emitted.
+        assert_eq!(classify(USN_REASON_RENAME_OLD_NAME), ReasonKind::RenameOld);
+    }
+
+    #[test]
+    fn delete_without_close_is_terminal() {
+        // POSIX-style deletes on Windows can produce FILE_DELETE records
+        // without a paired CLOSE record (the close has already been
+        // accounted for by the rename-to-temp). Treating the delete as
+        // terminal regardless of CLOSE is consumer-correct.
+        assert_eq!(classify(USN_REASON_FILE_DELETE), ReasonKind::Delete);
+    }
+
+    #[test]
+    fn rename_new_without_close_is_pending() {
+        // The NEW-name half of a rename DOES get a CLOSE record (the
+        // file is still open and may accept further writes before close).
+        // We must wait for CLOSE on the new half so a write-then-rename
+        // doesn't double-emit RenameNew.
+        assert_eq!(classify(USN_REASON_RENAME_NEW_NAME), ReasonKind::Pending);
     }
 }

@@ -22,7 +22,28 @@ All notable changes documented here. Format: [Keep a Changelog](https://keepacha
 
 ### Fixed
 
-- _(empty)_
+- **[Windows-only]** USN-journal rename pairing on Phase 1's
+  `sourcerer-journal-win` now classifies the OLD-name half of a rename
+  (and any `FILE_DELETE` record) as **terminal**: emit immediately
+  without requiring `USN_REASON_CLOSE`. NTFS does not emit a closing
+  record for the old-name session — there's nothing more to wait for
+  at that path. Previously the classifier returned `Pending` for
+  `RENAME_OLD_NAME` records that lacked `CLOSE`, the pairing table
+  stayed empty, and the matching `RENAME_NEW_NAME | CLOSE` record
+  silently dropped via `?`. Net effect: `JournalEvent::Rename` was
+  never emitted for any in-tree rename. Diagnostic re-run on a real
+  NTFS volume confirmed the fix; the integration test
+  `realtime_create_modify_rename_delete_round_trip` now passes
+  end-to-end and is no longer `#[ignore]`'d.
+- **[Windows-only]** `JournalEvent::Delete` now consults the rename
+  pairing table by FRN before falling back to the record's
+  `build_path` result. Modern Windows uses POSIX-semantic
+  `NtSetInformationFile` deletes which internally rename the file to
+  a `$.dF{guid}` temp name before issuing `FILE_DELETE`; without this
+  lookup the consumer would see `Delete $.dF{guid}` instead of
+  `Delete <original_path>`. Defensive: the test that surfaced the
+  rename bug saw classic `DeleteFile` behavior here, but the POSIX
+  path can fire under file-locked / cross-process scenarios.
 
 ### Deprecated
 

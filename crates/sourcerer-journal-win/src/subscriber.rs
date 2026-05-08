@@ -441,10 +441,24 @@ fn handle_record(
             })
         }
         ReasonKind::Delete => {
-            // The file is already gone — `path` may have come from the
-            // cache. If we have nothing, drop the event rather than emit
-            // a Delete with an unknown path.
-            let path = path?;
+            // POSIX-style deletes on modern Windows (NtSetInformationFile
+            // with FILE_DISPOSITION_POSIX_SEMANTICS, used by std::fs::
+            // remove_file) emit a sequence:
+            //   1. RENAME_OLD_NAME on the original path (the file is
+            //      renamed to an internal `$.dF{guid}`-style temp name).
+            //   2. RENAME_NEW_NAME on the temp path (no close).
+            //   3. FILE_DELETE on the temp path.
+            // Step 3's `build_path` returns the temp name, which is not
+            // what the consumer wants — they asked us to surface a
+            // delete of `charlie.txt`, not of `$.dFabc...`. If our
+            // pairing table holds a RenameOld for this FRN (set in
+            // step 1), use that ORIGINAL path for the Delete event and
+            // discard the temp-name pairing entry.
+            let renamed_old = renames
+                .lock()
+                .expect("rename table mutex poisoned")
+                .remove(&rec.file_ref);
+            let path = renamed_old.or(path)?;
             cache
                 .lock()
                 .expect("path cache mutex poisoned")
