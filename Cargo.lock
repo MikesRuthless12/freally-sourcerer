@@ -192,6 +192,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
+name = "core-foundation"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2a6cd9ae233e7f62ba4e9353e81a88df7fc8a5987b8d445b4d90c879bd156f6"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
+name = "core-foundation-sys"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
 name = "core_maths"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -308,6 +324,15 @@ dependencies = [
  "slotmap",
  "tinyvec",
  "ttf-parser",
+]
+
+[[package]]
+name = "fsevent-sys"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76ee7a02da4d231650c7cea31349b889be2f45ddb3ef3032d2ec8185f6313fd2"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -938,6 +963,7 @@ dependencies = [
  "clap",
  "futures",
  "serde_json",
+ "sourcerer-journal-mac",
  "sourcerer-journal-win",
  "tracing",
  "tracing-subscriber",
@@ -966,7 +992,16 @@ dependencies = [
 name = "sourcerer-journal-mac"
 version = "0.19.84"
 dependencies = [
+ "core-foundation",
+ "core-foundation-sys",
+ "fsevent-sys",
+ "futures",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]

@@ -4,17 +4,31 @@
 //! 100 deletes by default) on a scratch directory, runs the journal
 //! subscriber concurrently, and asserts the per-variant event counts within
 //! a deadline. Exits non-zero with a diagnostic when an assertion fails.
+//!
+//! On non-Windows hosts, `main` exits 0 immediately so the workspace's
+//! `cargo build --all-targets` / `cargo clippy --all-targets` still pass
+//! on the macOS + Linux CI runners.
 
-#![cfg(windows)]
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("phase01_smoke_driver is Windows-only; exiting cleanly on non-Windows host.");
+}
 
+#[cfg(windows)]
 use std::collections::{HashMap, HashSet};
+#[cfg(windows)]
 use std::path::{Component, Path, PathBuf};
+#[cfg(windows)]
 use std::sync::{Arc, Mutex};
+#[cfg(windows)]
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 use futures::StreamExt;
-use sourcerer_journal_win::{open_with_cursor_root, JournalEvent};
+#[cfg(windows)]
+use sourcerer_journal_win::{JournalEvent, open_with_cursor_root};
 
+#[cfg(windows)]
 #[derive(Debug)]
 struct Args {
     scratch: PathBuf,
@@ -25,6 +39,7 @@ struct Args {
     timeout: Duration,
 }
 
+#[cfg(windows)]
 fn parse_args() -> Args {
     let mut scratch: Option<PathBuf> = None;
     let mut creates = 1000usize;
@@ -58,17 +73,16 @@ fn parse_args() -> Args {
     }
 }
 
+#[cfg(windows)]
 fn drive_root_for(p: &Path) -> PathBuf {
     let mut comps = p.components();
     if let Some(Component::Prefix(prefix)) = comps.next() {
-        return PathBuf::from(format!(
-            "{}\\",
-            prefix.as_os_str().to_string_lossy()
-        ));
+        return PathBuf::from(format!("{}\\", prefix.as_os_str().to_string_lossy()));
     }
     PathBuf::from("C:\\")
 }
 
+#[cfg(windows)]
 fn main() {
     let args = parse_args();
 
@@ -130,11 +144,7 @@ fn main() {
 
     // Rename: take the next `renames` files and append `.renamed`.
     let mut rename_pairs: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(args.renames);
-    for p in created_paths
-        .iter()
-        .skip(args.modifies)
-        .take(args.renames)
-    {
+    for p in created_paths.iter().skip(args.modifies).take(args.renames) {
         let new = p.with_file_name(format!(
             "{}.renamed",
             p.file_name().unwrap().to_string_lossy()
@@ -146,8 +156,7 @@ fn main() {
     // Delete: the last `deletes` files in the original list, skipping any
     // that already moved into rename territory. HashSet lookup keeps this
     // O(creates), not O(creates × renames).
-    let renamed: HashSet<&Path> =
-        rename_pairs.iter().map(|(old, _)| old.as_path()).collect();
+    let renamed: HashSet<&Path> = rename_pairs.iter().map(|(old, _)| old.as_path()).collect();
     let delete_targets: Vec<PathBuf> = created_paths
         .iter()
         .rev()
@@ -211,7 +220,10 @@ fn main() {
         }
 
         if Instant::now() > deadline {
-            eprintln!("FAIL: did not observe expected event counts within {:?}", args.timeout);
+            eprintln!(
+                "FAIL: did not observe expected event counts within {:?}",
+                args.timeout
+            );
             for (k, want_n) in &want {
                 let got = counts.get(k).copied().unwrap_or(0);
                 eprintln!("  {k}: want {want_n}, got {got}");
@@ -234,11 +246,10 @@ fn main() {
     }
 }
 
+#[cfg(windows)]
 fn path_in_scope(ev: &JournalEvent, scratch_lower: &str) -> bool {
     let path_lower = match ev {
-        JournalEvent::Rename { new_path, .. } => {
-            new_path.to_string_lossy().to_lowercase()
-        }
+        JournalEvent::Rename { new_path, .. } => new_path.to_string_lossy().to_lowercase(),
         JournalEvent::Create { path, .. }
         | JournalEvent::Modify { path, .. }
         | JournalEvent::Delete { path }

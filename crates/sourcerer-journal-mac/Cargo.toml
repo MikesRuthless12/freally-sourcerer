@@ -14,3 +14,16 @@ path = "src/lib.rs"
 
 [dependencies]
 thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+fsevent-sys = "4"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

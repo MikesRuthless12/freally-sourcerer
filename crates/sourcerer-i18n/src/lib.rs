@@ -4,8 +4,8 @@
 
 /// The 18 locale codes Sourcerer ships in v0.19.84.
 pub const LOCALES: &[&str] = &[
-    "en", "es", "zh-CN", "hi", "ar", "pt-BR", "ru", "ja", "de", "fr", "ko", "it", "tr", "vi",
-    "pl", "nl", "id", "uk",
+    "en", "es", "zh-CN", "hi", "ar", "pt-BR", "ru", "ja", "de", "fr", "ko", "it", "tr", "vi", "pl",
+    "nl", "id", "uk",
 ];
 
 pub fn placeholder() -> &'static str {

@@ -115,7 +115,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let c = sample();
         c.save(dir.path()).unwrap();
-        let loaded = VolumeCursor::load(dir.path(), c.volume_serial).unwrap().unwrap();
+        let loaded = VolumeCursor::load(dir.path(), c.volume_serial)
+            .unwrap()
+            .unwrap();
         assert_eq!(c, loaded);
     }
 

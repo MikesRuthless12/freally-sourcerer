@@ -23,16 +23,15 @@ fn workspace_root() -> PathBuf {
 }
 
 fn read(path: &Path) -> String {
-    std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 #[test]
 fn all_eighteen_locales_present() {
     let root = workspace_root().join("locales");
     let codes = [
-        "en", "es", "zh-CN", "hi", "ar", "pt-BR", "ru", "ja", "de", "fr", "ko", "it", "tr",
-        "vi", "pl", "nl", "id", "uk",
+        "en", "es", "zh-CN", "hi", "ar", "pt-BR", "ru", "ja", "de", "fr", "ko", "it", "tr", "vi",
+        "pl", "nl", "id", "uk",
     ];
     for code in codes {
         let p = root.join(code).join("sourcerer.ftl");

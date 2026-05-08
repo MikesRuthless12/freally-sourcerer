@@ -11,25 +11,25 @@
 
 #![cfg(windows)]
 
-use std::ffi::{c_void, OsStr};
+use std::ffi::{OsStr, c_void};
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::{ERROR_SERVICE_DOES_NOT_EXIST, NO_ERROR};
 use windows::Win32::System::Services::{
-    ChangeServiceConfig2W, CloseServiceHandle, CreateServiceW, DeleteService, OpenSCManagerW,
-    OpenServiceW, RegisterServiceCtrlHandlerExW, SetServiceStatus, StartServiceCtrlDispatcherW,
-    ENUM_SERVICE_TYPE, SC_HANDLE, SERVICE_ACCEPT_SHUTDOWN, SERVICE_ACCEPT_STOP,
-    SERVICE_AUTO_START, SERVICE_CONFIG, SERVICE_CONTROL_INTERROGATE, SERVICE_CONTROL_SHUTDOWN,
-    SERVICE_CONTROL_STOP, SERVICE_DESCRIPTIONW, SERVICE_ERROR_NORMAL, SERVICE_RUNNING,
-    SERVICE_START_PENDING, SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE, SERVICE_STATUS_HANDLE,
-    SERVICE_STOPPED, SERVICE_STOP_PENDING, SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS,
-    SC_MANAGER_ALL_ACCESS, SERVICE_ALL_ACCESS,
+    ChangeServiceConfig2W, CloseServiceHandle, CreateServiceW, DeleteService, ENUM_SERVICE_TYPE,
+    OpenSCManagerW, OpenServiceW, RegisterServiceCtrlHandlerExW, SC_HANDLE, SC_MANAGER_ALL_ACCESS,
+    SERVICE_ACCEPT_SHUTDOWN, SERVICE_ACCEPT_STOP, SERVICE_ALL_ACCESS, SERVICE_AUTO_START,
+    SERVICE_CONFIG, SERVICE_CONTROL_INTERROGATE, SERVICE_CONTROL_SHUTDOWN, SERVICE_CONTROL_STOP,
+    SERVICE_DESCRIPTIONW, SERVICE_ERROR_NORMAL, SERVICE_RUNNING, SERVICE_START_PENDING,
+    SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE, SERVICE_STATUS_HANDLE, SERVICE_STOP_PENDING,
+    SERVICE_STOPPED, SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS, SetServiceStatus,
+    StartServiceCtrlDispatcherW,
 };
+use windows::core::PCWSTR;
 
 const SERVICE_NAME: &str = "Sourcerer-Indexd";
 const SERVICE_DISPLAY_NAME: &str = "Sourcerer Indexer";
@@ -88,9 +88,7 @@ pub fn install(binary_override: Option<&str>) -> Result<()> {
         );
     }
 
-    println!(
-        "Installed service `{SERVICE_NAME}` -> `{image_path}` (start type: auto)."
-    );
+    println!("Installed service `{SERVICE_NAME}` -> `{image_path}` (start type: auto).");
     Ok(())
 }
 
@@ -137,20 +135,13 @@ pub fn run_as_service() -> Result<()> {
 static SERVICE_HANDLE: OnceLock<usize> = OnceLock::new();
 static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-unsafe extern "system" fn service_main(
-    _argc: u32,
-    _argv: *mut windows::core::PWSTR,
-) {
+unsafe extern "system" fn service_main(_argc: u32, _argv: *mut windows::core::PWSTR) {
     let name_w = wide_z(SERVICE_NAME);
     // SAFETY: SCM holds the contract that this function is invoked exactly
     // once per service start, so the static handle is uncontested. Pointer
     // arguments are SCM-owned for the lifetime of this call.
     let h = match unsafe {
-        RegisterServiceCtrlHandlerExW(
-            PCWSTR(name_w.as_ptr()),
-            Some(service_ctrl_handler),
-            None,
-        )
+        RegisterServiceCtrlHandlerExW(PCWSTR(name_w.as_ptr()), Some(service_ctrl_handler), None)
     } {
         Ok(h) => h,
         Err(_) => return,
@@ -228,5 +219,8 @@ fn current_exe() -> Result<PathBuf> {
 }
 
 fn wide_z(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
