@@ -14,3 +14,17 @@ path = "src/lib.rs"
 
 [dependencies]
 thiserror = { workspace = true }
+tracing = { workspace = true }
+parking_lot = "0.12"
+regex = "1"
+unicode-normalization = "0.1"
+sourcerer-index = { path = "../sourcerer-index" }
+sourcerer-journal = { path = "../sourcerer-journal" }
+
+[dev-dependencies]
+tempfile = "3"
+sourcerer-journal = { path = "../sourcerer-journal" }
+
+[[bench]]
+name = "filename_lens"
+harness = false

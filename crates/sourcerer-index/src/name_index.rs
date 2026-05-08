@@ -201,35 +201,8 @@ impl NameIndex {
     /// suffix array and a packed-postings on-disk layout.
     pub fn candidates(&self, q_lower: &str) -> Vec<u64> {
         let inner = self.inner.read();
-        let bytes = q_lower.as_bytes();
-        if bytes.len() < 3 {
-            // Trigram index can't refine — fall back to "everything live".
-            // Phase 5 will swap in a 1- and 2-gram fallback path; the
-            // smoke test never hits this branch.
-            return inner
-                .file_ids
-                .iter()
-                .filter(|id| **id != u64::MAX)
-                .copied()
-                .collect();
-        }
-        let mut row_hits: Option<Vec<u32>> = None;
-        for w in bytes.windows(3) {
-            let key = [w[0], w[1], w[2]];
-            let postings = match inner.trigrams.get(&key) {
-                Some(v) => v.clone(),
-                None => return Vec::new(),
-            };
-            row_hits = Some(match row_hits {
-                None => postings,
-                Some(prev) => intersect_sorted_dedup(&prev, &postings),
-            });
-            if row_hits.as_ref().is_some_and(Vec::is_empty) {
-                return Vec::new();
-            }
-        }
+        let rows = trigram_intersection(&inner, q_lower.as_bytes());
         let mut out = Vec::new();
-        let rows = row_hits.unwrap_or_default();
         for r in rows {
             if let Some(&fid) = inner.file_ids.get(r as usize)
                 && fid != u64::MAX
@@ -240,6 +213,74 @@ impl NameIndex {
         out.sort_unstable();
         out.dedup();
         out
+    }
+
+    /// Phase-5 hot path: yield `(file_id, name_lower_bytes)` for every
+    /// row whose name shares trigrams with `q_lower`, up to `cap`. The
+    /// callback receives borrowed bytes so the caller can run literal /
+    /// wildcard / regex matches without copying into a `String`. The
+    /// read lock is held for the duration — callers must not call back
+    /// into the index from inside `f`.
+    ///
+    /// `cap == 0` means "no cap"; the executor passes a real cap so a
+    /// pathological 1-grapheme query can't spend the whole 16ms budget
+    /// in this loop.
+    pub fn for_each_candidate_named<F>(&self, q_lower: &str, cap: usize, mut f: F)
+    where
+        F: FnMut(u64, &[u8]),
+    {
+        let inner = self.inner.read();
+        let bytes = q_lower.as_bytes();
+        let mut emitted = 0usize;
+        if bytes.len() < 3 {
+            for (row_id, &fid) in inner.file_ids.iter().enumerate() {
+                if fid == u64::MAX {
+                    continue;
+                }
+                if let Some(name) = name_bytes(&inner, row_id as u32) {
+                    f(fid, name);
+                    emitted += 1;
+                    if cap != 0 && emitted >= cap {
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+        let rows = trigram_intersection(&inner, bytes);
+        for r in rows {
+            if let Some(&fid) = inner.file_ids.get(r as usize)
+                && fid != u64::MAX
+                && let Some(name) = name_bytes(&inner, r)
+            {
+                f(fid, name);
+                emitted += 1;
+                if cap != 0 && emitted >= cap {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Phase-5 fallback path for queries with no trigram seed (regex,
+    /// pure-modifier, or wildcard like `*.txt` whose static body is
+    /// shorter than three bytes). Walks every live row in `RowId`
+    /// order. Stops early when the callback returns `false`.
+    pub fn for_each_live<F>(&self, mut f: F)
+    where
+        F: FnMut(u64, &[u8]) -> bool,
+    {
+        let inner = self.inner.read();
+        for (row_id, &fid) in inner.file_ids.iter().enumerate() {
+            if fid == u64::MAX {
+                continue;
+            }
+            if let Some(name) = name_bytes(&inner, row_id as u32) {
+                if !f(fid, name) {
+                    return;
+                }
+            }
+        }
     }
 
     /// Persist the in-memory state to `name.idx` + `name.suf` atomically
@@ -319,12 +360,70 @@ impl NameIndex {
     }
 }
 
-fn intersect_sorted_dedup(a: &[u32], b: &[u32]) -> Vec<u32> {
-    // Postings are appended unsorted, so dedup on the fly with sets.
-    use std::collections::BTreeSet;
-    let sa: BTreeSet<u32> = a.iter().copied().collect();
-    let sb: BTreeSet<u32> = b.iter().copied().collect();
-    sa.intersection(&sb).copied().collect()
+/// Phase-5 trigram intersection for a query needle. Postings are
+/// monotonic-by-`row_id` (a row's id only ever grows because `upsert`
+/// pushes onto a `Vec` whose len is the next row's id) so the
+/// intersection is a textbook two-pointer merge with same-value-skip
+/// to dedup the rare per-name repeated trigram (e.g. `aaaa` storing
+/// `aaa` twice). The `BTreeSet` predecessor was the documented Phase-5
+/// perf swap — Build Guide §`name_index` PERF note.
+fn trigram_intersection(inner: &Inner, bytes: &[u8]) -> Vec<u32> {
+    if bytes.len() < 3 {
+        // Caller (the Phase-5 fallbacks) handles short needles.
+        return inner
+            .file_ids
+            .iter()
+            .enumerate()
+            .filter_map(|(i, fid)| (*fid != u64::MAX).then_some(i as u32))
+            .collect();
+    }
+    let mut row_hits: Option<Vec<u32>> = None;
+    for w in bytes.windows(3) {
+        let key = [w[0], w[1], w[2]];
+        let postings = match inner.trigrams.get(&key) {
+            Some(v) => v,
+            None => return Vec::new(),
+        };
+        row_hits = Some(match row_hits {
+            None => dedup_sorted_view(postings),
+            Some(prev) => intersect_sorted(&prev, postings),
+        });
+        if row_hits.as_ref().is_some_and(Vec::is_empty) {
+            return Vec::new();
+        }
+    }
+    row_hits.unwrap_or_default()
+}
+
+fn intersect_sorted(a: &[u32], b: &[u32]) -> Vec<u32> {
+    let mut out = Vec::with_capacity(a.len().min(b.len()));
+    let (mut i, mut j) = (0usize, 0usize);
+    let mut last: Option<u32> = None;
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                if last != Some(a[i]) {
+                    out.push(a[i]);
+                    last = Some(a[i]);
+                }
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    out
+}
+
+fn name_bytes(inner: &Inner, row_id: u32) -> Option<&[u8]> {
+    let (start, len) = *inner.rows.get(row_id as usize)?;
+    if len == 0 {
+        return None;
+    }
+    let s = start as usize;
+    let e = s + len as usize;
+    inner.heap.get(s..e)
 }
 
 fn dedup_sorted_view(postings: &[u32]) -> Vec<u32> {

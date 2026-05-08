@@ -213,6 +213,51 @@ impl Store {
         Ok(())
     }
 
+    /// Phase-5 batch hydration: fetch FileRows for a list of
+    /// `file_id`s in one round-trip per ~250 ids. The caller is the
+    /// query executor; per-row `get()` would burn the 16ms budget on
+    /// large candidate sets. Order of returned rows is unspecified —
+    /// the caller sorts by their `SortSpec`.
+    pub fn get_many(&self, file_ids: &[i64]) -> Result<Vec<FileRow>, IndexError> {
+        if file_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.inner.lock();
+        let mut out = Vec::with_capacity(file_ids.len());
+        // SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999 (older) /
+        // 32766 (newer). Stay well under the conservative bound.
+        for chunk in file_ids.chunks(250) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT file_id, path, name, name_lower, ext, size, mtime_ns, ctime_ns, attrs, volume \
+                 FROM files WHERE file_id IN ({placeholders})"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let params = rusqlite::params_from_iter(chunk.iter());
+            let mut rows = stmt.query(params)?;
+            while let Some(r) = rows.next()? {
+                let path_str: String = r.get(1)?;
+                let size_i: i64 = r.get(5)?;
+                let attrs_i: i64 = r.get(8)?;
+                out.push(FileRow {
+                    file_id: r.get(0)?,
+                    path: PathBuf::from(path_str),
+                    name: r.get(2)?,
+                    name_lower: r.get(3)?,
+                    ext: r.get(4)?,
+                    size: size_i.max(0) as u64,
+                    mtime_ns: r.get(6)?,
+                    ctime_ns: r.get(7)?,
+                    attrs: attrs_i.max(0) as u64,
+                    volume: r.get(9)?,
+                });
+            }
+        }
+        Ok(out)
+    }
+
     /// Scan all rows — used by recovery to rebuild the in-memory name
     /// index after a crash.
     pub fn iter_all<F>(&self, mut f: F) -> Result<(), IndexError>

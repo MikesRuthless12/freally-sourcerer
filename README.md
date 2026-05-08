@@ -169,7 +169,7 @@ Sourcerer is in active phased development. The first public release will be tagg
 - [x] Phase 2 — FSEvents journal subscriber (macOS)
 - [x] Phase 3 — inotify + fanotify journal subscriber (Linux)
 - [x] Phase 4 — Index core (Tantivy + custom name index + SQLite WAL)
-- [ ] Phase 5 — Filename lens
+- [x] Phase 5 — Filename lens
 - [ ] Phase 6 — Filename similarity lens
 - [ ] Phase 7 — Format extractor framework
 - [ ] Phase 8 — Document extractors (PDF, Office, code, archives, structured data)

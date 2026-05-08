@@ -13,7 +13,7 @@ sourcerer-index          → Tantivy + custom name index (trigram + suffix array
 sourcerer-extractors     → Extractor trait + dispatch + queue + blob store
 sourcerer-audio          → symphonia + libebur128 audio attribute extraction
 sourcerer-similarity     → bigram MinHash + LSH banding
-sourcerer-query          → Sourcerer DSL parser + execution + Everything-syntax shim
+sourcerer-query          → DSL parser (voidtools-Everything-shaped) + lens executor + 16-entry plan cache; Phase 5 ships the filename lens, future phases plug the content / audio / similarity lenses into the same surface
 sourcerer-http           → HTTPS API server (axum + rustls)
 sourcerer-i18n           → Fluent loader
 sourcerer-cli            → CLI binary (sourcerer)

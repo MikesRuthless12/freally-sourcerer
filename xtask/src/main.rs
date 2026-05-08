@@ -5,6 +5,8 @@
 //!   - third-party-notices: (Phase 0 stub) regenerate THIRD-PARTY-NOTICES.md.
 //!   - icon-build: render the SVG master to .ico / .icns / Hicolor PNG set.
 //!   - release: (Phase 0 stub) wire the release pipeline in Phase 13.
+//!   - gen-fixture: build a synthetic Sourcerer index for the Phase-5
+//!     filename-lens bench / smoke runs.
 
 use std::path::PathBuf;
 
@@ -37,6 +39,18 @@ enum Cmd {
     },
     /// (Stub) Phase 0 placeholder; release pipeline lands in Phase 13.
     Release,
+    /// Generate a synthetic Sourcerer index for Phase-5 perf runs.
+    GenFixture {
+        /// Output index root.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Number of synthetic file rows.
+        #[arg(long, default_value_t = 200_000)]
+        count: usize,
+        /// PRNG seed; same seed + count = identical fixture.
+        #[arg(long, default_value_t = 0xC0FFEE_u64)]
+        seed: u64,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -46,6 +60,10 @@ fn main() -> anyhow::Result<()> {
         Cmd::ThirdPartyNotices => cmd::third_party_notices::run(),
         Cmd::IconBuild { assets } => cmd::icon_build::run(assets),
         Cmd::Release => cmd::release::run(),
+        Cmd::GenFixture { out, count, seed } => {
+            let out_dir = out.unwrap_or_else(cmd::gen_fixture::default_fixture_root);
+            cmd::gen_fixture::run(out_dir, count, seed)
+        }
     }
 }
 
