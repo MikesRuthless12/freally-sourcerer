@@ -14,3 +14,10 @@ path = "src/lib.rs"
 
 [dependencies]
 thiserror = { workspace = true }
+tracing = { workspace = true }
+parking_lot = "0.12"
+blake3 = "1"
+sourcerer-journal = { path = "../sourcerer-journal" }
+
+[dev-dependencies]
+tempfile = "3"

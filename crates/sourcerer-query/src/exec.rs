@@ -20,8 +20,10 @@
 //! adopt streaming directly.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 use sourcerer_index::{FileRow, Index};
+use sourcerer_similarity::{SimilarityIndex, SimilarityOpts};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::ast::{DateBound, ModifierKind, Query, QueryNode, SizeOp, TextPattern};
@@ -132,6 +134,7 @@ fn needs_hydration(node: &QueryNode) -> bool {
             | ModifierKind::Attrib(_)
             | ModifierKind::Ext(_) => true,
             ModifierKind::Child(_) => false,
+            ModifierKind::Similar(_) => false,
             ModifierKind::Reserved { .. } => true,
         },
         // Quick filter shortcuts to `ext:` so it doesn't need full
@@ -179,8 +182,38 @@ fn pick_seed(node: &QueryNode) -> String {
 /// Run a parsed query against an open index. The Build Guide's
 /// Phase-5 contract: emit the first 32 hits within 16ms on a 5M-file
 /// dataset; stream the tail in the same `ResultSet` until `limit`.
+///
+/// This entry-point does not provide a similarity index. Queries that
+/// reference a `similar:` modifier surface
+/// `QueryError::SimilarityIndexUnavailable` so callers see a typed
+/// error rather than empty results. Use [`execute_with`] to wire a
+/// `SimilarityIndex` in.
 pub fn execute(idx: &Index, q: &Query, opts: ExecOpts) -> Result<ResultSet, QueryError> {
+    execute_with(idx, None, q, opts)
+}
+
+/// Run a parsed query with an optional similarity-index reference.
+/// Mirrors [`execute`] for the filename-only case; routes any query
+/// containing a top-level `similar:` modifier through the supplied
+/// `SimilarityIndex`. Phase 6's surface — Phase 11's UI calls this
+/// directly with `Some(sim_idx)` so the magic-moment lens grouping
+/// works.
+pub fn execute_with(
+    idx: &Index,
+    similarity: Option<&SimilarityIndex>,
+    q: &Query,
+    opts: ExecOpts,
+) -> Result<ResultSet, QueryError> {
     validate_supported(q)?;
+    if let Some(needle) = top_level_similar(q.root()) {
+        return execute_similar(idx, similarity, q, &opts, needle);
+    }
+    if has_similar_anywhere(q.root()) {
+        // Phase 6 only routes Similar in the root or as a direct child
+        // of a top-level AND. Anywhere else (NOT, OR, deeper nesting)
+        // is rejected loudly so the UI can surface the limitation.
+        return Err(QueryError::UnsupportedSimilarPosition);
+    }
     let plan = plan(q, &opts);
     // `match_path` widens the search target from the lowercased
     // filename to the full path. The name index only has filenames, so
@@ -263,7 +296,12 @@ pub fn execute(idx: &Index, q: &Query, opts: ExecOpts) -> Result<ResultSet, Quer
 fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
     let cmp = |a: &FileRow, b: &FileRow| -> Ordering {
         match spec.field {
-            SortField::Name => a.name_lower.cmp(&b.name_lower),
+            // `Relevance` is only meaningful inside the similarity-lens
+            // path (which sorts by Jaccard before calling here). On the
+            // generic Phase-5 path it degrades to Name — matches the
+            // Phase 11 UI's "Sort by Relevance" fallback for non-
+            // similarity queries.
+            SortField::Name | SortField::Relevance => a.name_lower.cmp(&b.name_lower),
             SortField::Path => a.path.cmp(&b.path),
             SortField::Size => a.size.cmp(&b.size),
             SortField::Date => a.mtime_ns.cmp(&b.mtime_ns),
@@ -382,6 +420,18 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow) -> bool {
             .map(|s| s.to_lowercase().contains(&needle.to_lowercase()))
             .unwrap_or(false),
         ModifierKind::Child(needle) => row.name_lower.contains(&needle.to_lowercase()),
+        ModifierKind::Similar(_) => {
+            // `execute_with` routes Similar-bearing queries through the
+            // similarity-lens path before reaching here. Hitting this
+            // arm means a caller bypassed `execute_with` and went
+            // straight to `eval_modifier` — fail loud, the same way the
+            // Reserved arm does.
+            debug_assert!(
+                false,
+                "similar: modifier reached eval_modifier — caller skipped execute_with"
+            );
+            false
+        }
         ModifierKind::Reserved { name, .. } => {
             // `validate_supported` runs at the top of `execute()` and
             // turns Reserved modifiers into `QueryError::Unsupported-
@@ -578,4 +628,168 @@ pub fn validate_supported(q: &Query) -> Result<(), QueryError> {
         }
     }
     walk(q.root())
+}
+
+/// Extract a `similar:` needle that appears at the root or as a direct
+/// child of a top-level AND. Returns `None` if no `Similar` modifier is
+/// reachable that way (callers then check `has_similar_anywhere` to
+/// decide between "Phase-5 path" and "buried Similar — reject").
+fn top_level_similar(node: &QueryNode) -> Option<&str> {
+    match node {
+        QueryNode::Modifier(m) => match &m.kind {
+            ModifierKind::Similar(s) => Some(s.as_str()),
+            _ => None,
+        },
+        QueryNode::And(parts) => {
+            for p in parts {
+                if let QueryNode::Modifier(m) = p
+                    && let ModifierKind::Similar(s) = &m.kind
+                {
+                    return Some(s.as_str());
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn has_similar_anywhere(node: &QueryNode) -> bool {
+    match node {
+        QueryNode::Modifier(m) => matches!(m.kind, ModifierKind::Similar(_)),
+        QueryNode::Not(inner) => has_similar_anywhere(inner),
+        QueryNode::And(parts) | QueryNode::Or(parts) => parts.iter().any(has_similar_anywhere),
+        QueryNode::Text(_) | QueryNode::QuickFilter(_) | QueryNode::True => false,
+    }
+}
+
+/// Phase-6 similarity-lens execution path. Replaces the Phase-5
+/// trigram pre-filter with an LSH lookup against the supplied
+/// `SimilarityIndex`. The remaining predicates (size / date / path /
+/// parent / attrib / ext / child / quick-filter / regex / wildcard /
+/// literal) still apply post-hydration so a query like
+/// `similar:report-final ext:pdf` filters down correctly.
+fn execute_similar(
+    idx: &Index,
+    similarity: Option<&SimilarityIndex>,
+    q: &Query,
+    opts: &ExecOpts,
+    needle: &str,
+) -> Result<ResultSet, QueryError> {
+    let sim = similarity.ok_or(QueryError::SimilarityIndexUnavailable)?;
+    let cap = if opts.candidate_cap == 0 {
+        usize::MAX
+    } else {
+        opts.candidate_cap
+    };
+    let sim_opts = SimilarityOpts {
+        candidate_cap: cap.min(usize::MAX),
+        ..SimilarityOpts::default()
+    };
+    let hits = sim.candidates(&needle.to_lowercase(), &sim_opts);
+    let mut stats = ExecStats {
+        candidates: hits.len(),
+        used_seed: !needle.is_empty(),
+        ..ExecStats::default()
+    };
+
+    let mut jaccard_by_id: HashMap<i64, f32> = HashMap::with_capacity(hits.len());
+    let mut ordered_ids: Vec<i64> = Vec::with_capacity(hits.len());
+    for h in hits {
+        let i_id = h.file_id as i64;
+        if jaccard_by_id.insert(i_id, h.jaccard).is_none() {
+            ordered_ids.push(i_id);
+        }
+    }
+    let mut rows: Vec<FileRow> = idx.store().get_many(&ordered_ids)?;
+    stats.name_survivors = rows.len();
+
+    rows.retain(|r| {
+        let path_lower = if opts.match_mode.match_path {
+            Some(r.path.to_string_lossy().to_lowercase())
+        } else {
+            None
+        };
+        similarity_row_matches(q.root(), r, &opts.match_mode, path_lower.as_deref())
+    });
+
+    // Sort. If the user kept the default (Name+Asc), we override to
+    // Jaccard desc — that's the only sensible order for a similarity
+    // query and it matches what voidtools' Everything calls "Sort by
+    // Relevance." Any other explicit `SortSpec` (Size / Date / Path /
+    // …) is honored — the user knows what they want.
+    if matches!(
+        opts.sort,
+        SortSpec {
+            field: SortField::Name,
+            order: SortOrder::Asc,
+        }
+    ) || matches!(opts.sort.field, SortField::Relevance)
+    {
+        rows.sort_by(|a, b| {
+            let ja = jaccard_by_id.get(&a.file_id).copied().unwrap_or(0.0);
+            let jb = jaccard_by_id.get(&b.file_id).copied().unwrap_or(0.0);
+            jb.partial_cmp(&ja)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.file_id.cmp(&b.file_id))
+        });
+    } else {
+        sort_rows(&mut rows, opts.sort);
+    }
+    if opts.limit > 0 && rows.len() > opts.limit {
+        rows.truncate(opts.limit);
+    }
+    stats.final_hits = rows.len();
+
+    Ok(ResultSet {
+        rows,
+        cursor: 0,
+        plan: ExecPlan {
+            seed: needle.to_lowercase(),
+            needs_hydration: true,
+        },
+        stats,
+    })
+}
+
+/// Mirror of `eval_full` with the `Similar` modifier short-circuited
+/// to `true` — every row reaching this point was a similarity-LSH
+/// candidate, so re-evaluating that predicate is both redundant and
+/// (since we don't carry the LSH-side Jaccard score in here) wrong.
+/// All *other* predicates — text / wildcard / regex / size / date /
+/// path / parent / child / attrib / ext / quick-filter — run through
+/// the same Phase-5 logic so a composed query like
+/// `similar:foo ext:pdf size:>1mb` still filters correctly.
+fn similarity_row_matches(
+    node: &QueryNode,
+    row: &FileRow,
+    mm: &MatchMode,
+    path_lower: Option<&str>,
+) -> bool {
+    match node {
+        QueryNode::True => true,
+        QueryNode::Text(p) => {
+            let target = match path_lower {
+                Some(pl) => pl,
+                None => row.name_lower.as_str(),
+            };
+            match_text(p, target.as_bytes(), mm)
+        }
+        QueryNode::Not(inner) => !similarity_row_matches(inner, row, mm, path_lower),
+        QueryNode::And(parts) => parts
+            .iter()
+            .all(|p| similarity_row_matches(p, row, mm, path_lower)),
+        QueryNode::Or(parts) => parts
+            .iter()
+            .any(|p| similarity_row_matches(p, row, mm, path_lower)),
+        QueryNode::Modifier(m) => match &m.kind {
+            ModifierKind::Similar(_) => true,
+            _ => eval_modifier(&m.kind, row),
+        },
+        QueryNode::QuickFilter(qf) => row
+            .ext
+            .as_deref()
+            .map(|e| qf.extensions().iter().any(|x| x.eq_ignore_ascii_case(e)))
+            .unwrap_or(false),
+    }
 }

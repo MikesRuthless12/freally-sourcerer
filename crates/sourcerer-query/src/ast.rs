@@ -115,9 +115,14 @@ pub enum ModifierKind {
     Parent(String),
     /// `child:src` — substring on the filename.
     Child(String),
-    /// Future-lens reservations (Phase 6/7/9). Parsed for forward
-    /// compatibility but the Phase-5 executor errors with
-    /// `QueryError::UnsupportedModifier` when these run.
+    /// `similar:report-final` — Phase-6 LSH-backed near-duplicate
+    /// search. The needle is the comparison name; the executor routes
+    /// it to the `SimilarityIndex` candidate set.
+    Similar(String),
+    /// Future-lens reservations (Phase 7/8/9). Parsed for forward
+    /// compatibility but the executor errors with
+    /// `QueryError::UnsupportedModifier` until each owning phase
+    /// ships.
     Reserved { name: String, value: String },
 }
 

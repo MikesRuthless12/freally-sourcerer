@@ -41,7 +41,7 @@ pub use ast::{
 };
 pub use cache::PlanCache;
 pub use error::{ParseError, QueryError};
-pub use exec::{ExecPlan, ExecStats, Hit, ResultSet, execute};
+pub use exec::{ExecPlan, ExecStats, Hit, ResultSet, execute, execute_with};
 pub use opts::{ExecOpts, MatchMode, SortField, SortOrder, SortSpec};
 pub use parser::parse;
 pub use quick_filters::QuickFilter;
