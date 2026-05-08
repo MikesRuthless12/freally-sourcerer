@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  Sourcerer polkit policy: brokers the optional fanotify upgrade for
+  the sourcerer-indexd user agent. Phase 3 ships the inotify subscriber
+  as the unprivileged default; this policy lets a user grant
+  CAP_SYS_ADMIN exactly long enough for the daemon to switch to the
+  fanotify subscriber, which gives correct rename tracking on Btrfs
+  subvolumes and overlayfs that inotify cannot reproduce.
+
+  Install path: /usr/share/polkit-1/actions/io.mikeweaver.sourcerer.policy
+  (the system-wide actions directory; user-local install at
+   ~/.local/share/polkit-1/actions is also supported on polkit >= 0.106).
+-->
+<policyconfig>
+
+  <vendor>Mike Weaver</vendor>
+  <vendor_url>https://github.com/MikesRuthless12/Sourcerer</vendor_url>
+
+  <action id="io.mikeweaver.sourcerer.elevate">
+    <description>Enable Sourcerer fanotify upgrade</description>
+    <description xml:lang="en_US">Enable Sourcerer fanotify upgrade</description>
+    <message>Authentication is required to enable Sourcerer's fanotify-based file watcher. The unprivileged inotify watcher is also available; the fanotify watcher offers correct rename tracking on overlayfs and Btrfs subvolumes.</message>
+
+    <!-- The default policy: prompt for the active user's password each time
+         the agent attempts to elevate. `auth_self_keep` keeps the auth alive
+         for ~5 minutes so a daemon restart inside that window does not
+         re-prompt. We never want `auth_admin*` here — fanotify on the
+         user's own files is a per-user concern, not a sysadmin concern. -->
+    <defaults>
+      <allow_any>auth_self_keep</allow_any>
+      <allow_inactive>auth_self_keep</allow_inactive>
+      <allow_active>auth_self_keep</allow_active>
+    </defaults>
+
+    <!-- The agent invokes the elevation via:
+           pkexec /usr/local/bin/sourcerer-indexd elevate
+         `annotate` pins the binary path so an attacker cannot register
+         a different elevation target under the same action id. The
+         exact path here is the canonical install location; package
+         maintainers can override via a drop-in policy file under
+         /etc/polkit-1/rules.d/ if their distro ships indexd elsewhere. -->
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/sourcerer-indexd</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">elevate</annotate>
+  </action>
+
+</policyconfig>
