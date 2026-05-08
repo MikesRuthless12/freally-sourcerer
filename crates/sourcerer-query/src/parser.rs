@@ -383,17 +383,27 @@ fn parse_modifier(key: &str, value: &str, pos: usize) -> Result<ModifierPredicat
         "path" => ModifierKind::Path(value.to_string()),
         "parent" | "folder" => ModifierKind::Parent(value.to_string()),
         "child" | "name" => ModifierKind::Child(value.to_string()),
-        // Reserved for future lenses (Phase 6/7/9) AND voidtools-
-        // Everything muscle-memory tokens that don't have a Phase-5
-        // semantic mapping yet (`wfn:` / `wholefilename:` / `case:` /
-        // `count:` / `dupe:` / `regex:` toggle / `nodiacritics:`).
-        // Standing Rule #8: every query that *parses* today must keep
-        // parsing through Phase 14 — so we accept them here and let
-        // `validate_supported` route the unimplemented ones to a
-        // typed `QueryError::UnsupportedModifier` rather than silent
+        "similar" => {
+            if value.is_empty() {
+                return Err(ParseError::InvalidModifierValue {
+                    name: key.to_string(),
+                    value: value.to_string(),
+                    reason: "similar: requires a non-empty needle".into(),
+                });
+            }
+            ModifierKind::Similar(value.to_string())
+        }
+        // Reserved for future lenses (Phase 7/8/9) AND voidtools-
+        // Everything muscle-memory tokens that don't have a semantic
+        // mapping yet (`wfn:` / `wholefilename:` / `case:` / `count:` /
+        // `dupe:` / `regex:` toggle / `nodiacritics:`). Standing Rule
+        // #8: every query that *parses* today must keep parsing through
+        // Phase 14 — so we accept them here and let `validate_supported`
+        // route the unimplemented ones to a typed
+        // `QueryError::UnsupportedModifier` rather than silent
         // mismatch. Phase 11 surfaces these as a UI hint.
-        "content" | "lufs" | "codec" | "channels" | "samplerate" | "length" | "similar"
-        | "duration" | "type" | "lang" | "wfn" | "wholefilename" | "case" | "count" | "dupe"
+        "content" | "lufs" | "codec" | "channels" | "samplerate" | "length" | "duration"
+        | "type" | "lang" | "wfn" | "wholefilename" | "case" | "count" | "dupe"
         | "nodiacritics" => ModifierKind::Reserved {
             name: key_lower,
             value: value.to_string(),
@@ -937,6 +947,29 @@ mod tests {
         // Sanity: real calendar days still round-trip.
         assert!(parse_iso_day("2024-02-29").is_some()); // leap
         assert!(parse_iso_day("2024-04-30").is_some());
+    }
+
+    #[test]
+    fn similar_modifier_parses_with_needle() {
+        let q = pp("similar:report-final");
+        match q.root() {
+            QueryNode::Modifier(m) => match &m.kind {
+                ModifierKind::Similar(needle) => assert_eq!(needle, "report-final"),
+                k => panic!("expected Similar, got {k:?}"),
+            },
+            n => panic!("unexpected: {n:?}"),
+        }
+    }
+
+    #[test]
+    fn similar_modifier_requires_needle() {
+        // `similar:` with no value is a parse error — there's nothing
+        // to compare against. Mirrors Phase 5's modifier-value gating.
+        let err = parse("similar:").unwrap_err();
+        match err {
+            ParseError::InvalidModifierValue { name, .. } => assert_eq!(name, "similar"),
+            other => panic!("expected InvalidModifierValue, got {other:?}"),
+        }
     }
 
     #[test]

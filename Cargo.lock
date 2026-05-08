@@ -1637,6 +1637,7 @@ dependencies = [
  "regex",
  "sourcerer-index",
  "sourcerer-journal",
+ "sourcerer-similarity",
  "tempfile",
  "thiserror",
  "tracing",
@@ -1647,7 +1648,12 @@ dependencies = [
 name = "sourcerer-similarity"
 version = "0.19.84"
 dependencies = [
+ "blake3",
+ "parking_lot",
+ "sourcerer-journal",
+ "tempfile",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]

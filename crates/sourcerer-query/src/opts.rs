@@ -19,6 +19,11 @@ pub enum SortField {
     Date,
     Type,
     Ext,
+    /// Phase-6 similarity lens: order by Jaccard estimate descending.
+    /// Only meaningful when the active query carries a `similar:`
+    /// modifier; on non-similarity queries the executor falls through
+    /// to `Name` ordering.
+    Relevance,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
