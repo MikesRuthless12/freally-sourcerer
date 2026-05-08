@@ -1526,7 +1526,17 @@ dependencies = [
 name = "sourcerer-extractors"
 version = "0.19.84"
 dependencies = [
+ "blake3",
+ "libc",
+ "memmap2",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror",
+ "tracing",
+ "windows-sys 0.59.0",
+ "zstd",
 ]
 
 [[package]]
