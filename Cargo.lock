@@ -963,6 +963,7 @@ dependencies = [
  "clap",
  "futures",
  "serde_json",
+ "sourcerer-journal-lin",
  "sourcerer-journal-mac",
  "sourcerer-journal-win",
  "tracing",
@@ -985,7 +986,13 @@ dependencies = [
 name = "sourcerer-journal-lin"
 version = "0.19.84"
 dependencies = [
+ "futures",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]

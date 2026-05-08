@@ -31,3 +31,6 @@ windows = { version = "0.62", features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 sourcerer-journal-mac = { path = "../sourcerer-journal-mac" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+sourcerer-journal-lin = { path = "../sourcerer-journal-lin" }
