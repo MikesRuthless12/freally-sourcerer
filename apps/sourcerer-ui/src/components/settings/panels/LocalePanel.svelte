@@ -5,34 +5,52 @@
   import Dropdown from "../controls/Dropdown.svelte";
   import Checkbox from "../controls/Checkbox.svelte";
   import TextInput from "../controls/TextInput.svelte";
+  import { applyRtlForLocale } from "../../../lib/bootstrap";
   import type { LocaleSettings } from "../../../lib/ipc/types";
 
-  // 18 ship-locales per PRD.
+  // 18 ship-locales per PRD §8.26. English is pinned first regardless
+  // of the current display language; the remaining 17 sit below in
+  // alphabetical order by their native-name spelling. Each label is
+  // the language's own self-name so the user can pick their language
+  // even when the UI is currently in a script they cannot read.
   const LOCALES = [
+    // English pinned first.
     { value: "en", label: "English (en)" },
-    { value: "es", label: "Español (es)" },
-    { value: "zh-CN", label: "简体中文 (zh-CN)" },
-    { value: "hi", label: "हिन्दी (hi)" },
-    { value: "ar", label: "العربية (ar) — RTL" },
-    { value: "pt-BR", label: "Português (pt-BR)" },
-    { value: "ru", label: "Русский (ru)" },
-    { value: "ja", label: "日本語 (ja)" },
+    // Latin-script natives, alphabetical by native name.
+    { value: "id", label: "Bahasa Indonesia (id)" },
     { value: "de", label: "Deutsch (de)" },
+    { value: "es", label: "Español (es)" },
     { value: "fr", label: "Français (fr)" },
-    { value: "ko", label: "한국어 (ko)" },
     { value: "it", label: "Italiano (it)" },
+    { value: "nl", label: "Nederlands (nl)" },
+    { value: "pl", label: "Polski (pl)" },
+    { value: "pt-BR", label: "Português (pt-BR)" },
     { value: "tr", label: "Türkçe (tr)" },
     { value: "vi", label: "Tiếng Việt (vi)" },
-    { value: "pl", label: "Polski (pl)" },
-    { value: "nl", label: "Nederlands (nl)" },
-    { value: "id", label: "Bahasa Indonesia (id)" },
-    { value: "uk", label: "Українська (uk)" }
+    // Cyrillic, alphabetical by native first letter.
+    { value: "ru", label: "Русский (ru)" },
+    { value: "uk", label: "Українська (uk)" },
+    // RTL.
+    { value: "ar", label: "العربية (ar) — RTL" },
+    // Other scripts.
+    { value: "hi", label: "हिन्दी (hi)" },
+    { value: "ja", label: "日本語 (ja)" },
+    { value: "ko", label: "한국어 (ko)" },
+    { value: "zh-CN", label: "简体中文 (zh-CN)" }
   ];
 
   function patch(p: Partial<LocaleSettings>) {
     settingsStore.patch({ locale_settings: { ...settingsStore.state.locale_settings, ...p } });
     if (p.locale) {
       settingsStore.patch({ locale: p.locale });
+      // Live RTL flip — the chosen locale (or RTL preview override)
+      // immediately applies `dir="rtl"` on the document root.
+      applyRtlForLocale(
+        settingsStore.state.locale_settings.rtl_preview ? "ar" : p.locale
+      );
+    }
+    if (p.rtl_preview !== undefined) {
+      applyRtlForLocale(p.rtl_preview ? "ar" : settingsStore.state.locale);
     }
     settingsDialog.markDirty("locale");
   }

@@ -40,10 +40,26 @@ export async function bootstrap() {
   themeStore.set(settingsStore.state.theme);
   zoomStore.set(settingsStore.state.zoom ?? 1);
 
+  // Apply RTL layout when locale is Arabic. Phase 12 ships with a
+  // single RTL ship-locale (`ar`); when more land, this `endsWith` /
+  // table-driven check should grow into a proper rtl-locale list.
+  applyRtlForLocale(settingsStore.state.locale ?? "en");
+
   registerHandlers();
   bindKeyboard();
   await bindNativeEvents();
   bindShutdownHooks();
+}
+
+/// RTL ship-locales. Phase 12 has only Arabic; if Hebrew / Persian /
+/// Urdu join the ship list, append them here.
+const RTL_LOCALES = new Set<string>(["ar"]);
+
+export function applyRtlForLocale(locale: string) {
+  if (typeof document === "undefined") return;
+  const isRtl = RTL_LOCALES.has(locale);
+  document.documentElement.setAttribute("dir", isRtl ? "rtl" : "ltr");
+  document.documentElement.setAttribute("lang", locale);
 }
 
 function bindShutdownHooks() {

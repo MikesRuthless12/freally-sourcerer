@@ -2555,6 +2555,12 @@ version = "0.19.84"
 dependencies = [
  "anyhow",
  "clap",
+ "serde_json",
+ "sourcerer-query",
+ "sourcerer-rpc",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
