@@ -22,11 +22,12 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
+use sourcerer_audio::{AudioAttributes, AudioAttributesProvider};
 use sourcerer_index::{FileRow, Index};
 use sourcerer_similarity::{SimilarityIndex, SimilarityOpts};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::ast::{DateBound, ModifierKind, Query, QueryNode, SizeOp, TextPattern};
+use crate::ast::{AudioPredicate, DateBound, ModifierKind, Query, QueryNode, SizeOp, TextPattern};
 use crate::error::QueryError;
 use crate::opts::{ExecOpts, MatchMode, SortField, SortOrder, SortSpec};
 use crate::parser;
@@ -135,6 +136,9 @@ fn needs_hydration(node: &QueryNode) -> bool {
             | ModifierKind::Ext(_) => true,
             ModifierKind::Child(_) => false,
             ModifierKind::Similar(_) => false,
+            // Audio predicates need the FileRow's path + mtime_ns to
+            // hit the AudioAttributesProvider.
+            ModifierKind::Audio(_) => true,
             ModifierKind::Reserved { .. } => true,
         },
         // Quick filter shortcuts to `ext:` so it doesn't need full
@@ -187,7 +191,9 @@ fn pick_seed(node: &QueryNode) -> String {
 /// reference a `similar:` modifier surface
 /// `QueryError::SimilarityIndexUnavailable` so callers see a typed
 /// error rather than empty results. Use [`execute_with`] to wire a
-/// `SimilarityIndex` in.
+/// `SimilarityIndex` in. Audio-bearing queries surface
+/// `QueryError::AudioProviderUnavailable` for the same reason; use
+/// [`execute_with_audio`] to supply an `AudioAttributesProvider`.
 pub fn execute(idx: &Index, q: &Query, opts: ExecOpts) -> Result<ResultSet, QueryError> {
     execute_with(idx, None, q, opts)
 }
@@ -204,9 +210,28 @@ pub fn execute_with(
     q: &Query,
     opts: ExecOpts,
 ) -> Result<ResultSet, QueryError> {
+    execute_with_audio(idx, similarity, None, q, opts)
+}
+
+/// Phase-9 entry point. Adds an optional [`AudioAttributesProvider`]
+/// so audio-bearing queries (`lufs:` / `codec:` / `length:` / `rate:` /
+/// `silence:` / `dr:`) filter against the audio cache. When the AST
+/// has no audio modifier the parameter is ignored — there is no
+/// performance penalty for a non-audio query.
+pub fn execute_with_audio(
+    idx: &Index,
+    similarity: Option<&SimilarityIndex>,
+    audio: Option<&dyn AudioAttributesProvider>,
+    q: &Query,
+    opts: ExecOpts,
+) -> Result<ResultSet, QueryError> {
     validate_supported(q)?;
+    let needs_audio = has_audio_anywhere(q.root());
+    if needs_audio && audio.is_none() {
+        return Err(QueryError::AudioProviderUnavailable);
+    }
     if let Some(needle) = top_level_similar(q.root()) {
-        return execute_similar(idx, similarity, q, &opts, needle);
+        return execute_similar(idx, similarity, audio, q, &opts, needle);
     }
     if has_similar_anywhere(q.root()) {
         // Phase 6 only routes Similar in the root or as a direct child
@@ -270,13 +295,20 @@ pub fn execute_with(
     stats.name_survivors = survivors_ids.len();
 
     // Hydrate via SQLite. Required when any predicate beyond name-only
-    // matching applies (size / date / path / parent / attrib / ext) or
-    // when `match_path` widens the target to the full path.
+    // matching applies (size / date / path / parent / attrib / ext /
+    // audio modifier) or when `match_path` widens the target to the
+    // full path.
     let needs_full = plan.needs_hydration || opts.match_mode.match_path;
     let i64_ids: Vec<i64> = survivors_ids.iter().map(|&u| u as i64).collect();
     let mut rows: Vec<FileRow> = idx.store().get_many(&i64_ids)?;
     if needs_full {
-        rows.retain(|r| evaluator.matches_full(r, &opts.match_mode));
+        // Phase 9: collect audio rows that survive the non-audio
+        // predicates first, then loop one more time to apply audio
+        // predicates. Splitting the work keeps the hot path
+        // (filename-only queries) free of audio-cache lookups, and
+        // means audio-only queries pay one cache lookup per surviving
+        // row rather than per-candidate.
+        rows = filter_with_audio(rows, q.root(), &opts.match_mode, audio, needs_audio)?;
     }
 
     sort_rows(&mut rows, opts.sort);
@@ -336,19 +368,38 @@ impl<'a> NameEvaluator<'a> {
     fn matches(&self, name_lower: &[u8]) -> bool {
         eval_name(self.root, name_lower, &self.opts.match_mode)
     }
+}
 
-    /// Full-record eval — runs after SQLite hydration. Modifiers are
-    /// finally evaluated for real here. Computes the lowercased path
-    /// once when `match_path` is on instead of re-lowercasing on every
-    /// AND/OR child.
-    fn matches_full(&self, row: &FileRow, mm: &MatchMode) -> bool {
+/// Apply the post-hydration predicate filter, including (when
+/// `needs_audio` is true) per-row audio-attribute lookups.
+fn filter_with_audio(
+    rows: Vec<FileRow>,
+    root: &QueryNode,
+    mm: &MatchMode,
+    audio: Option<&dyn AudioAttributesProvider>,
+    needs_audio: bool,
+) -> Result<Vec<FileRow>, QueryError> {
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
         let path_lower = if mm.match_path {
-            Some(row.path.to_string_lossy().to_lowercase())
+            Some(r.path.to_string_lossy().to_lowercase())
         } else {
             None
         };
-        eval_full(self.root, row, mm, path_lower.as_deref())
+        let attrs: Option<AudioAttributes> = if needs_audio {
+            // We pre-validated `audio.is_some()` at the top of
+            // `execute_with_audio`, so the unwrap is structurally
+            // safe.
+            let provider = audio.expect("audio provider checked at entry");
+            provider.get(&r.path, r.mtime_ns)?
+        } else {
+            None
+        };
+        if eval_full(root, &r, mm, path_lower.as_deref(), attrs.as_ref()) {
+            out.push(r);
+        }
     }
+    Ok(out)
 }
 
 fn eval_name(node: &QueryNode, name_lower: &[u8], mm: &MatchMode) -> bool {
@@ -373,7 +424,13 @@ fn eval_name(node: &QueryNode, name_lower: &[u8], mm: &MatchMode) -> bool {
     }
 }
 
-fn eval_full(node: &QueryNode, row: &FileRow, mm: &MatchMode, path_lower: Option<&str>) -> bool {
+fn eval_full(
+    node: &QueryNode,
+    row: &FileRow,
+    mm: &MatchMode,
+    path_lower: Option<&str>,
+    audio: Option<&AudioAttributes>,
+) -> bool {
     match node {
         QueryNode::True => true,
         QueryNode::Text(p) => {
@@ -383,10 +440,14 @@ fn eval_full(node: &QueryNode, row: &FileRow, mm: &MatchMode, path_lower: Option
             };
             match_text(p, target.as_bytes(), mm)
         }
-        QueryNode::Not(inner) => !eval_full(inner, row, mm, path_lower),
-        QueryNode::And(parts) => parts.iter().all(|p| eval_full(p, row, mm, path_lower)),
-        QueryNode::Or(parts) => parts.iter().any(|p| eval_full(p, row, mm, path_lower)),
-        QueryNode::Modifier(m) => eval_modifier(&m.kind, row),
+        QueryNode::Not(inner) => !eval_full(inner, row, mm, path_lower, audio),
+        QueryNode::And(parts) => parts
+            .iter()
+            .all(|p| eval_full(p, row, mm, path_lower, audio)),
+        QueryNode::Or(parts) => parts
+            .iter()
+            .any(|p| eval_full(p, row, mm, path_lower, audio)),
+        QueryNode::Modifier(m) => eval_modifier(&m.kind, row, audio),
         QueryNode::QuickFilter(qf) => row
             .ext
             .as_deref()
@@ -395,7 +456,7 @@ fn eval_full(node: &QueryNode, row: &FileRow, mm: &MatchMode, path_lower: Option
     }
 }
 
-fn eval_modifier(kind: &ModifierKind, row: &FileRow) -> bool {
+fn eval_modifier(kind: &ModifierKind, row: &FileRow, audio: Option<&AudioAttributes>) -> bool {
     match kind {
         ModifierKind::Size { op, bytes } => cmp_op(*op, row.size, *bytes),
         ModifierKind::Date(b) => eval_date(b, row.mtime_ns),
@@ -432,6 +493,14 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow) -> bool {
             );
             false
         }
+        ModifierKind::Audio(pred) => match audio {
+            Some(attrs) => eval_audio_predicate(pred, attrs),
+            // No cached audio attributes — either the row's path
+            // isn't audio, or the cache miss returned None
+            // (e.g. extractor disabled). Either way, the predicate
+            // doesn't match this row.
+            None => false,
+        },
         ModifierKind::Reserved { name, .. } => {
             // `validate_supported` runs at the top of `execute()` and
             // turns Reserved modifiers into `QueryError::Unsupported-
@@ -444,6 +513,45 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow) -> bool {
             );
             false
         }
+    }
+}
+
+/// Resolve a single audio-modifier predicate against a row's
+/// extracted attributes. Pure — no I/O, no cache access.
+fn eval_audio_predicate(pred: &AudioPredicate, attrs: &AudioAttributes) -> bool {
+    match pred {
+        AudioPredicate::Lufs { op, lufs } => cmp_op_f32(*op, attrs.lufs_integrated, *lufs),
+        AudioPredicate::Codec(needles) => needles
+            .iter()
+            .any(|n| attrs.codec.eq_ignore_ascii_case(n.as_str())),
+        AudioPredicate::Length { op, seconds } => cmp_op_f32(*op, attrs.length_seconds(), *seconds),
+        AudioPredicate::Rate { op, hz } => cmp_op(*op, attrs.sample_rate, *hz),
+        AudioPredicate::Silence { op, ratio } => cmp_op_f32(*op, attrs.silence_ratio, *ratio),
+        AudioPredicate::DynamicRange { op, lu } => cmp_op_f32(*op, attrs.dynamic_range_lu, *lu),
+    }
+}
+
+/// `f32`-aware comparator for audio modifiers. `Eq` uses an absolute
+/// epsilon of `1e-3` so a user-typed value like `lufs:-23` matches a
+/// computed `-23.000123` cleanly. The epsilon also smooths the
+/// percent-of-silence path (`silence:=0.5` matches `[0.499, 0.501]`).
+/// `NaN` on either side returns `false` instead of trapping; non-
+/// finite values flow through the strict ordering arms unchanged
+/// (`-inf > x` is `false` for any finite `x`, which is the desired
+/// behavior for sub-3-second clips whose short-term percentiles
+/// surface as `NEG_INFINITY`).
+pub(crate) const AUDIO_EQ_EPSILON: f32 = 1e-3;
+
+fn cmp_op_f32(op: SizeOp, a: f32, b: f32) -> bool {
+    if a.is_nan() || b.is_nan() {
+        return false;
+    }
+    match op {
+        SizeOp::Lt => a < b,
+        SizeOp::Le => a <= b,
+        SizeOp::Eq => (a - b).abs() < AUDIO_EQ_EPSILON,
+        SizeOp::Ge => a >= b,
+        SizeOp::Gt => a > b,
     }
 }
 
@@ -663,15 +771,28 @@ fn has_similar_anywhere(node: &QueryNode) -> bool {
     }
 }
 
+/// Phase-9 walk — does the AST contain any audio modifier? Drives the
+/// "should the executor look up audio attributes per row?" branch.
+fn has_audio_anywhere(node: &QueryNode) -> bool {
+    match node {
+        QueryNode::Modifier(m) => matches!(m.kind, ModifierKind::Audio(_)),
+        QueryNode::Not(inner) => has_audio_anywhere(inner),
+        QueryNode::And(parts) | QueryNode::Or(parts) => parts.iter().any(has_audio_anywhere),
+        QueryNode::Text(_) | QueryNode::QuickFilter(_) | QueryNode::True => false,
+    }
+}
+
 /// Phase-6 similarity-lens execution path. Replaces the Phase-5
 /// trigram pre-filter with an LSH lookup against the supplied
 /// `SimilarityIndex`. The remaining predicates (size / date / path /
 /// parent / attrib / ext / child / quick-filter / regex / wildcard /
-/// literal) still apply post-hydration so a query like
-/// `similar:report-final ext:pdf` filters down correctly.
+/// literal / audio) still apply post-hydration so a query like
+/// `similar:report-final ext:pdf` or `similar:bassdrop codec:flac
+/// length:>3:00` filters down correctly.
 fn execute_similar(
     idx: &Index,
     similarity: Option<&SimilarityIndex>,
+    audio: Option<&dyn AudioAttributesProvider>,
     q: &Query,
     opts: &ExecOpts,
     needle: &str,
@@ -704,14 +825,31 @@ fn execute_similar(
     let mut rows: Vec<FileRow> = idx.store().get_many(&ordered_ids)?;
     stats.name_survivors = rows.len();
 
-    rows.retain(|r| {
+    let needs_audio = has_audio_anywhere(q.root());
+    let mut filtered = Vec::with_capacity(rows.len());
+    for r in rows.drain(..) {
         let path_lower = if opts.match_mode.match_path {
             Some(r.path.to_string_lossy().to_lowercase())
         } else {
             None
         };
-        similarity_row_matches(q.root(), r, &opts.match_mode, path_lower.as_deref())
-    });
+        let attrs: Option<AudioAttributes> = if needs_audio {
+            let provider = audio.expect("audio provider checked at entry");
+            provider.get(&r.path, r.mtime_ns)?
+        } else {
+            None
+        };
+        if similarity_row_matches(
+            q.root(),
+            &r,
+            &opts.match_mode,
+            path_lower.as_deref(),
+            attrs.as_ref(),
+        ) {
+            filtered.push(r);
+        }
+    }
+    let mut rows = filtered;
 
     // Sort. If the user kept the default (Name+Asc), we override to
     // Jaccard desc — that's the only sensible order for a similarity
@@ -757,14 +895,17 @@ fn execute_similar(
 /// candidate, so re-evaluating that predicate is both redundant and
 /// (since we don't carry the LSH-side Jaccard score in here) wrong.
 /// All *other* predicates — text / wildcard / regex / size / date /
-/// path / parent / child / attrib / ext / quick-filter — run through
-/// the same Phase-5 logic so a composed query like
-/// `similar:foo ext:pdf size:>1mb` still filters correctly.
+/// path / parent / child / attrib / ext / quick-filter / audio — run
+/// through the same Phase-5/9 logic so a composed query like
+/// `similar:foo ext:pdf size:>1mb` or
+/// `similar:bassdrop codec:flac length:>3:00` still filters
+/// correctly.
 fn similarity_row_matches(
     node: &QueryNode,
     row: &FileRow,
     mm: &MatchMode,
     path_lower: Option<&str>,
+    audio: Option<&AudioAttributes>,
 ) -> bool {
     match node {
         QueryNode::True => true,
@@ -775,16 +916,16 @@ fn similarity_row_matches(
             };
             match_text(p, target.as_bytes(), mm)
         }
-        QueryNode::Not(inner) => !similarity_row_matches(inner, row, mm, path_lower),
+        QueryNode::Not(inner) => !similarity_row_matches(inner, row, mm, path_lower, audio),
         QueryNode::And(parts) => parts
             .iter()
-            .all(|p| similarity_row_matches(p, row, mm, path_lower)),
+            .all(|p| similarity_row_matches(p, row, mm, path_lower, audio)),
         QueryNode::Or(parts) => parts
             .iter()
-            .any(|p| similarity_row_matches(p, row, mm, path_lower)),
+            .any(|p| similarity_row_matches(p, row, mm, path_lower, audio)),
         QueryNode::Modifier(m) => match &m.kind {
             ModifierKind::Similar(_) => true,
-            _ => eval_modifier(&m.kind, row),
+            _ => eval_modifier(&m.kind, row, audio),
         },
         QueryNode::QuickFilter(qf) => row
             .ext

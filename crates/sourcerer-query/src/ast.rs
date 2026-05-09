@@ -119,11 +119,43 @@ pub enum ModifierKind {
     /// search. The needle is the comparison name; the executor routes
     /// it to the `SimilarityIndex` candidate set.
     Similar(String),
-    /// Future-lens reservations (Phase 7/8/9). Parsed for forward
+    /// Phase-9 audio-lens predicate (`lufs:`, `codec:`, `length:`,
+    /// `rate:`, `silence:`, `dr:`). The executor routes audio-bearing
+    /// queries through an [`AudioAttributesProvider`](sourcerer_audio::AudioAttributesProvider)
+    /// and filters rows by the comparator.
+    Audio(AudioPredicate),
+    /// Future-lens reservations (Phase 10+). Parsed for forward
     /// compatibility but the executor errors with
     /// `QueryError::UnsupportedModifier` until each owning phase
     /// ships.
     Reserved { name: String, value: String },
+}
+
+/// One audio-modifier predicate. Each variant carries the comparator
+/// (where applicable) and the comparison value pre-converted into the
+/// natural unit of the underlying [`AudioAttributes`](sourcerer_audio::AudioAttributes)
+/// field.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AudioPredicate {
+    /// `lufs:<-14` — integrated programme loudness.
+    /// Comparator is required (`lufs:foo` would be ambiguous), value
+    /// is in LUFS as a `f32`.
+    Lufs { op: SizeOp, lufs: f32 },
+    /// `codec:flac` — exact-match on the codec short identifier
+    /// (lower-cased). Multi-codec is `;`-separated:
+    /// `codec:flac;mp3;aac`.
+    Codec(Vec<String>),
+    /// `length:>3:00` — duration in seconds. `mm:ss` and `hh:mm:ss`
+    /// shorthand both supported; bare integers parse as seconds.
+    Length { op: SizeOp, seconds: f32 },
+    /// `rate:>=44100` — sample rate in Hz. Bare integers; `rate:44100`
+    /// (no comparator) implies equality.
+    Rate { op: SizeOp, hz: u32 },
+    /// `silence:>50%` — silence ratio. The trailing `%` is optional;
+    /// `silence:>0.5` and `silence:>50%` are equivalent.
+    Silence { op: SizeOp, ratio: f32 },
+    /// `dr:>10` — dynamic range in LU.
+    DynamicRange { op: SizeOp, lu: f32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
