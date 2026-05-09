@@ -35,7 +35,11 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 trash = "5"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
 sourcerer-query = { path = "../../../crates/sourcerer-query" }
+sourcerer-rpc = { path = "../../../crates/sourcerer-rpc" }
+sourcerer-indexd = { path = "../../../crates/sourcerer-indexd" }
 
 [dev-dependencies]
 tempfile = "3"

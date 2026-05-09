@@ -1,7 +1,9 @@
 //! File operations. open / reveal / copy_path / copy_name use real OS
-//! handlers via Tauri plugins; thumbnail + preview are mocks for the
-//! Phase 11 vertical slice (real OS-native preview hosts wire in
-//! Phase 11.B).
+//! handlers via Tauri plugins; thumbnail + preview now delegate to the
+//! `preview` module which dispatches to OS-native preview hosts on each
+//! platform (QuickLook on macOS, Shell preview on Windows, GNOME Sushi
+//! / KDE KIO on Linux) and falls back to a text-head + typed-icon
+//! response for unsupported types.
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
@@ -9,6 +11,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_opener::OpenerExt;
 
 use super::known_paths::KnownPaths;
+use crate::preview;
 
 /// Every file-ops command goes through this gate. Rejects paths the
 /// daemon never returned — defense-in-depth against a compromised JS
@@ -126,12 +129,39 @@ pub fn files_thumbnail(
     known: State<'_, KnownPaths>,
 ) -> Result<String, String> {
     verify_path(&path, &known)?;
-    // L2: clamp size so a hostile caller can't request a 4-billion-pixel SVG.
+    // Clamp size so a hostile caller can't request a 4-billion-pixel SVG.
     let size = size.clamp(16, 512);
-    // Mock: tinted SVG square based on extension, base64-encoded into a
-    // data URL so escaping is safe-by-construction (Phase 12 swap routes
-    // to OS thumbnail caches; the data-URL contract stays).
-    let ext = std::path::Path::new(&path)
+    let host_result: Option<String> =
+        preview::thumbnail(&path, size).map_err(|e: anyhow::Error| e.to_string())?;
+    Ok(host_result.unwrap_or_else(|| typed_icon_svg(&path, size)))
+}
+
+#[tauri::command]
+pub fn files_preview(path: String, known: State<'_, KnownPaths>) -> Result<PreviewPayload, String> {
+    verify_path(&path, &known)?;
+    match preview::preview(&path) {
+        Ok(Some(p)) => Ok(p),
+        Ok(None) => Ok(PreviewPayload {
+            kind: PreviewKind::Unsupported,
+            text: None,
+            data_url: None,
+            message: Some("Preview not available for this file type".into()),
+        }),
+        Err(e) => Ok(PreviewPayload {
+            kind: PreviewKind::Unsupported,
+            text: None,
+            data_url: None,
+            message: Some(e.to_string()),
+        }),
+    }
+}
+
+/// Typed-icon SVG fallback used when the OS-native thumbnail provider
+/// declines to handle the file (e.g. on Linux where Sushi / KIO is
+/// unavailable, or on Windows for an extension without a registered
+/// `IThumbnailProvider`). Color matches the extension family.
+fn typed_icon_svg(path: &str, size: u32) -> String {
+    let ext = std::path::Path::new(path)
         .extension()
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
@@ -144,61 +174,13 @@ pub fn files_thumbnail(
     let svg = format!(
         "<svg xmlns='http://www.w3.org/2000/svg' width='{size}' height='{size}'><rect width='{size}' height='{size}' rx='6' fill='{color}'/></svg>"
     );
-    Ok(format!(
+    format!(
         "data:image/svg+xml;base64,{}",
         base64_encode(svg.as_bytes())
-    ))
+    )
 }
 
-#[tauri::command]
-pub fn files_preview(path: String, known: State<'_, KnownPaths>) -> Result<PreviewPayload, String> {
-    verify_path(&path, &known)?;
-    // Mock: read up to 4 KiB and lossy-decode as UTF-8. We classify as
-    // text iff the head has no NUL bytes and the decode produced few
-    // replacement characters; otherwise unsupported. UTF-8 boundary cuts
-    // are handled by `from_utf8_lossy` (replacement char) — we don't
-    // misclassify multi-byte boundary cuts.
-    match std::fs::read(&path) {
-        Ok(bytes) => {
-            let head_len = bytes.len().min(4096);
-            let head = &bytes[..head_len];
-            if head.contains(&0u8) {
-                return Ok(PreviewPayload {
-                    kind: PreviewKind::Unsupported,
-                    text: None,
-                    data_url: None,
-                    message: Some("Binary preview not yet wired".into()),
-                });
-            }
-            let lossy = String::from_utf8_lossy(head);
-            // Reject if more than 1% of chars are replacement characters
-            // (high-entropy binary that happens to lack NULs).
-            let replacements = lossy.chars().filter(|&c| c == '\u{FFFD}').count();
-            if replacements * 100 > head_len {
-                return Ok(PreviewPayload {
-                    kind: PreviewKind::Unsupported,
-                    text: None,
-                    data_url: None,
-                    message: Some("Binary preview not yet wired".into()),
-                });
-            }
-            Ok(PreviewPayload {
-                kind: PreviewKind::Text,
-                text: Some(lossy.into_owned()),
-                data_url: None,
-                message: None,
-            })
-        }
-        Err(e) => Ok(PreviewPayload {
-            kind: PreviewKind::Unsupported,
-            text: None,
-            data_url: None,
-            message: Some(e.to_string()),
-        }),
-    }
-}
-
-fn base64_encode(bytes: &[u8]) -> String {
+pub(crate) fn base64_encode(bytes: &[u8]) -> String {
     // Tiny inline base64 encoder. Avoids pulling in `base64` for one call.
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
