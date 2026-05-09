@@ -36,12 +36,12 @@ pub mod parser;
 pub mod quick_filters;
 
 pub use ast::{
-    AttribFlag, DateBound, ModifierKind, ModifierPredicate, Query, QueryNode, RelativeDate, SizeOp,
-    SizeUnit, TextPattern,
+    AttribFlag, AudioPredicate, DateBound, ModifierKind, ModifierPredicate, Query, QueryNode,
+    RelativeDate, SizeOp, SizeUnit, TextPattern,
 };
 pub use cache::PlanCache;
 pub use error::{ParseError, QueryError};
-pub use exec::{ExecPlan, ExecStats, Hit, ResultSet, execute, execute_with};
+pub use exec::{ExecPlan, ExecStats, Hit, ResultSet, execute, execute_with, execute_with_audio};
 pub use opts::{ExecOpts, MatchMode, SortField, SortOrder, SortSpec};
 pub use parser::parse;
 pub use quick_filters::QuickFilter;

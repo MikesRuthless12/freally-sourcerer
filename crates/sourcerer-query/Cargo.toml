@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish.workspace = true
-description = "Sourcerer query DSL parser + executor (Phase 5/10)."
+description = "Sourcerer query DSL parser + executor (Phase 5/9/10)."
 
 [lib]
 path = "src/lib.rs"
@@ -21,11 +21,13 @@ unicode-normalization = "0.1"
 sourcerer-index = { path = "../sourcerer-index" }
 sourcerer-journal = { path = "../sourcerer-journal" }
 sourcerer-similarity = { path = "../sourcerer-similarity" }
+sourcerer-audio = { path = "../sourcerer-audio" }
 
 [dev-dependencies]
 tempfile = "3"
 sourcerer-journal = { path = "../sourcerer-journal" }
 sourcerer-similarity = { path = "../sourcerer-similarity" }
+sourcerer-audio = { path = "../sourcerer-audio" }
 
 [[bench]]
 name = "filename_lens"

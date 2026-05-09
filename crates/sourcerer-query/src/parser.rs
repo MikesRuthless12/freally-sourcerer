@@ -21,8 +21,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use regex::Regex;
 
 use crate::ast::{
-    AttribFlag, DateBound, ModifierKind, ModifierPredicate, Query, QueryNode, RelativeDate, SizeOp,
-    SizeUnit, TextPattern,
+    AttribFlag, AudioPredicate, DateBound, ModifierKind, ModifierPredicate, Query, QueryNode,
+    RelativeDate, SizeOp, SizeUnit, TextPattern,
 };
 use crate::error::ParseError;
 use crate::quick_filters::QuickFilter;
@@ -393,18 +393,32 @@ fn parse_modifier(key: &str, value: &str, pos: usize) -> Result<ModifierPredicat
             }
             ModifierKind::Similar(value.to_string())
         }
-        // Reserved for future lenses (Phase 7/8/9) AND voidtools-
-        // Everything muscle-memory tokens that don't have a semantic
-        // mapping yet (`wfn:` / `wholefilename:` / `case:` / `count:` /
-        // `dupe:` / `regex:` toggle / `nodiacritics:`). Standing Rule
-        // #8: every query that *parses* today must keep parsing through
-        // Phase 14 — so we accept them here and let `validate_supported`
-        // route the unimplemented ones to a typed
+        // Phase-9 audio modifiers — promoted out of `Reserved` and
+        // routed through `ModifierKind::Audio`. Each parses-and-
+        // validates here (an invalid value surfaces
+        // `InvalidModifierValue` rather than the Reserved silent
+        // accept) so the search bar can show a typed parse error
+        // before query.parse is even sent to the daemon. `duration`
+        // is the voidtools-Everything alias of `length`; `samplerate`
+        // is the long form of `rate`.
+        "lufs" => ModifierKind::Audio(parse_audio_lufs(value, key)?),
+        "codec" => ModifierKind::Audio(parse_audio_codec(value, key)?),
+        "length" | "duration" => ModifierKind::Audio(parse_audio_length(value, key)?),
+        "rate" | "samplerate" => ModifierKind::Audio(parse_audio_rate(value, key)?),
+        "silence" => ModifierKind::Audio(parse_audio_silence(value, key)?),
+        "dr" => ModifierKind::Audio(parse_audio_dr(value, key)?),
+        // Reserved for future lenses (Phase 8 content; Phase 10+
+        // strict-Everything additions) AND voidtools-Everything
+        // muscle-memory tokens that don't have a semantic mapping yet
+        // (`wfn:` / `wholefilename:` / `case:` / `count:` / `dupe:` /
+        // `nodiacritics:`). Standing Rule #8: every query that
+        // *parses* today must keep parsing through Phase 14 — so we
+        // accept them here and let `validate_supported` route the
+        // unimplemented ones to a typed
         // `QueryError::UnsupportedModifier` rather than silent
         // mismatch. Phase 11 surfaces these as a UI hint.
-        "content" | "lufs" | "codec" | "channels" | "samplerate" | "length" | "duration"
-        | "type" | "lang" | "wfn" | "wholefilename" | "case" | "count" | "dupe"
-        | "nodiacritics" => ModifierKind::Reserved {
+        "content" | "channels" | "type" | "lang" | "wfn" | "wholefilename" | "case" | "count"
+        | "dupe" | "nodiacritics" => ModifierKind::Reserved {
             name: key_lower,
             value: value.to_string(),
         },
@@ -679,6 +693,214 @@ fn parse_ext(value: &str) -> ModifierKind {
         .map(|s| s.trim_start_matches('.').to_ascii_lowercase())
         .collect();
     ModifierKind::Ext(exts)
+}
+
+/// Split a modifier value's leading comparator (`<`, `<=`, `>`, `>=`,
+/// `=`) from its remainder. A bare value (no leading op) defaults to
+/// [`SizeOp::Eq`]. Mirrors Phase 5's `parse_size` op extraction so
+/// every comparator-bearing modifier reads the same way to a user.
+fn split_op(value: &str) -> (SizeOp, &str) {
+    if let Some(rest) = value.strip_prefix(">=") {
+        (SizeOp::Ge, rest)
+    } else if let Some(rest) = value.strip_prefix("<=") {
+        (SizeOp::Le, rest)
+    } else if let Some(rest) = value.strip_prefix('>') {
+        (SizeOp::Gt, rest)
+    } else if let Some(rest) = value.strip_prefix('<') {
+        (SizeOp::Lt, rest)
+    } else if let Some(rest) = value.strip_prefix('=') {
+        (SizeOp::Eq, rest)
+    } else {
+        (SizeOp::Eq, value)
+    }
+}
+
+fn parse_audio_lufs(value: &str, key: &str) -> Result<AudioPredicate, ParseError> {
+    if value.is_empty() {
+        return Err(ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "missing LUFS value".into(),
+        });
+    }
+    let (op, rest) = split_op(value);
+    let n: f32 = rest
+        .trim()
+        .parse()
+        .map_err(|_| ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "expected a numeric LUFS value (e.g. `lufs:<-14`)".into(),
+        })?;
+    Ok(AudioPredicate::Lufs { op, lufs: n })
+}
+
+fn parse_audio_codec(value: &str, key: &str) -> Result<AudioPredicate, ParseError> {
+    let codecs: Vec<String> = value
+        .split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase())
+        .collect();
+    if codecs.is_empty() {
+        return Err(ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "expected at least one codec name (e.g. `codec:flac` or `codec:flac;mp3`)"
+                .into(),
+        });
+    }
+    Ok(AudioPredicate::Codec(codecs))
+}
+
+fn parse_audio_length(value: &str, key: &str) -> Result<AudioPredicate, ParseError> {
+    if value.is_empty() {
+        return Err(ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "missing length value".into(),
+        });
+    }
+    let (op, rest) = split_op(value);
+    let secs =
+        parse_duration_seconds(rest.trim()).ok_or_else(|| ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "expected `<seconds>`, `mm:ss`, or `hh:mm:ss` (e.g. `length:>3:00`)".into(),
+        })?;
+    Ok(AudioPredicate::Length { op, seconds: secs })
+}
+
+fn parse_audio_rate(value: &str, key: &str) -> Result<AudioPredicate, ParseError> {
+    if value.is_empty() {
+        return Err(ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "missing sample-rate value".into(),
+        });
+    }
+    let (op, rest) = split_op(value);
+    let trimmed = rest.trim();
+    let (num_str, unit) = split_number_suffix(trimmed);
+    let n: f64 = num_str
+        .parse()
+        .map_err(|_| ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "expected an integer sample rate in Hz (e.g. `rate:48000`)".into(),
+        })?;
+    let multiplier: f64 = match unit.to_ascii_lowercase().as_str() {
+        "" | "hz" => 1.0,
+        "k" | "khz" => 1000.0,
+        other => {
+            return Err(ParseError::InvalidModifierValue {
+                name: key.to_string(),
+                value: value.to_string(),
+                reason: format!("unknown rate unit `{other}`"),
+            });
+        }
+    };
+    let hz = (n * multiplier) as u32;
+    if hz == 0 {
+        return Err(ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "sample rate must be > 0 Hz".into(),
+        });
+    }
+    Ok(AudioPredicate::Rate { op, hz })
+}
+
+fn parse_audio_silence(value: &str, key: &str) -> Result<AudioPredicate, ParseError> {
+    if value.is_empty() {
+        return Err(ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "missing silence value".into(),
+        });
+    }
+    let (op, rest) = split_op(value);
+    let mut trimmed = rest.trim();
+    let mut as_percent = false;
+    if let Some(stripped) = trimmed.strip_suffix('%') {
+        as_percent = true;
+        trimmed = stripped.trim();
+    }
+    let n: f32 = trimmed
+        .parse()
+        .map_err(|_| ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "expected `<ratio>` in 0..1 or `<percent>%` (e.g. `silence:>50%`)".into(),
+        })?;
+    let ratio = if as_percent { n / 100.0 } else { n };
+    if !(0.0..=1.0).contains(&ratio) {
+        return Err(ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "silence ratio must be in [0%, 100%] / [0.0, 1.0]".into(),
+        });
+    }
+    Ok(AudioPredicate::Silence { op, ratio })
+}
+
+fn parse_audio_dr(value: &str, key: &str) -> Result<AudioPredicate, ParseError> {
+    if value.is_empty() {
+        return Err(ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "missing dynamic-range value".into(),
+        });
+    }
+    let (op, rest) = split_op(value);
+    let n: f32 = rest
+        .trim()
+        .parse()
+        .map_err(|_| ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "expected a numeric LU value (e.g. `dr:>10`)".into(),
+        })?;
+    if n < 0.0 {
+        return Err(ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "dynamic range cannot be negative".into(),
+        });
+    }
+    Ok(AudioPredicate::DynamicRange { op, lu: n })
+}
+
+/// Parse a duration string into seconds. Accepts:
+///   - bare integer / float seconds (`30`, `12.5`)
+///   - `mm:ss` (`3:00`)
+///   - `hh:mm:ss` (`1:30:00`)
+fn parse_duration_seconds(s: &str) -> Option<f32> {
+    if s.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = s.split(':').collect();
+    match parts.len() {
+        1 => parts[0].parse::<f32>().ok(),
+        2 => {
+            let m: f32 = parts[0].parse().ok()?;
+            let sec: f32 = parts[1].parse().ok()?;
+            if !(0.0..60.0).contains(&sec) {
+                return None;
+            }
+            Some(m * 60.0 + sec)
+        }
+        3 => {
+            let h: f32 = parts[0].parse().ok()?;
+            let m: f32 = parts[1].parse().ok()?;
+            let sec: f32 = parts[2].parse().ok()?;
+            if !(0.0..60.0).contains(&m) || !(0.0..60.0).contains(&sec) {
+                return None;
+            }
+            Some(h * 3600.0 + m * 60.0 + sec)
+        }
+        _ => None,
+    }
 }
 
 fn parse_attrib(value: &str, key: &str) -> Result<ModifierKind, ParseError> {
@@ -996,6 +1218,204 @@ mod tests {
                 },
                 n => panic!("`{q}` unexpected: {n:?}"),
             }
+        }
+    }
+
+    // ---- Phase 9 audio-modifier parsing ---------------------------
+
+    fn audio_pred(q: &str) -> AudioPredicate {
+        match pp(q).root() {
+            QueryNode::Modifier(m) => match &m.kind {
+                ModifierKind::Audio(p) => p.clone(),
+                k => panic!("`{q}` not Audio: {k:?}"),
+            },
+            n => panic!("`{q}` unexpected: {n:?}"),
+        }
+    }
+
+    #[test]
+    fn lufs_modifier_with_comparator() {
+        match audio_pred("lufs:<-14") {
+            AudioPredicate::Lufs { op, lufs } => {
+                assert_eq!(op, SizeOp::Lt);
+                assert!((lufs - -14.0).abs() < 1e-6);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        match audio_pred("lufs:>=-23") {
+            AudioPredicate::Lufs { op, lufs } => {
+                assert_eq!(op, SizeOp::Ge);
+                assert!((lufs - -23.0).abs() < 1e-6);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lufs_modifier_empty_errors() {
+        let err = parse("lufs:").unwrap_err();
+        match err {
+            ParseError::InvalidModifierValue { name, .. } => assert_eq!(name, "lufs"),
+            other => panic!("expected InvalidModifierValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn codec_modifier_single_and_list() {
+        match audio_pred("codec:flac") {
+            AudioPredicate::Codec(c) => assert_eq!(c, vec!["flac".to_string()]),
+            other => panic!("unexpected: {other:?}"),
+        }
+        match audio_pred("codec:flac;mp3;aac") {
+            AudioPredicate::Codec(c) => assert_eq!(c, vec!["flac", "mp3", "aac"]),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn codec_modifier_lowercases() {
+        match audio_pred("codec:FLAC") {
+            AudioPredicate::Codec(c) => assert_eq!(c, vec!["flac".to_string()]),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn length_modifier_seconds_and_mmss() {
+        match audio_pred("length:>3:00") {
+            AudioPredicate::Length { op, seconds } => {
+                assert_eq!(op, SizeOp::Gt);
+                assert!((seconds - 180.0).abs() < 1e-6);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        match audio_pred("length:1:30:00") {
+            AudioPredicate::Length { op, seconds } => {
+                assert_eq!(op, SizeOp::Eq);
+                assert!((seconds - 5400.0).abs() < 1e-6);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        match audio_pred("length:>=42") {
+            AudioPredicate::Length { op, seconds } => {
+                assert_eq!(op, SizeOp::Ge);
+                assert!((seconds - 42.0).abs() < 1e-6);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn length_modifier_rejects_minutes_overflow() {
+        // mm:ss with seconds >= 60 is rejected (would otherwise parse
+        // ambiguously — is `1:90` 1 minute 90 seconds or 2:30?).
+        let err = parse("length:1:90").unwrap_err();
+        assert!(matches!(err, ParseError::InvalidModifierValue { .. }));
+    }
+
+    #[test]
+    fn rate_modifier_with_units() {
+        match audio_pred("rate:>=44100") {
+            AudioPredicate::Rate { op, hz } => {
+                assert_eq!(op, SizeOp::Ge);
+                assert_eq!(hz, 44_100);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        match audio_pred("rate:48k") {
+            AudioPredicate::Rate { hz, .. } => assert_eq!(hz, 48_000),
+            other => panic!("unexpected: {other:?}"),
+        }
+        // `samplerate:` alias parses identically.
+        match audio_pred("samplerate:96000") {
+            AudioPredicate::Rate { hz, op } => {
+                assert_eq!(hz, 96_000);
+                assert_eq!(op, SizeOp::Eq);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rate_modifier_zero_rejects() {
+        let err = parse("rate:0").unwrap_err();
+        assert!(matches!(err, ParseError::InvalidModifierValue { .. }));
+    }
+
+    #[test]
+    fn silence_modifier_percent_and_ratio() {
+        match audio_pred("silence:>50%") {
+            AudioPredicate::Silence { op, ratio } => {
+                assert_eq!(op, SizeOp::Gt);
+                assert!((ratio - 0.5).abs() < 1e-6);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        match audio_pred("silence:>0.5") {
+            AudioPredicate::Silence { op, ratio } => {
+                assert_eq!(op, SizeOp::Gt);
+                assert!((ratio - 0.5).abs() < 1e-6);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn silence_modifier_out_of_range_rejects() {
+        for q in ["silence:>150%", "silence:>1.5", "silence:<-10%"] {
+            let err = parse(q).unwrap_err();
+            assert!(
+                matches!(err, ParseError::InvalidModifierValue { .. }),
+                "`{q}` should reject"
+            );
+        }
+    }
+
+    #[test]
+    fn dr_modifier_basic() {
+        match audio_pred("dr:>10") {
+            AudioPredicate::DynamicRange { op, lu } => {
+                assert_eq!(op, SizeOp::Gt);
+                assert!((lu - 10.0).abs() < 1e-6);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dr_modifier_negative_rejects() {
+        let err = parse("dr:>-5").unwrap_err();
+        assert!(matches!(err, ParseError::InvalidModifierValue { .. }));
+    }
+
+    #[test]
+    fn duration_alias_for_length() {
+        match audio_pred("duration:30") {
+            AudioPredicate::Length { op, seconds } => {
+                assert_eq!(op, SizeOp::Eq);
+                assert!((seconds - 30.0).abs() < 1e-6);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn audio_modifier_compose_with_filename() {
+        // `lufs:<-14 codec:flac length:>3:00` — Phase 9 prompt
+        // composes three audio modifiers via implicit-AND. The parser
+        // builds an `And` of three Modifier nodes.
+        let q = pp("lufs:<-14 codec:flac length:>3:00");
+        match q.root() {
+            QueryNode::And(parts) => {
+                assert_eq!(parts.len(), 3);
+                for p in parts {
+                    assert!(
+                        matches!(p, QueryNode::Modifier(m) if matches!(m.kind, ModifierKind::Audio(_))),
+                        "non-audio child in AND: {p:?}"
+                    );
+                }
+            }
+            n => panic!("unexpected: {n:?}"),
         }
     }
 

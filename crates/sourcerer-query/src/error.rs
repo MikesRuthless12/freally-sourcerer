@@ -45,6 +45,13 @@ pub enum QueryError {
          buried in NOT / OR / nested AND is rejected"
     )]
     UnsupportedSimilarPosition,
+    #[error(
+        "query uses an audio modifier (lufs / codec / length / rate / silence / dr) \
+         but no audio provider was supplied — call execute_with_audio(idx, Some(&audio), …)"
+    )]
+    AudioProviderUnavailable,
+    #[error("audio extractor: {0}")]
+    Audio(#[from] sourcerer_audio::AudioError),
     #[error("execution cancelled")]
     Cancelled,
 }

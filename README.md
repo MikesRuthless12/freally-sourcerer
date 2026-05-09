@@ -173,7 +173,7 @@ Sourcerer is in active phased development. The first public release will be tagg
 - [x] Phase 6 — Filename similarity lens
 - [x] Phase 7 — Format extractor framework
 - [x] Phase 8 — Document extractors (plain-text + Markdown, PDF, Office docx/xlsx/pptx, source code in 32 languages, archive peek, JSON/CSV/YAML)
-- [ ] Phase 9 — Audio extractor (EBU R128 measurement)
+- [x] Phase 9 — Audio extractor (symphonia decode + EBU R128 LUFS / true peak / silence / dynamic range; `lufs:` / `codec:` / `length:` / `rate:` / `silence:` / `dr:` query modifiers)
 - [ ] Phase 10 — Query language + parser
 - [ ] Phase 11 — Search UI (the magic moment)
 - [ ] Phase 12 — Settings + custom-extractor framework + 18-locale i18n
