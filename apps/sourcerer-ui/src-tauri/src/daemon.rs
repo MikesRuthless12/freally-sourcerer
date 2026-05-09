@@ -1,36 +1,40 @@
-//! In-process embedding of `sourcerer-indexd` plus the
-//! `sourcerer-rpc` client the Tauri commands route through.
+//! Spawns the `sourcerer-indexd` binary as a sidecar process and opens a
+//! `sourcerer-rpc` client to it.
 //!
-//! Phase 12 architecture:
+//! Phase 12 architecture (sidecar mode — the Tauri shell never compiles
+//! the heavy daemon dependencies):
 //!
-//! - Boot: spawn the daemon as an in-process tokio task at the per-OS
-//!   default socket path. The transport is real (UDS / named pipe with
-//!   peer-uid auth) but loops back to the same process.
-//! - Connect: open one client connection that all `#[tauri::command]`
-//!   handlers share.
+//! - Boot: spawn `sourcerer-indexd run` as a child process. The Tauri
+//!   shell does NOT depend on `sourcerer-indexd` as a Rust crate — only
+//!   on `sourcerer-rpc` (transport types + client) and `sourcerer-query`
+//!   (in-process parser). This keeps the src-tauri compile fast on
+//!   every CI matrix entry; otherwise pulling in tantivy + wasmtime +
+//!   tree-sitter through the daemon dep tree would push Linux Tauri
+//!   builds past the runner's reasonable budget.
+//! - Locate the `sourcerer-indexd` binary via the env override
+//!   `SOURCERER_INDEXD_BIN`, or by searching `cargo`'s
+//!   `target/{debug,release}` next to the running executable, or by
+//!   relying on `PATH`. Binding socket / pipe at the per-OS default.
+//! - Connect: open one `sourcerer-rpc` client connection that all
+//!   `#[tauri::command]` handlers share.
 //! - Notifications: a long-lived task subscribes to the client's
 //!   notification stream and re-emits each one as a Tauri event so the
 //!   Svelte side can listen via `listen("query:batch", ...)`.
-//!
-//! For Phase 13 packaging, the daemon will be split into a sidecar
-//! process; the Tauri side stops calling `sourcerer_indexd::spawn_at`
-//! and instead spawns the binary, then connects to the same socket.
-//! The `Daemon` struct's surface stays identical across that swap.
 
 use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 
-use sourcerer_indexd::{DaemonOptions, DaemonState};
 use sourcerer_rpc::{Client, ClientHandle, SocketPath, default_socket_path};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::OnceCell;
 
 pub struct Daemon {
-    pub state: Arc<DaemonState>,
     pub client: ClientHandle,
-    /// Held so the daemon's accept loop is not dropped before app exit.
-    _server_join: tokio::task::JoinHandle<()>,
-    /// Held so the notification re-emitter survives across calls.
+    /// Held so the sidecar process is killed when the Tauri app exits.
+    /// Wrapped in `Mutex` so `Drop` can take ownership of the child.
+    _child: parking_lot::Mutex<Option<Child>>,
+    /// Held so the notification re-emitter task is kept alive.
     _notif_join: tokio::task::JoinHandle<()>,
     /// Multi-thread runtime owned by the Daemon. Tauri commands enter
     /// this runtime via `Daemon::block_on`.
@@ -39,36 +43,49 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    /// Boot the daemon + connect a client. The returned `Daemon` is
-    /// stored in `app.manage()` and shared across every Tauri command
-    /// via `State<'_, Daemon>`.
+    /// Boot the sidecar daemon + connect a client. The returned
+    /// `Daemon` is held by the lazy `DAEMON` static so every Tauri
+    /// command body shares it.
     pub fn boot(app: &AppHandle) -> anyhow::Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .thread_name("sourcerer-daemon")
+            .thread_name("sourcerer-rpc-client")
             .build()?;
         let runtime = Arc::new(runtime);
         let app_for_emit = app.clone();
         let socket = pick_socket(app);
-        let socket_clone = socket.clone();
-        let opts = DaemonOptions {
-            index_root: app
-                .path()
-                .app_data_dir()
-                .ok()
-                .map(|d| d.join("index")),
-            ..Default::default()
+        let bin = locate_indexd_binary().ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not find `sourcerer-indexd` binary; set `SOURCERER_INDEXD_BIN` or place \
+                 it next to the running app"
+            )
+        })?;
+        // Pass the socket path explicitly via `--socket` so a smoke test
+        // or dev session that overrides `SOURCERER_RPC_SOCKET` is honored
+        // by the spawned daemon.
+        let socket_arg = match &socket {
+            SocketPath::Path(p) => p.display().to_string(),
+            SocketPath::Pipe(p) => p.clone(),
         };
-        let (state, server_join, client, notif_join) = runtime.block_on(async move {
-            let state = DaemonState::open(opts)?;
-            let server_join = sourcerer_indexd::spawn_at(state.clone(), socket_clone.clone()).await?;
-            // A small wait so the listener bind completes before we
-            // try to connect. The listener only writes its socket file
-            // once it has bound; the connect attempt below races that
-            // moment in practice.
-            wait_for_socket(&socket_clone).await;
-            let client = Client::connect(socket_clone.clone()).await?;
-            // Spawn the notification re-emitter.
+        let mut command = Command::new(&bin);
+        command.arg("run").arg("--socket").arg(&socket_arg);
+        if let Some(d) = app.path().app_data_dir().ok().map(|d| d.join("index")) {
+            command.arg("--index-root").arg(d);
+        }
+        command.stdin(Stdio::null());
+        // Inherit stdout/stderr so the daemon's logs flow into the
+        // Tauri app's console. In production the sidecar bundling
+        // story will redirect them to `<index_root>/logs/`.
+        command.stdout(Stdio::inherit());
+        command.stderr(Stdio::inherit());
+        let child = command
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("failed to spawn `{}`: {e}", bin.display()))?;
+
+        let socket_for_connect = socket.clone();
+        let (client, notif_join) = runtime.block_on(async move {
+            wait_for_socket(&socket_for_connect).await;
+            let client = Client::connect(socket_for_connect).await?;
             let mut stream = client.notifications();
             let app = app_for_emit.clone();
             let notif_join = tokio::spawn(async move {
@@ -79,21 +96,17 @@ impl Daemon {
                     }
                 }
             });
-            Ok::<_, anyhow::Error>((state, server_join, client, notif_join))
+            Ok::<_, anyhow::Error>((client, notif_join))
         })?;
         Ok(Self {
-            state,
             client,
-            _server_join: server_join,
+            _child: parking_lot::Mutex::new(Some(child)),
             _notif_join: notif_join,
             runtime,
             socket,
         })
     }
 
-    /// Run an async block on the daemon's runtime. Tauri commands wrap
-    /// their body in this so they can `await` the RPC client without
-    /// needing every command to be `async`.
     pub fn block_on<F, T>(&self, fut: F) -> T
     where
         F: std::future::Future<Output = T>,
@@ -102,9 +115,7 @@ impl Daemon {
     }
 
     /// Convenience: clone the client and run a closure that uses it on
-    /// the daemon's runtime. This avoids the move/borrow conflict that
-    /// arises from `Arc<Daemon>::block_on` capturing `Arc<Daemon>` by
-    /// move in the same expression.
+    /// the daemon's runtime.
     pub fn call<P, R>(&self, method: &'static str, params: P) -> Result<R, sourcerer_rpc::RpcError>
     where
         P: serde::Serialize + Send + 'static,
@@ -128,9 +139,21 @@ impl Daemon {
     }
 }
 
-/// Determine where to listen — we use the per-OS default unless an env
-/// override is set (used by smoke tests to avoid stomping on a running
-/// production daemon).
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        // Kill the spawned daemon so it doesn't outlive the Tauri app.
+        // If the daemon is responsive it would exit cleanly via
+        // `daemon.shutdown` RPC; killing the child handles the
+        // unresponsive case.
+        if let Some(mut child) = self._child.lock().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+/// Determine where to listen — per-OS default unless `SOURCERER_RPC_SOCKET`
+/// is set (smoke tests / dev sessions use the env override).
 fn pick_socket(app: &AppHandle) -> SocketPath {
     if let Ok(path) = std::env::var("SOURCERER_RPC_SOCKET") {
         if path.starts_with(r"\\.\pipe\") || path.starts_with(r"\\?\pipe\") {
@@ -142,36 +165,78 @@ fn pick_socket(app: &AppHandle) -> SocketPath {
     default_socket_path()
 }
 
+/// Locate the `sourcerer-indexd` executable. Order:
+///
+///  1. `SOURCERER_INDEXD_BIN` env var (smoke tests / dev sessions).
+///  2. Sibling of the current Tauri executable (production bundles).
+///  3. `target/{debug,release}/sourcerer-indexd[.exe]` walking up from
+///     `cargo manifest dir` (cargo run / cargo tauri dev workflow).
+///  4. `PATH` lookup (last resort; matches the deployed-binary case).
+fn locate_indexd_binary() -> Option<PathBuf> {
+    if let Ok(v) = std::env::var("SOURCERER_INDEXD_BIN") {
+        let p = PathBuf::from(v);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    let exe_name = if cfg!(windows) {
+        "sourcerer-indexd.exe"
+    } else {
+        "sourcerer-indexd"
+    };
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(dir) = cur.parent() {
+            let sibling = dir.join(exe_name);
+            if sibling.exists() {
+                return Some(sibling);
+            }
+            for profile in ["debug", "release"] {
+                let candidate = dir.join("..").join(profile).join(exe_name);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    // PATH fallback.
+    if let Ok(path_var) = std::env::var("PATH") {
+        let sep = if cfg!(windows) { ';' } else { ':' };
+        for dir in path_var.split(sep) {
+            let candidate = PathBuf::from(dir).join(exe_name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 async fn wait_for_socket(socket: &SocketPath) {
     use std::time::Duration;
     let mut tries = 0;
     loop {
         let ready = match socket {
             SocketPath::Path(p) => p.exists(),
-            // On Windows the named-pipe is created at listen time, but
-            // ConnectNamedPipe blocks until a client connects; the
-            // client side will retry on PIPE_BUSY anyway. We don't gate
-            // on existence here.
+            // On Windows the named-pipe is created at listen time; the
+            // client side retries on PIPE_BUSY / NOT_FOUND anyway.
             SocketPath::Pipe(_) => true,
         };
         if ready {
             return;
         }
-        if tries > 50 {
+        if tries > 250 {
             tracing::warn!(?socket, "socket did not appear; client.connect will fail");
             return;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(40)).await;
         tries += 1;
     }
 }
 
-/// Lazily-initialized handle used by `[#tauri::command]` bodies that
-/// need an `Arc<Daemon>`. We can't store `Daemon` directly in
-/// `tauri::State` and also pass it across `tokio::spawn` boundaries —
-/// the runtime is owned by `Daemon`, and we want the spawned tasks to
-/// outlive the command return. Instead, we put `Arc<Daemon>` inside a
-/// `OnceCell` so every command body resolves to the same daemon.
+/// Lazily-initialized handle used by `[#tauri::command]` bodies. We
+/// can't store `Daemon` directly in `tauri::State` and pass it across
+/// `tokio::spawn` boundaries simultaneously; the OnceCell pattern lets
+/// every command body resolve to the same daemon.
 static DAEMON: OnceCell<Arc<Daemon>> = OnceCell::const_new();
 
 pub fn install(daemon: Arc<Daemon>) {
