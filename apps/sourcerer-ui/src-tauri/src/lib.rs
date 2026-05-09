@@ -103,6 +103,7 @@ pub fn run() {
             commands::settings::settings_get,
             commands::settings::settings_set,
             commands::settings::settings_reset,
+            commands::settings::settings_apply_to_daemon,
             // File operations (mostly UI-side, preview/thumbnail dispatch to host).
             commands::files::files_open,
             commands::files::files_reveal,

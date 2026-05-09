@@ -28,14 +28,49 @@
 
   let selected = $derived(volumesStore.list.find((v) => v.id === selectedId) ?? null);
 
-  function patchTopLevel(p: { auto_include_fixed?: boolean; auto_include_removable?: boolean; auto_remove_offline?: boolean }) {
+  /// The auto-include checkboxes live alongside per-volume overrides
+  /// in the daemon's `VolumesConfig`. Their state lives in the settings
+  /// store under `volumes_config`; on patch we round-trip through the
+  /// daemon via `settings.apply` so the daemon's state honors the flip
+  /// immediately.
+  type VolumesConfigPatch = {
+    auto_include_fixed?: boolean;
+    auto_include_removable?: boolean;
+    auto_remove_offline?: boolean;
+  };
+  let volsCfg = $derived(volsConfigFromStore());
+  function volsConfigFromStore(): {
+    auto_include_fixed: boolean;
+    auto_include_removable: boolean;
+    auto_remove_offline: boolean;
+  } {
+    const extras =
+      (settingsStore.state as unknown as { extras?: Record<string, unknown> }).extras ?? {};
+    const vc = (extras.volumes_config as VolumesConfigPatch | undefined) ?? {};
+    return {
+      auto_include_fixed: vc.auto_include_fixed ?? true,
+      auto_include_removable: vc.auto_include_removable ?? false,
+      auto_remove_offline: vc.auto_remove_offline ?? true
+    };
+  }
+
+  async function patchTopLevel(p: VolumesConfigPatch) {
+    const extras =
+      (settingsStore.state as unknown as { extras?: Record<string, unknown> }).extras ?? {};
+    const cur = (extras.volumes_config as VolumesConfigPatch | undefined) ?? {};
+    const next = { ...cur, ...p };
     settingsStore.patch({
-      extras: {
-        ...((settingsStore.state as unknown as { extras?: Record<string, unknown> }).extras ?? {}),
-        volumes_config: p
-      }
+      extras: { ...extras, volumes_config: next }
     } as never);
     settingsDialog.markDirty("indexes.volumes");
+    // Push the change to the daemon's settings.apply so VolumesConfig
+    // updates immediately (rather than only on the dialog's Apply).
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("settings_apply_to_daemon", { state: settingsStore.state });
+    } catch (e) {
+      console.warn("[volumes] settings.apply failed:", e);
+    }
   }
 
   let busyVol = $state<string | null>(null);
@@ -95,11 +130,11 @@ NTFS / ReFS / exFAT / FAT32 (Win), APFS / HFS+ (macOS), ext4 / Btrfs / ZFS / XFS
 
 <Section title="Auto-include (E)">
   <Checkbox id="vols-auto-fixed" label="Automatically include new fixed volumes"
-    checked={true} onChange={(v) => patchTopLevel({ auto_include_fixed: v })} />
+    checked={volsCfg.auto_include_fixed} onChange={(v) => patchTopLevel({ auto_include_fixed: v })} />
   <Checkbox id="vols-auto-removable" label="Automatically include new removable volumes"
-    checked={false} onChange={(v) => patchTopLevel({ auto_include_removable: v })} />
+    checked={volsCfg.auto_include_removable} onChange={(v) => patchTopLevel({ auto_include_removable: v })} />
   <Checkbox id="vols-auto-remove-offline" label="Automatically remove offline volumes"
-    checked={true} onChange={(v) => patchTopLevel({ auto_remove_offline: v })} />
+    checked={volsCfg.auto_remove_offline} onChange={(v) => patchTopLevel({ auto_remove_offline: v })} />
 </Section>
 
 <div class="split">

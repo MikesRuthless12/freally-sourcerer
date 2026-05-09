@@ -107,6 +107,11 @@ export interface QueryBatch {
   done: boolean;
 }
 
+export interface QueryDone {
+  handle: string;
+  timings: LensTimings;
+}
+
 // ---- index.state ----
 
 export type IndexPhase = "indexing" | "indexed" | "paused" | "error";

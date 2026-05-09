@@ -138,18 +138,8 @@ fn pick_socket(app: &AppHandle) -> SocketPath {
         }
         return SocketPath::Path(PathBuf::from(path));
     }
-    // Per-app sandboxed default — keeps two parallel Sourcerer installs
-    // (e.g. dev + prod) from colliding on the same socket name.
-    let base = app
-        .path()
-        .app_data_dir()
-        .ok()
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(std::env::temp_dir);
-    let _ = std::fs::create_dir_all(&base);
-    let _ = base; // silence unused on windows where we use pipe instead
-    let default = default_socket_path();
-    default
+    let _ = app;
+    default_socket_path()
 }
 
 async fn wait_for_socket(socket: &SocketPath) {

@@ -17,7 +17,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use wasmtime::{Caller, Config, Engine, Linker, Memory, Module, Store};
+use wasmtime::{Caller, Config, Engine, Linker, Memory, Module, ResourceLimiter, Store};
 
 use crate::manifest::Manifest;
 
@@ -43,6 +43,12 @@ pub enum HostError {
 
     #[error("guest is missing export `{0}`")]
     MissingExport(&'static str),
+
+    #[error("extractor `{0}` is not trusted")]
+    NotTrusted(String),
+
+    #[error("extractor `{0}` is disabled (3+ crashes; re-trust to re-enable)")]
+    Disabled(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +73,33 @@ pub struct Section {
 /// State threaded through the wasmtime call.
 struct CallState {
     log_buf: Vec<u8>,
+    memory_budget_bytes: usize,
+}
+
+/// `ResourceLimiter` that rejects linear-memory growth past the per-call
+/// budget at the `memory.grow` syscall — *before* the host process
+/// commits the pages, so a hostile guest cannot OOM the daemon by
+/// declaring a huge memory.grow and then using it before the post-call
+/// check fires.
+impl ResourceLimiter for CallState {
+    fn memory_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        let _ = current;
+        Ok(desired <= self.memory_budget_bytes)
+    }
+
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        _desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        Ok(true)
+    }
 }
 
 pub struct Host {
@@ -90,6 +123,11 @@ impl Host {
     }
 
     /// Run one extraction inside a fresh sandbox.
+    ///
+    /// The caller must enforce trust + disabled state via
+    /// `run_for_entry` (or check `RegistryEntry::state` and call
+    /// `run` directly only when the bypass is intentional, e.g.
+    /// dev-only smoke tests).
     pub fn run(
         &self,
         manifest: &Manifest,
@@ -99,21 +137,29 @@ impl Host {
         let module = Module::from_file(&self.engine, sidecar_path)
             .map_err(|e| HostError::Wasm(e.to_string()))?;
 
+        let memory_budget_bytes = (manifest.memory_budget_mb as usize)
+            .saturating_mul(1024 * 1024);
         let mut store: Store<CallState> = Store::new(
             &self.engine,
             CallState {
                 log_buf: Vec::with_capacity(1024),
+                memory_budget_bytes,
             },
         );
-        // Memory budget: cap each call to manifest.memory_budget_mb.
-        // Wasmtime doesn't have a direct "total memory cap" on the Store,
-        // but we configure the module's memory limit via the Linker's
-        // resource_limiter when needed. For Phase 12 we use the simpler
-        // approach of measuring memory after the call and rejecting if
-        // the guest grew beyond budget.
-        // CPU budget: 1 fuel unit ≈ 1 wasm instruction. Default budget
-        // gives ~1B instructions per second; a 1s budget is ~1B fuel.
-        let fuel = (manifest.time_budget_ms as u64) * 1_000_000;
+        // Wire the ResourceLimiter so memory growth is rejected at the
+        // `memory.grow` syscall — *before* the kernel commits pages.
+        // The post-call check is kept as a defense-in-depth for the
+        // edge case where a guest declares a memory size at instantiate
+        // time larger than the budget.
+        store.limiter(|state| state as &mut dyn ResourceLimiter);
+        // CPU budget. Wasmtime fuel ≈ 1 unit per wasm instruction; a
+        // typical CPU executes 1-10B instructions per second. The
+        // budget formula here aims for 1ms ≈ 1M fuel, so a 1000ms
+        // budget gives ~1B fuel, which corresponds to roughly one
+        // second of wasm work on a typical CPU. A more accurate bound
+        // requires runtime calibration; Phase 13 records executed
+        // fuel + wall-clock per call to refine.
+        let fuel = (manifest.time_budget_ms as u64).saturating_mul(1_000_000);
         store
             .set_fuel(fuel)
             .map_err(|e| HostError::Wasm(e.to_string()))?;
@@ -129,7 +175,10 @@ impl Host {
                         Some(m) => m,
                         None => return,
                     };
-                    let mut buf = vec![0_u8; len.min(4096) as usize];
+                    // Guard against negative len (i32 → usize would
+                    // wrap to ~4 GiB). Cap at 4 KiB.
+                    let len = (len.max(0) as usize).min(4096);
+                    let mut buf = vec![0_u8; len];
                     let _ = mem.read(&mut caller, ptr as usize, &mut buf);
                     if let Ok(s) = std::str::from_utf8(&buf) {
                         tracing::debug!(extractor_log = s);
@@ -178,15 +227,23 @@ impl Host {
                 resp_len
             )));
         }
+        // Pointer arithmetic guard: reject `resp_ptr + resp_len` overflow
+        // even though `Memory::read` does its own bounds-check; explicit
+        // is clearer than relying on wasmtime's internal handling.
+        resp_ptr
+            .checked_add(resp_len)
+            .ok_or_else(|| HostError::BadOutput("result pointer arithmetic overflow".into()))?;
         let mut out = vec![0_u8; resp_len];
         memory
             .read(&store, resp_ptr, &mut out)
             .map_err(|e| HostError::Wasm(e.to_string()))?;
 
-        // Memory-budget check (post hoc).
+        // Memory-budget defense-in-depth (the ResourceLimiter above
+        // already rejects growth at the syscall level; this catches
+        // the case where the module's declared initial memory is over
+        // budget at instantiate time).
         let used_bytes = memory.data_size(&store);
-        let budget = (manifest.memory_budget_mb as usize) * 1024 * 1024;
-        if used_bytes > budget {
+        if used_bytes > memory_budget_bytes {
             return Err(HostError::OutOfMemory(manifest.memory_budget_mb));
         }
 
@@ -196,6 +253,26 @@ impl Host {
             return Err(HostError::Guest(msg.clone()));
         }
         Ok(resp)
+    }
+}
+
+impl Host {
+    /// Trust-aware entry point — refuses to load a sidecar whose
+    /// registry state has `trusted = false` or `disabled = true`.
+    /// Production callers go through this; only smoke tests bypass
+    /// via the bare `run()` method.
+    pub fn run_for_entry(
+        &self,
+        entry: &crate::registry::RegistryEntry,
+        request: &ExtractRequest,
+    ) -> Result<ExtractResponse, HostError> {
+        if !entry.state.trusted {
+            return Err(HostError::NotTrusted(entry.manifest.id.clone()));
+        }
+        if entry.state.disabled {
+            return Err(HostError::Disabled(entry.manifest.id.clone()));
+        }
+        self.run(&entry.manifest, &entry.sidecar_path, request)
     }
 }
 

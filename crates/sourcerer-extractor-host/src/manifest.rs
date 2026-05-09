@@ -21,6 +21,12 @@ pub enum ManifestError {
 
     #[error("invalid magic byte spec `{0}`")]
     InvalidMagic(String),
+
+    #[error("manifest id `{0}` contains characters outside [A-Za-z0-9._-]")]
+    InvalidId(String),
+
+    #[error("manifest sidecar path `{0}` is absolute or contains `..`")]
+    SidecarTraversal(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +62,31 @@ impl Manifest {
         }
         if m.formats.is_empty() {
             return Err(ManifestError::NoFormats);
+        }
+        // Validate `id` characters — the id is keyed in registry maps
+        // *and* surfaced in user-facing UI text. Reject anything outside
+        // `[A-Za-z0-9._-]` so a hostile manifest with a Unicode RTL
+        // override or a control character cannot spoof a legitimate
+        // entry's display name.
+        if m.id.is_empty()
+            || !m
+                .id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+        {
+            return Err(ManifestError::InvalidId(m.id.clone()));
+        }
+        // Validate sidecar — must be a single path component (no
+        // separators, no `..`, not absolute) so the join below cannot
+        // escape the extractor's directory.
+        if m.sidecar.contains("..")
+            || m.sidecar.starts_with('/')
+            || m.sidecar.starts_with('\\')
+            || std::path::Path::new(&m.sidecar)
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::RootDir))
+        {
+            return Err(ManifestError::SidecarTraversal(m.sidecar.clone()));
         }
         let sidecar_path = toml_path
             .parent()

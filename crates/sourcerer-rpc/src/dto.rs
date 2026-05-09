@@ -31,6 +31,25 @@ pub struct QueryHit {
     pub score: f32,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PerLensLimits {
+    pub filename: u32,
+    pub content: u32,
+    pub audio: u32,
+    pub similarity: u32,
+}
+
+impl Default for PerLensLimits {
+    fn default() -> Self {
+        Self {
+            filename: 200,
+            content: 50,
+            audio: 20,
+            similarity: 10,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct LensTimings {
     pub filename_ms: f32,

@@ -707,6 +707,67 @@ fn validate_and_clamp(s: &mut SettingsState) -> Result<(), String> {
     Ok(())
 }
 
+/// Phase 12 settings → daemon apply hook. Forwards the index-affecting
+/// fields to `sourcerer-indexd::settings.apply` so toggles like
+/// extractor mode / memory budget / time budget / auto-include-volume
+/// flags take effect live.
+#[tauri::command]
+pub fn settings_apply_to_daemon(state: SettingsState) -> Result<(), String> {
+    let daemon = crate::daemon::get().ok_or_else(|| "daemon not initialized".to_string())?;
+    let extras = &state.extras;
+    let lens_content = extras.get("lens_content");
+    let volumes_config = extras.get("volumes_config");
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "default_extractor_mode".into(),
+        serde_json::Value::String(
+            if state.privacy_mode {
+                "lazy".to_string()
+            } else {
+                lens_content
+                    .and_then(|v| v.get("enabled"))
+                    .and_then(|v| v.as_bool())
+                    .map(|on| if on { "lazy".to_string() } else { "disabled".to_string() })
+                    .unwrap_or_else(|| "lazy".to_string())
+            },
+        ),
+    );
+    payload.insert(
+        "extractor_memory_mb".into(),
+        serde_json::Value::Number(
+            (lens_content
+                .and_then(|v| v.get("memory_ceiling_mb"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(256))
+            .into(),
+        ),
+    );
+    payload.insert(
+        "extractor_time_ms".into(),
+        serde_json::Value::Number(
+            (lens_content
+                .and_then(|v| v.get("time_budget_ms"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(5000))
+            .into(),
+        ),
+    );
+    if let Some(vc) = volumes_config {
+        if let Some(b) = vc.get("auto_include_fixed").and_then(|v| v.as_bool()) {
+            payload.insert("auto_include_fixed".into(), serde_json::Value::Bool(b));
+        }
+        if let Some(b) = vc.get("auto_include_removable").and_then(|v| v.as_bool()) {
+            payload.insert("auto_include_removable".into(), serde_json::Value::Bool(b));
+        }
+        if let Some(b) = vc.get("auto_remove_offline").and_then(|v| v.as_bool()) {
+            payload.insert("auto_remove_offline".into(), serde_json::Value::Bool(b));
+        }
+    }
+    daemon
+        .call_void("settings.apply", serde_json::Value::Object(payload))
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn settings_reset(store: State<'_, SettingsStore>) -> SettingsState {
     let next = SettingsState::defaults();

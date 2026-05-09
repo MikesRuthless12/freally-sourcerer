@@ -46,8 +46,20 @@ pub struct QueryRunHandle {
     pub handle: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PerLensLimits {
+    pub filename: u32,
+    pub content: u32,
+    pub audio: u32,
+    pub similarity: u32,
+}
+
 #[tauri::command]
-pub fn query_run(source: String) -> Result<QueryRunHandle, String> {
+pub fn query_run(
+    source: String,
+    strict_everything: Option<bool>,
+    per_lens_limits: Option<PerLensLimits>,
+) -> Result<QueryRunHandle, String> {
     let bounded = if source.len() > MAX_QUERY_SOURCE_LEN {
         let mut end = MAX_QUERY_SOURCE_LEN;
         while !source.is_char_boundary(end) {
@@ -58,9 +70,20 @@ pub fn query_run(source: String) -> Result<QueryRunHandle, String> {
         source
     };
     let daemon = daemon::get().ok_or_else(|| "daemon not initialized".to_string())?;
-    let res: sourcerer_rpc::QueryRunHandle = daemon
-        .call("query.run", serde_json::json!({ "source": bounded }))
-        .map_err(|e| e.to_string())?;
+    let mut params = serde_json::json!({
+        "source": bounded,
+        "strict_everything": strict_everything.unwrap_or(false),
+    });
+    if let Some(limits) = per_lens_limits {
+        params["per_lens_limits"] = serde_json::json!({
+            "filename": limits.filename,
+            "content": limits.content,
+            "audio": limits.audio,
+            "similarity": limits.similarity,
+        });
+    }
+    let res: sourcerer_rpc::QueryRunHandle =
+        daemon.call("query.run", params).map_err(|e| e.to_string())?;
     Ok(QueryRunHandle { handle: res.handle })
 }
 

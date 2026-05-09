@@ -373,19 +373,8 @@ class SettingsStore {
   async applyToDaemon() {
     try {
       await invoke("settings_apply_to_daemon", { state: this.state });
-    } catch {
-      // Best-effort. The daemon may not have a dedicated handler for
-      // every field; the ones it does have land via settings.apply.
-      try {
-        const apply = {
-          default_extractor_mode: this.state.lens_content.enabled ? "lazy" : "disabled",
-          extractor_memory_mb: this.state.lens_content.memory_ceiling_mb,
-          extractor_time_ms: this.state.lens_content.time_budget_ms
-        };
-        await invoke("settings_apply_to_daemon_payload", apply);
-      } catch {
-        /* daemon is the source of truth — UI flip is non-fatal */
-      }
+    } catch (e) {
+      console.warn("[settings] settings.apply daemon round-trip failed:", e);
     }
   }
 

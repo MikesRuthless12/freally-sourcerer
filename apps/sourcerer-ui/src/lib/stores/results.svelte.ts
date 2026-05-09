@@ -1,11 +1,19 @@
 // Results store — last query handle + per-lens batches + lens timings.
 //
-// Sequence-guarded: superseded `run()` calls cancel the prior handle (so
-// the daemon can drop work + reclaim memory) and discard their own results
-// if a newer keystroke kicked off in the meantime.
+// Phase 12 streaming model: the daemon emits `query:batch` notifications
+// per lens (re-emitted as Tauri events by `daemon.rs`) plus a final
+// `query:done` notification carrying the lens timings. The store listens
+// for both, accumulates batches keyed by handle, and discards anything
+// that doesn't match the active handle (defends against a stale
+// notification arriving after a newer keystroke).
+//
+// Sequence-guarded: superseded `run()` calls cancel the prior handle so
+// the daemon can drop in-flight work + reclaim memory.
 
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as ipcQuery from "../ipc/query";
-import type { LensId, LensTimings, QueryBatch, QueryHit } from "../ipc/types";
+import type { LensId, LensTimings, QueryBatch, QueryDone, QueryHit } from "../ipc/types";
+import { settingsStore } from "./settings.svelte";
 
 interface RunningQuery {
   handle: string;
@@ -19,6 +27,36 @@ class ResultsStore {
   timings = $state<LensTimings | null>(null);
   lastQueryMs = $state(0);
   private seq = 0;
+  private batchUnlisten: UnlistenFn | null = null;
+  private doneUnlisten: UnlistenFn | null = null;
+
+  async ensureListeners() {
+    if (this.batchUnlisten && this.doneUnlisten) return;
+    if (!this.batchUnlisten) {
+      this.batchUnlisten = await listen<QueryBatch>("query:batch", (e) => {
+        const batch = e.payload;
+        const cur = this.running;
+        if (!cur || cur.handle !== batch.handle) return;
+        // Replace any prior batch for the same lens (handles partial
+        // streaming where the daemon emits multiple batches per lens —
+        // for Phase 12 each lens emits one batch; keep the contract
+        // forward-compatible).
+        const next = this.batches.filter((b) => b.lens !== batch.lens);
+        next.push(batch);
+        this.batches = next;
+      });
+    }
+    if (!this.doneUnlisten) {
+      this.doneUnlisten = await listen<QueryDone>("query:done", (e) => {
+        const done = e.payload;
+        const cur = this.running;
+        if (!cur || cur.handle !== done.handle) return;
+        this.timings = done.timings;
+        this.lastQueryMs = Math.round(performance.now() - cur.startedAt);
+        this.running = null;
+      });
+    }
+  }
 
   async run(source: string) {
     const my = ++this.seq;
@@ -40,16 +78,19 @@ class ResultsStore {
       this.lastQueryMs = 0;
       return;
     }
+    await this.ensureListeners();
     const t0 = performance.now();
     let handle: string;
     try {
-      ({ handle } = await ipcQuery.run(source));
+      ({ handle } = await ipcQuery.run(source, {
+        strict_everything: settingsStore.state.strict_everything_mode,
+        per_lens_limits: settingsStore.state.default_lens_result_limits
+      }));
     } catch (e) {
       console.warn("[results] run failed:", e);
       return;
     }
     if (my !== this.seq) {
-      // Newer keystroke already kicked off; clean up this handle.
       try {
         await ipcQuery.cancel(handle);
       } catch {
@@ -57,42 +98,11 @@ class ResultsStore {
       }
       return;
     }
+    // Empty the batches as soon as a new query starts so the UI doesn't
+    // flash stale results between keystrokes.
+    this.batches = [];
+    this.timings = null;
     this.running = { handle, source, startedAt: t0 };
-    let batches: QueryBatch[];
-    let timings: LensTimings;
-    try {
-      [batches, timings] = await Promise.all([
-        ipcQuery.fetchBatches(handle),
-        ipcQuery.lensTimings(handle)
-      ]);
-    } catch (e) {
-      console.warn("[results] fetch failed:", e);
-      try {
-        await ipcQuery.cancel(handle);
-      } catch {
-        /* best-effort */
-      }
-      return;
-    }
-    if (my !== this.seq) {
-      try {
-        await ipcQuery.cancel(handle);
-      } catch {
-        /* best-effort */
-      }
-      return;
-    }
-    this.batches = batches;
-    this.timings = timings;
-    this.lastQueryMs = Math.round(performance.now() - t0);
-    // Once results are in, the handle's daemon-side state is no longer
-    // needed — drop it so the mock's HashMap cap stays small.
-    try {
-      await ipcQuery.cancel(handle);
-    } catch {
-      /* best-effort */
-    }
-    if (my === this.seq) this.running = null;
   }
 
   async cancel() {

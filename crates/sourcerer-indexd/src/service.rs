@@ -154,6 +154,10 @@ impl Service for IndexdService {
 #[derive(Debug, Deserialize)]
 struct QueryRunParams {
     source: String,
+    #[serde(default)]
+    strict_everything: bool,
+    #[serde(default)]
+    per_lens_limits: Option<sourcerer_rpc::PerLensLimits>,
 }
 
 async fn query_run(
@@ -174,10 +178,19 @@ async fn query_run(
 
     let svc_for_task = svc.clone();
     let handle_for_task = handle.clone();
+    let strict = p.strict_everything;
+    let limits = p.per_lens_limits;
     tokio::spawn(async move {
-        let timings =
-            run_query_streaming(svc_for_task.clone(), &handle_for_task, p.source, cancel, sink)
-                .await;
+        let timings = run_query_streaming(
+            svc_for_task.clone(),
+            &handle_for_task,
+            p.source,
+            strict,
+            limits,
+            cancel,
+            sink,
+        )
+        .await;
         if let Some(entry) = svc_for_task.handles.lock().await.get_mut(&handle_for_task) {
             entry.timings = timings;
         }
@@ -214,24 +227,63 @@ async fn run_query_streaming(
     svc: Arc<IndexdService>,
     handle: &str,
     source: String,
+    strict_everything: bool,
+    per_lens_limits: Option<sourcerer_rpc::PerLensLimits>,
     cancel: Arc<AtomicBool>,
     sink: NotificationSink,
 ) -> LensTimings {
-    let _ = svc;
-    let _ = source;
-    let _ = cancel;
-    let timings = LensTimings::default();
+    let started = std::time::Instant::now();
+    let mut timings = LensTimings::default();
     let lenses = [
         LensId::Filename,
         LensId::Content,
         LensId::Audio,
         LensId::Similarity,
     ];
+
+    let parse_opts = if strict_everything {
+        sourcerer_query::ParseOpts::strict()
+    } else {
+        sourcerer_query::ParseOpts::default()
+    };
+    let parsed = sourcerer_query::parse_with(&source, parse_opts);
+
     for lens in lenses {
+        if cancel.load(Ordering::Acquire) {
+            let _ = sink
+                .send(sourcerer_rpc::Notification::new(
+                    "query:cancelled",
+                    json!({ "handle": handle }),
+                ))
+                .await;
+            return timings;
+        }
+        let lens_started = std::time::Instant::now();
+        let hits = match (lens, &parsed) {
+            (LensId::Filename, Ok(query)) => filename_lens_hits(
+                handle,
+                &svc.state,
+                query,
+                per_lens_limits.as_ref().map(|l| l.filename).unwrap_or(200),
+            )
+            .await,
+            // Other lenses (content / audio / similarity) wait on their
+            // executor wiring; for Phase 12 we surface an empty batch
+            // that the UI's lens-grouped renderer treats as "no hits"
+            // rather than as an error. Phase 13 lights up these paths.
+            _ => Vec::new(),
+        };
+        let elapsed_ms = lens_started.elapsed().as_secs_f32() * 1000.0;
+        match lens {
+            LensId::Filename => timings.filename_ms = elapsed_ms,
+            LensId::Content => timings.content_ms = elapsed_ms,
+            LensId::Audio => timings.audio_ms = elapsed_ms,
+            LensId::Similarity => timings.similarity_ms = elapsed_ms,
+        }
         let batch = QueryBatch {
             handle: handle.to_string(),
             lens,
-            hits: Vec::new(),
+            hits,
             done: true,
         };
         if let Err(e) = sink
@@ -245,6 +297,7 @@ async fn run_query_streaming(
             return timings;
         }
     }
+    timings.total_ms = started.elapsed().as_secs_f32() * 1000.0;
     let done = QueryDone {
         handle: handle.to_string(),
         timings,
@@ -256,6 +309,42 @@ async fn run_query_streaming(
         ))
         .await;
     timings
+}
+
+/// Run a parsed query through the real `sourcerer-query` executor against
+/// the daemon's `Index`. Empty queries / parse errors / unsupported
+/// modifiers return no hits rather than propagating the error — the UI's
+/// search bar already surfaces parse errors via the local `query.parse`
+/// IPC, so the daemon stays terse here.
+async fn filename_lens_hits(
+    handle: &str,
+    state: &DaemonState,
+    query: &sourcerer_query::Query,
+    limit: u32,
+) -> Vec<sourcerer_rpc::QueryHit> {
+    let _ = handle;
+    let opts = sourcerer_query::ExecOpts {
+        limit: limit as usize,
+        ..Default::default()
+    };
+    let result = sourcerer_query::execute(state.index.as_ref(), query, opts);
+    let rows = match result {
+        Ok(rs) => rs.collect(),
+        Err(_) => return Vec::new(),
+    };
+    rows.into_iter()
+        .map(|row| sourcerer_rpc::QueryHit {
+            file_id: row.file_id.to_string(),
+            lens: LensId::Filename,
+            name: row.name,
+            path: row.path.to_string_lossy().into_owned(),
+            ext: row.ext.clone().unwrap_or_default(),
+            size: row.size,
+            modified_ms: (row.mtime_ns / 1_000_000) as u64,
+            kind: row.ext.unwrap_or_else(|| "file".into()).to_uppercase(),
+            score: 1.0,
+        })
+        .collect()
 }
 
 // ---------- index ----------
@@ -298,28 +387,31 @@ async fn index_rebuild(_svc: &IndexdService) -> Result<Value, RpcError> {
 
 // ---------- extractors ----------
 
+/// Static, exhaustive list of built-in extractor ids. The daemon
+/// rejects any `extractors.set_mode` call whose `id` isn't in this
+/// table — this is what makes `ExtractorId::new(&'static str)` safe
+/// to call without leaking memory at runtime.
+const BUILTIN_EXTRACTORS: &[(&str, &str, &[&str])] = &[
+    ("plain_text", "Plain text + Markdown", &["txt", "md"]),
+    ("pdf", "PDF", &["pdf"]),
+    ("xlsx", "Excel (.xlsx)", &["xlsx"]),
+    ("docx", "Word (.docx)", &["docx"]),
+    ("pptx", "PowerPoint (.pptx)", &["pptx"]),
+    ("code", "Code (tree-sitter)", &["rs", "py", "js", "ts", "go"]),
+    ("archive_peek", "Archive peek", &["zip", "7z", "tar"]),
+    ("structured", "Structured data", &["json", "csv", "yaml"]),
+];
+
 async fn extractors_list(svc: &IndexdService) -> Result<Value, RpcError> {
     let pipeline = svc.state.pipeline.read().await;
     let snapshot = pipeline.settings_snapshot();
-    use sourcerer_extractors::extractors as ext;
-    let entries = vec![
-        ("plain_text", "Plain text + Markdown", vec!["txt", "md"]),
-        ("pdf", "PDF", vec!["pdf"]),
-        ("xlsx", "Excel (.xlsx)", vec!["xlsx"]),
-        ("docx", "Word (.docx)", vec!["docx"]),
-        ("pptx", "PowerPoint (.pptx)", vec!["pptx"]),
-        ("code", "Code (tree-sitter)", vec!["rs", "py", "js", "ts", "go"]),
-        ("archive_peek", "Archive peek", vec!["zip", "7z", "tar"]),
-        ("structured", "Structured data", vec!["json", "csv", "yaml"]),
-    ];
-    let _ = ext::default_pipeline; // tie compile-time link
-    let infos: Vec<ExtractorInfo> = entries
-        .into_iter()
+    let infos: Vec<ExtractorInfo> = BUILTIN_EXTRACTORS
+        .iter()
         .map(|(id, dn, fmts)| ExtractorInfo {
-            id: id.to_string(),
-            display_name: dn.to_string(),
+            id: (*id).to_string(),
+            display_name: (*dn).to_string(),
             mode: into_dto_mode(snapshot.effective_mode(sourcerer_extractors::ExtractorId::new(id))),
-            formats: fmts.into_iter().map(String::from).collect(),
+            formats: fmts.iter().map(|s| s.to_string()).collect(),
         })
         .collect();
     Ok(serde_json::to_value(infos)?)
@@ -349,10 +441,21 @@ struct ExtractorsSetModeParams {
 
 async fn extractors_set_mode(svc: &IndexdService, params: Value) -> Result<Value, RpcError> {
     let p: ExtractorsSetModeParams = serde_json::from_value(params)?;
+    // Look up the user-supplied id in the static known-id table so
+    // `ExtractorId::new(&'static str)` is fed a `&'static` literal and
+    // we don't `Box::leak` user input on every set-mode call.
+    let id_static = BUILTIN_EXTRACTORS
+        .iter()
+        .find_map(|(id, _, _)| if *id == p.id { Some(*id) } else { None })
+        .ok_or_else(|| RpcError::Remote {
+            code: codes::NOT_FOUND,
+            message: format!("unknown extractor id: {}", p.id),
+            data: None,
+        })?;
     let pipeline = svc.state.pipeline.write().await;
     let mut snapshot = pipeline.settings_snapshot();
     snapshot.set_mode(
-        sourcerer_extractors::ExtractorId::new(Box::leak(p.id.clone().into_boxed_str())),
+        sourcerer_extractors::ExtractorId::new(id_static),
         from_dto_mode(p.mode),
     );
     pipeline.replace_settings(snapshot);

@@ -18,7 +18,7 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use sourcerer_indexd::{DaemonOptions, DaemonState, spawn_default};
+use sourcerer_indexd::{DaemonOptions, DaemonState};
 use std::sync::Arc;
 
 #[cfg(windows)]
@@ -141,18 +141,10 @@ fn run_foreground(index_root: Option<String>, socket: Option<String>) -> Result<
     Ok(())
 }
 
-#[allow(dead_code)]
 fn parse_socket_arg(s: &str) -> sourcerer_rpc::SocketPath {
     if s.starts_with(r"\\.\pipe\") || s.starts_with(r"\\?\pipe\") {
         sourcerer_rpc::SocketPath::Pipe(s.to_string())
     } else {
         sourcerer_rpc::SocketPath::Path(std::path::PathBuf::from(s))
     }
-}
-
-// Re-export `spawn_default` so `sourcerer-indexd run` (or a sidecar
-// embedder) can call into it from the binary side.
-#[allow(dead_code)]
-fn _link_spawn_default() {
-    let _ = spawn_default::<>;
 }
