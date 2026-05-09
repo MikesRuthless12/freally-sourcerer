@@ -275,7 +275,11 @@ impl Host {
     }
 }
 
-fn classify_trap(e: anyhow::Error, manifest: &Manifest) -> HostError {
+/// Classifier accepts any error whose `Display` impl carries the trap
+/// message — wasmtime upgraded its public error type from
+/// `anyhow::Error` to its own `wasmtime::Error` between 26 and 44; the
+/// generic signature insulates this code from that detail.
+fn classify_trap<E: std::fmt::Display>(e: E, manifest: &Manifest) -> HostError {
     let s = e.to_string();
     if s.contains("all fuel consumed") {
         return HostError::Timeout(manifest.time_budget_ms);

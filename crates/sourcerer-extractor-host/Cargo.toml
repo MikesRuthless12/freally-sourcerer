@@ -17,7 +17,7 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 toml = "0.8"
 blake3 = "1"
-wasmtime = { version = "26", default-features = false, features = ["cranelift", "runtime"] }
+wasmtime = { version = "44", default-features = false, features = ["cranelift", "runtime"] }
 
 [dev-dependencies]
 tempfile = "3"
