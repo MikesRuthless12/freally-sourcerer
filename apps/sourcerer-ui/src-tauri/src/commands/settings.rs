@@ -107,6 +107,12 @@ pub struct SettingsState {
     pub extractor_modes: HashMap<String, String>,
     pub first_run_complete: bool,
     pub privacy_mode: bool,
+    /// Phase 12 top-level fields — every PRD §8.2-§8.27 control whose
+    /// value lives in SettingsState lands here. The TS side owns the
+    /// typed schema; the Rust side persists + clamps where needed.
+    /// Captured via `#[serde(flatten)]` so the on-disk JSON stays flat.
+    #[serde(flatten)]
+    pub extras: HashMap<String, serde_json::Value>,
 }
 
 fn default_thumb_size() -> ThumbSize {
@@ -186,8 +192,281 @@ impl SettingsState {
             extractor_modes: HashMap::new(),
             first_run_complete: false,
             privacy_mode: false,
+            extras: phase_12_default_extras(),
         }
     }
+}
+
+/// Defaults for every Phase 12 top-level setting. Matches the shape the
+/// TS-side SettingsStore expects on first launch. Keep this list in
+/// lockstep with `SettingsState` in `apps/sourcerer-ui/src/lib/ipc/types.ts`.
+fn phase_12_default_extras() -> HashMap<String, serde_json::Value> {
+    let lens_vis = serde_json::json!({
+        "filename": true,
+        "content": true,
+        "audio": true,
+        "similarity": true,
+    });
+    let lens_limits = serde_json::json!({
+        "filename": 200,
+        "content": 50,
+        "audio": 20,
+        "similarity": 10,
+    });
+    let mut m = HashMap::new();
+    let pairs: Vec<(&str, serde_json::Value)> = vec![
+        // §8.2 General → UI
+        ("run_in_background", true.into()),
+        ("show_tray_icon", true.into()),
+        ("single_click_tray", false.into()),
+        ("open_new_window_from_tray", false.into()),
+        ("open_new_window_when_launching", false.into()),
+        ("search_as_you_type", true.into()),
+        ("select_search_on_mouse_click", true.into()),
+        ("focus_search_on_activate", true.into()),
+        ("full_row_select", true.into()),
+        ("single_click_open", "system_settings".into()),
+        ("underline_icon_titles", "system_settings".into()),
+        ("animated_theme_crossfade", true.into()),
+        // §8.3 General → Home
+        ("default_match_case", "use_last".into()),
+        ("default_match_whole_word", "use_last".into()),
+        ("default_match_path", "use_last".into()),
+        ("default_match_diacritics", "use_last".into()),
+        ("default_match_regex", "use_last".into()),
+        ("default_search", "".into()),
+        ("default_filter", "use_last".into()),
+        ("default_sort", "use_last".into()),
+        ("default_view", "use_last".into()),
+        ("default_index", "local".into()),
+        ("default_file_list", "".into()),
+        (
+            "default_https_endpoint",
+            serde_json::json!({ "url": "", "token_fingerprint": "" }),
+        ),
+        ("default_lens_visibility", lens_vis.clone()),
+        ("default_lens_result_limits", lens_limits),
+        // §8.4 General → Search
+        ("fast_ascii_search", true.into()),
+        ("match_path_when_term_contains_separator", true.into()),
+        ("match_whole_filename_with_wildcards", true.into()),
+        ("allow_literal_operators", true.into()),
+        ("allow_round_bracket_grouping", true.into()),
+        ("expand_environment_variables", true.into()),
+        ("replace_forward_with_backslashes", false.into()),
+        ("operator_precedence", "or_first".into()),
+        ("strict_everything_mode", false.into()),
+        ("auto_detect_regex", true.into()),
+        ("modifier_completions", true.into()),
+        ("show_parse_tree_on_hover", false.into()),
+        // §8.5 General → Results
+        ("hide_results_when_empty", false.into()),
+        ("clear_selection_on_search", true.into()),
+        ("close_window_on_execute", false.into()),
+        ("open_path_with_double_click_in_path_column", false.into()),
+        ("automatically_scroll_view", true.into()),
+        ("double_quote_copy_as_path", false.into()),
+        ("do_not_select_extension_when_renaming", true.into()),
+        ("sort_date_descending_first", true.into()),
+        ("sort_size_descending_first", true.into()),
+        ("result_list_focus", "clamp".into()),
+        ("load_icon_priority", "normal".into()),
+        ("load_thumbnail_priority", "normal".into()),
+        ("load_extended_information_priority", "normal".into()),
+        ("group_by_lens", true.into()),
+        ("show_snippet_preview_inline", true.into()),
+        // §8.6 General → View
+        ("double_buffer", true.into()),
+        ("alternate_row_color", false.into()),
+        ("show_row_mouseover", false.into()),
+        ("show_highlighted_search_terms", true.into()),
+        ("show_selected_item_in_status_bar", true.into()),
+        ("show_result_count_with_selection_count", false.into()),
+        ("show_tooltips", true.into()),
+        ("update_display_immediately_after_scrolling", true.into()),
+        ("size_format", "auto_binary".into()),
+        ("selection_rectangle", "system".into()),
+        ("show_lufs_codec_length_badges", true.into()),
+        ("show_minhash_similarity_score", true.into()),
+        ("preview_pane", "right".into()),
+        // §8.7 Context Menu — defaults populate every entry as `show`
+        // with an empty command-string macro; the user sets specifics.
+        (
+            "context_menu",
+            context_menu_defaults(),
+        ),
+        // §8.8 Fonts & Colors
+        ("fonts_and_colors", fonts_and_colors_defaults()),
+        // §8.9 Keyboard
+        (
+            "keyboard",
+            serde_json::json!({
+                "new_window_hotkey": "",
+                "show_window_hotkey": "",
+                "toggle_window_hotkey": "",
+                "per_action": [],
+            }),
+        ),
+        // §8.11 Indexes top-level
+        (
+            "index_core",
+            serde_json::json!({
+                "database_location": "",
+                "multi_user_database_filename": false,
+                "compress_database": true,
+                "index_recent_changes": true,
+                "index_file_size": true,
+                "fast_size_sort": true,
+                "index_folder_size": false,
+                "fast_folder_size_sort": false,
+                "index_date_created": false,
+                "fast_date_created_sort": false,
+                "index_date_modified": true,
+                "fast_date_modified_sort": true,
+                "index_date_accessed": false,
+                "fast_date_accessed_sort": false,
+                "index_attributes": false,
+                "fast_attributes_sort": false,
+                "fast_path_sort": true,
+                "fast_extension_sort": false,
+                "integrity_policy": "strict",
+                "memory_budget_mb": 1024,
+                "background_throttle": "off",
+            }),
+        ),
+        // §8.16 Lenses → Filename
+        (
+            "lens_filename",
+            serde_json::json!({
+                "trigram_aggressiveness": "normal",
+                "suffix_array_memory_mb": 256,
+                "wildcard_expansion_limit": 100000,
+                "regex_timeout_ms": 100,
+            }),
+        ),
+        // §8.17 Lenses → Content
+        (
+            "lens_content",
+            serde_json::json!({
+                "enabled": true,
+                "per_format": {},
+                "time_budget_ms": 5000,
+                "memory_ceiling_mb": 256,
+                "snippet_length": 200,
+                "stop_words_language": "auto",
+                "re_extract_on_settings_change": false,
+                "verify_blob_checksums_on_read": true,
+            }),
+        ),
+        // §8.18 Lenses → Audio
+        (
+            "lens_audio",
+            serde_json::json!({
+                "enabled": true,
+                "per_format": {},
+                "lufs_reference": "ebu_r128",
+                "peak_compute": "true_peak",
+                "silence_threshold_dbfs": -60,
+                "re_extract_on_modify": true,
+            }),
+        ),
+        // §8.19 Lenses → Similarity
+        (
+            "lens_similarity",
+            serde_json::json!({
+                "enabled": true,
+                "signature_size": 128,
+                "bands": 16,
+                "recall_threshold": 0.95,
+                "result_cap": 50,
+            }),
+        ),
+        // §8.23 Privacy & Updates
+        (
+            "privacy_and_updates",
+            serde_json::json!({
+                "auto_update": "default",
+                "pre_release_channel": false,
+            }),
+        ),
+        // §8.24 Logs & Debug
+        (
+            "logs_and_debug",
+            serde_json::json!({
+                "log_level": "info",
+                "log_file_location": "",
+                "log_retention_mb": 50,
+                "show_debug_overlay": false,
+            }),
+        ),
+        // §8.26 Locale
+        (
+            "locale_settings",
+            serde_json::json!({
+                "locale": "en",
+                "rtl_preview": false,
+                "date_format": "os",
+                "date_format_custom": "",
+                "number_format": "os",
+                "thousands_separator": ",",
+                "decimal_separator": ".",
+            }),
+        ),
+    ];
+    for (k, v) in pairs {
+        m.insert(k.to_string(), v);
+    }
+    m
+}
+
+fn context_menu_defaults() -> serde_json::Value {
+    fn entry(cmd: &str) -> serde_json::Value {
+        serde_json::json!({ "visibility": "show", "command": cmd })
+    }
+    serde_json::json!({
+        "open_folders": entry(""),
+        "open_files": entry(""),
+        "open_path": entry(""),
+        "explore": entry(""),
+        "explore_path": entry(""),
+        "copy_name": entry(""),
+        "copy_path": entry(""),
+        "copy_full_name": entry(""),
+        "reveal_in_sourcerer": entry(""),
+        "send_to_sourcerer": entry(""),
+    })
+}
+
+fn fonts_and_colors_defaults() -> serde_json::Value {
+    fn item_state() -> serde_json::Value {
+        serde_json::json!({
+            "fg": null,
+            "bg": null,
+            "bold": false,
+            "italic": false,
+        })
+    }
+    serde_json::json!({
+        "font": "default",
+        "size_px": 13,
+        "states": {
+            "normal": item_state(),
+            "highlighted": item_state(),
+            "current_sort": item_state(),
+            "current_sort_highlighted": item_state(),
+            "selected": item_state(),
+            "selected_highlighted": item_state(),
+            "inactive_selected": item_state(),
+            "inactive_selected_highlighted": item_state(),
+        },
+        "per_lens_accent": {
+            "filename": null,
+            "content": null,
+            "audio": null,
+            "similarity": null,
+        },
+        "theme_inheritance_toggle": true,
+    })
 }
 
 fn default_hotkey() -> String {
@@ -253,7 +532,10 @@ pub fn settings_get(store: State<'_, SettingsStore>) -> SettingsState {
 
 // H17: top-level patch keys must belong to the SettingsState schema. Any
 // extra keys are rejected so a hostile patch can't bloat the on-disk file.
+// Phase 12 added 70+ keys for the settings dialog — they're all listed here
+// so the allowlist still catches typos and never-touched keys.
 const ALLOWED_PATCH_KEYS: &[&str] = &[
+    // Phase 11 carry-over.
     "theme",
     "locale",
     "show_status_bar",
@@ -273,6 +555,92 @@ const ALLOWED_PATCH_KEYS: &[&str] = &[
     "extractor_modes",
     "first_run_complete",
     "privacy_mode",
+    // §8.2 General → UI.
+    "run_in_background",
+    "show_tray_icon",
+    "single_click_tray",
+    "open_new_window_from_tray",
+    "open_new_window_when_launching",
+    "search_as_you_type",
+    "select_search_on_mouse_click",
+    "focus_search_on_activate",
+    "full_row_select",
+    "single_click_open",
+    "underline_icon_titles",
+    "animated_theme_crossfade",
+    // §8.3 General → Home.
+    "default_match_case",
+    "default_match_whole_word",
+    "default_match_path",
+    "default_match_diacritics",
+    "default_match_regex",
+    "default_search",
+    "default_filter",
+    "default_sort",
+    "default_view",
+    "default_index",
+    "default_file_list",
+    "default_https_endpoint",
+    "default_lens_visibility",
+    "default_lens_result_limits",
+    // §8.4 General → Search.
+    "fast_ascii_search",
+    "match_path_when_term_contains_separator",
+    "match_whole_filename_with_wildcards",
+    "allow_literal_operators",
+    "allow_round_bracket_grouping",
+    "expand_environment_variables",
+    "replace_forward_with_backslashes",
+    "operator_precedence",
+    "strict_everything_mode",
+    "auto_detect_regex",
+    "modifier_completions",
+    "show_parse_tree_on_hover",
+    // §8.5 General → Results.
+    "hide_results_when_empty",
+    "clear_selection_on_search",
+    "close_window_on_execute",
+    "open_path_with_double_click_in_path_column",
+    "automatically_scroll_view",
+    "double_quote_copy_as_path",
+    "do_not_select_extension_when_renaming",
+    "sort_date_descending_first",
+    "sort_size_descending_first",
+    "result_list_focus",
+    "load_icon_priority",
+    "load_thumbnail_priority",
+    "load_extended_information_priority",
+    "group_by_lens",
+    "show_snippet_preview_inline",
+    // §8.6 General → View.
+    "double_buffer",
+    "alternate_row_color",
+    "show_row_mouseover",
+    "show_highlighted_search_terms",
+    "show_selected_item_in_status_bar",
+    "show_result_count_with_selection_count",
+    "show_tooltips",
+    "update_display_immediately_after_scrolling",
+    "size_format",
+    "selection_rectangle",
+    "show_lufs_codec_length_badges",
+    "show_minhash_similarity_score",
+    "preview_pane",
+    // §8.7-§8.9 grouped panels.
+    "context_menu",
+    "fonts_and_colors",
+    "keyboard",
+    // §8.11 Indexes top-level.
+    "index_core",
+    // §8.16-§8.19 Lenses.
+    "lens_filename",
+    "lens_content",
+    "lens_audio",
+    "lens_similarity",
+    // §8.23-§8.26.
+    "privacy_and_updates",
+    "logs_and_debug",
+    "locale_settings",
 ];
 
 const MAX_HOTKEY_LEN: usize = 64;

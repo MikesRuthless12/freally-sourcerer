@@ -8,7 +8,7 @@
   import FirstRunWizard from "./components/wizard/FirstRunWizard.svelte";
   import OrganizeBookmarksDialog from "./components/bookmarks/OrganizeBookmarksDialog.svelte";
   import AboutDialog from "./components/dialogs/AboutDialog.svelte";
-  import SettingsPlaceholderDialog from "./components/dialogs/SettingsPlaceholderDialog.svelte";
+  import SettingsDialog from "./components/settings/SettingsDialog.svelte";
   import { bootstrap } from "./lib/bootstrap";
   import { dialogsStore } from "./lib/stores/dialogs.svelte";
 
@@ -34,8 +34,8 @@
   open={dialogsStore.active === "about"}
   onClose={() => dialogsStore.close()}
 />
-<SettingsPlaceholderDialog
-  open={dialogsStore.active === "settings_placeholder"}
+<SettingsDialog
+  open={dialogsStore.active === "settings"}
   onClose={() => dialogsStore.close()}
 />
 

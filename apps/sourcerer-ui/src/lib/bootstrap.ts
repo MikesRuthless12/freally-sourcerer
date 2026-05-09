@@ -165,10 +165,10 @@ async function exitApp() {
 function registerHandlers() {
   // ---- File ----
   registry.register("file.new_window", async () => {
-    dialogsStore.open("settings_placeholder");
+    dialogsStore.open("settings");
   });
   registry.register("file.open_file_list", async () => {
-    dialogsStore.open("settings_placeholder");
+    dialogsStore.open("settings");
   });
   registry.register("file.close_file_list", async () => {
     // No file list active in Phase 11 — clear the result set.
@@ -209,7 +209,7 @@ function registerHandlers() {
     }
   });
   registry.register("file.export_index_bundle", async () => {
-    dialogsStore.open("settings_placeholder");
+    dialogsStore.open("settings");
   });
   registry.register("file.exit", async () => exitApp());
 
@@ -281,7 +281,7 @@ function registerHandlers() {
   registry.register("view.filters", async () => {
     // Quick-filters palette is always visible in Phase 11; toggle status_bar
     // shows/hides the chip strip indirectly via a Phase-12 setting.
-    dialogsStore.open("settings_placeholder");
+    dialogsStore.open("settings");
   });
   registry.register("view.preview", async () =>
     settingsStore.patch({ show_preview: !settingsStore.state.show_preview })
@@ -409,7 +409,7 @@ function registerHandlers() {
   for (const [id, key] of Object.entries(searchToggleIds)) {
     registry.register(id as CommandId, async () => searchOptsStore.toggle(key));
   }
-  registry.register("search.advanced", async () => dialogsStore.open("settings_placeholder"));
+  registry.register("search.advanced", async () => dialogsStore.open("settings"));
   registry.register("search.add_to_filters", async () => {
     if (queryStore.source.trim()) {
       await bookmarksStore.add(`Filter: ${queryStore.source.slice(0, 60)}`, queryStore.source);
@@ -436,7 +436,7 @@ function registerHandlers() {
           await queryStore.setSource("");
           await resultsStore.run("");
         } else if (id === "search.filter.custom") {
-          dialogsStore.open("settings_placeholder");
+          dialogsStore.open("settings");
         }
         return;
       }
@@ -463,14 +463,14 @@ function registerHandlers() {
   registry.register("tools.disconnect_endpoint", async () =>
     settingsStore.patch({ endpoint: { name: "Local DB", kind: "local" } })
   );
-  registry.register("tools.file_list_editor", async () => dialogsStore.open("settings_placeholder"));
+  registry.register("tools.file_list_editor", async () => dialogsStore.open("settings"));
   registry.register("tools.custom_extractor_manager", async () =>
     dialogsStore.open("custom_extractor_manager")
   );
   registry.register("tools.verify_index", async () => indexIpc.verify());
   registry.register("tools.compact_index", async () => indexIpc.compact());
   registry.register("tools.rebuild_index", async () => indexIpc.rebuild());
-  registry.register("tools.options", async () => dialogsStore.open("settings_placeholder"));
+  registry.register("tools.options", async () => dialogsStore.open("settings"));
 
   // ---- Help ----
   const helpUrls: Record<string, string> = {
