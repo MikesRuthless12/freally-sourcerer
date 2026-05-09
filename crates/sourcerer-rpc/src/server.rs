@@ -106,6 +106,21 @@ async fn run_accept_loop<S: Service>(cfg: ServerConfig, service: Arc<S>) -> Resu
     }
 }
 
+/// Public test helper: drive a single connection's accept-loop body on
+/// any AsyncRead+AsyncWrite (e.g. `tokio::io::duplex`). Used by the
+/// Phase 12 smoke tests so we don't have to spin up a real OS socket
+/// for the simpler unit-shaped tests.
+pub async fn handle_connection_for_tests<S, T>(
+    stream: T,
+    service: Arc<S>,
+) -> Result<(), RpcError>
+where
+    S: Service,
+    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    handle_connection(stream, service).await
+}
+
 async fn handle_connection<S, T>(stream: T, service: Arc<S>) -> Result<(), RpcError>
 where
     S: Service,
