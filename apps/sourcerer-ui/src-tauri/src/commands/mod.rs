@@ -1,20 +1,27 @@
-//! Tauri command surface for the Phase 11 UI.
+//! Tauri command surface for the Phase 12 UI.
 //!
-//! Phase 11 ships a *mock* backend: deterministic canned-data
-//! generators feed the UI so the Rule #10 wiring (every control bound,
-//! state round-trips, etc.) can be exercised end-to-end without a
-//! running `sourcerer-indexd`. Phase 12+ swaps the implementations
-//! behind these commands to the real daemon — UI types do not change.
+//! Phase 12 swapped Phase 11's mock IPC layer for a real
+//! `sourcerer-indexd` connection over `sourcerer-rpc`. Each command
+//! body runs inside the daemon's tokio runtime — see `daemon.rs` —
+//! and dispatches via `RpcClient::call(method, params)`. Streaming
+//! results (`query.run`) flow through Tauri events emitted by the
+//! daemon's notification stream.
 //!
-//! `query_parse` is the single exception: it routes to the real
-//! `sourcerer-query::parse_to_report` so live tokenization in the
-//! search bar matches the production parser exactly.
+//! `query_parse` remains the single in-process command: live
+//! tokenization in the search bar must match the production parser
+//! exactly, and round-tripping through the daemon would add a
+//! sub-millisecond keystroke-rate cost we don't need.
 
 pub mod bookmarks;
-pub mod canned;
+pub mod custom_extractors;
+pub mod excludes;
 pub mod extractors;
 pub mod files;
+pub mod folders;
+pub mod history;
 pub mod index_state;
 pub mod known_paths;
+pub mod network;
 pub mod query;
 pub mod settings;
+pub mod volumes;
