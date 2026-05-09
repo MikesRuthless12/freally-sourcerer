@@ -56,6 +56,7 @@ use std::time::Duration;
 
 pub mod blob;
 pub mod error;
+pub mod extractors;
 pub mod pipeline;
 pub mod queue;
 pub mod sandbox;

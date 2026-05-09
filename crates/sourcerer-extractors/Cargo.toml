@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish.workspace = true
-description = "Sourcerer extractor framework — trait, dispatch, queue, blob store (Phase 7)."
+description = "Sourcerer extractor framework + Phase 8 format extractors (plain-text, PDF, Office, code, archive-peek, structured-data)."
 
 [lib]
 path = "src/lib.rs"
@@ -21,6 +21,65 @@ parking_lot = "0.12"
 blake3 = "1"
 zstd = "0.13"
 memmap2 = "0.9"
+
+# Phase 8 — format extractors.
+# Office / archive-peek / OOXML helpers
+zip = { version = "5", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd"] }
+quick-xml = "0.39"
+calamine = "0.34"
+sevenz-rust2 = "0.21"
+tar = "0.4"
+
+# Structured-data (JSON / CSV / YAML)
+csv = "1"
+serde_yaml_ng = "0.10"
+
+# PDF — pure-Rust (pdf-rs ecosystem), MIT
+pdf-extract = "0.10"
+
+# Code extractor — tree-sitter + per-language grammars.
+# Runtime — pinned to 0.25 because several grammars in this set (notably
+# tree-sitter-clojure 0.1) still link against the 0.25 runtime; cargo's
+# `links = "tree-sitter"` rule rejects mixed runtime versions.
+tree-sitter = "0.25"
+# Core eight (Build Guide named set)
+tree-sitter-rust = "0.24"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.25"
+tree-sitter-java = "0.23"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+# Extended language coverage
+tree-sitter-c-sharp = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-bash = "0.25"
+tree-sitter-lua = "0.5"
+tree-sitter-php = "0.24"
+tree-sitter-kotlin-ng = "1.1"
+tree-sitter-scala = "0.26"
+tree-sitter-swift = "0.7"
+tree-sitter-haskell = "0.23"
+tree-sitter-ocaml = "0.24"
+tree-sitter-elixir = "0.3"
+tree-sitter-erlang = "0.16"
+tree-sitter-clojure = "0.1"
+tree-sitter-elm = "5.9"
+tree-sitter-dart = "0.2"
+tree-sitter-r = "1.2"
+tree-sitter-julia = "0.23"
+tree-sitter-zig = "1.1"
+tree-sitter-nix = "0.3"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-yaml = "0.7"
+tree-sitter-json = "0.24"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.25"
+tree-sitter-sequel = "0.3"
+# tree-sitter-dockerfile excluded: 0.2.0 still binds to tree-sitter 0.20 which
+# conflicts with our 0.25 runtime via the cargo `links = "tree-sitter"` rule.
+# Dockerfiles fall through to the plain-text extractor for now.
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

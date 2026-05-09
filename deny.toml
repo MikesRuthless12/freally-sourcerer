@@ -29,6 +29,11 @@ allow = [
     "Unicode-3.0",
     "Zlib",
     "MPL-2.0",
+    # bzip2-1.0.6 is a 4-clause-style permissive license used by libbz2-rs-sys
+    # (transitive via the `bzip2` feature on the `zip` crate + sevenz-rust2).
+    # FSF lists it as a free, GPL-compatible license; required for archive-peek
+    # to enumerate `.tar.bz2` and bzip2-compressed zip / 7z entries.
+    "bzip2-1.0.6",
     # Project license (Mike Weaver — All Rights Reserved). Applies to in-tree crates
     # only; cargo-deny treats it as an opaque LicenseRef and never propagates it.
     "LicenseRef-MikeWeaver-Proprietary-AllRightsReserved",
