@@ -14,8 +14,8 @@
 use std::ffi::{OsStr, c_void};
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result};
 use sourcerer_index::service_index_root;

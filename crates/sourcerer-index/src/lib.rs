@@ -270,8 +270,7 @@ impl Index {
                     if batch.len() >= 8192 {
                         self.store.bulk_upsert(&batch)?;
                         for r in &batch {
-                            self.name_index
-                                .upsert(r.file_id as u64, &r.name_lower)?;
+                            self.name_index.upsert(r.file_id as u64, &r.name_lower)?;
                         }
                         rebuilt += batch.len() as u64;
                         batch.clear();
@@ -627,10 +626,7 @@ fn clamp_i64(v: i128) -> i64 {
 /// `Index::finalize_bootstrap` to rebuild the SQLite + name_index
 /// after the Tantivy-only fast scan. Returns `None` if any required
 /// field is missing.
-fn doc_to_file_row(
-    doc: &tantivy::TantivyDocument,
-    fields: &schema::Fields,
-) -> Option<FileRow> {
+fn doc_to_file_row(doc: &tantivy::TantivyDocument, fields: &schema::Fields) -> Option<FileRow> {
     use tantivy::schema::Value;
     let file_id = doc.get_first(fields.file_id)?.as_u64()? as i64;
     let name = doc.get_first(fields.name)?.as_str()?.to_string();

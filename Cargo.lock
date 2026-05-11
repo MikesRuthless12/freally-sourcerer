@@ -2633,6 +2633,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sourcerer-fsbench"
+version = "0.19.84"
+dependencies = [
+ "anyhow",
+ "clap",
+ "libc",
+ "walkdir",
+]
+
+[[package]]
 name = "sourcerer-http"
 version = "0.19.84"
 dependencies = [

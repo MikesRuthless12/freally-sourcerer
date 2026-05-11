@@ -1,0 +1,22 @@
+[package]
+name = "sourcerer-fsbench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+description = "Synthetic-tree generator + fast-enumeration verifier for Sourcerer's macOS / Linux bootstrap walkers (Phase 13 perf work)."
+
+[[bin]]
+name = "sourcerer-fsbench"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+walkdir = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
