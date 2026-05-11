@@ -71,6 +71,34 @@ jobs:
       - name: xtask i18n-lint
         run: cargo run -p xtask -- i18n-lint
 
+      - name: Phase 13 — fsbench smoke (macOS + Linux only)
+        # Exercises the OS-specific fast walker (getattrlistbulk on
+        # macOS, getdents64 + statx on Linux) against a 50k-file
+        # synthetic tree and asserts it agrees with the walkdir
+        # baseline. Skips on Windows — there's no platform-specific
+        # fast path on Windows; the binary just falls back to walkdir
+        # so the comparison would be tautological.
+        if: runner.os == 'macOS' || runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p sourcerer-fsbench --release
+          bin=./target/release/sourcerer-fsbench
+          tmpdir=$(mktemp -d)
+          trap 'rm -rf "$tmpdir"' EXIT
+          "$bin" gen --root "$tmpdir/tree" --count 50000
+          fast=$("$bin" scan --root "$tmpdir/tree" \
+            | grep -oE '[0-9]+ file\(s\), [0-9]+ dir\(s\), [0-9]+ bytes')
+          base=$("$bin" scan --root "$tmpdir/tree" --baseline \
+            | grep -oE '[0-9]+ file\(s\), [0-9]+ dir\(s\), [0-9]+ bytes')
+          echo "fast path : $fast"
+          echo "baseline  : $base"
+          if [ "$fast" != "$base" ]; then
+            echo "::error::fsbench fast path and walkdir baseline disagree"
+            exit 1
+          fi
+          echo "::notice::fsbench fast path matches baseline ($fast)"
+
       - name: Install cargo-deny
         # `EmbarkStudios/cargo-deny-action@v2` is a Docker container
         # action — `Container action is only supported on Linux` on
