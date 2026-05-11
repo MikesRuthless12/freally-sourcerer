@@ -1,8 +1,69 @@
 <script lang="ts">
-  import { MENU_BAR, type MenuRoot, type MenuNode } from "../../lib/commands/menu_spec";
-  import { registry } from "../../lib/commands/registry";
+  import { MENU_BAR, type MenuRoot, type MenuNode, type MenuItemSpec } from "../../lib/commands/menu_spec";
+  import type { CommandId } from "../../lib/commands/ids";
+  import { registry } from "../../lib/commands/registry.svelte";
   import { menuHoverStore } from "../../lib/stores/menu_hover.svelte";
+  import { searchOptsStore } from "../../lib/stores/search_opts.svelte";
+  import { settingsStore } from "../../lib/stores/settings.svelte";
+  import { sortStore } from "../../lib/stores/sort.svelte";
+  import { typeFilterStore, type TypeFilterId } from "../../lib/stores/type_filter.svelte";
   import BookmarksDropdown from "../bookmarks/BookmarksDropdown.svelte";
+
+  const SORT_FIELD_BY_ID: Record<string, string> = {
+    "view.sort.name": "name",
+    "view.sort.path": "path",
+    "view.sort.size": "size",
+    "view.sort.ext": "ext",
+    "view.sort.type": "type",
+    "view.sort.modified": "modified",
+    "view.sort.lufs": "lufs",
+    "view.sort.length": "length",
+    "view.sort.similarity": "similarity"
+  };
+  const FILTER_ID_BY_MENU_ID: Record<string, TypeFilterId> = {
+    "search.filter.audio": "audio",
+    "search.filter.compressed": "compressed",
+    "search.filter.document": "document",
+    "search.filter.executable": "executable",
+    "search.filter.folder": "folder",
+    "search.filter.picture": "picture",
+    "search.filter.video": "video"
+  };
+
+  function isItemEnabled(item: MenuItemSpec): boolean {
+    // The "Disconnect" command should only be live when the user has
+    // actually connected to a remote endpoint. Local DB = nothing to
+    // disconnect from, so grey it out (voidtools-Everything parity).
+    if (item.id === "tools.disconnect_endpoint") {
+      return settingsStore.state.endpoint?.kind !== "local";
+    }
+    return true;
+  }
+
+  function isItemChecked(item: MenuItemSpec): boolean {
+    const id: CommandId = item.id;
+    if (id === "search.match_case") return searchOptsStore.get("match_case");
+    if (id === "search.match_whole_word") return searchOptsStore.get("match_whole_word");
+    if (id === "search.match_path") return searchOptsStore.get("match_path");
+    if (id === "search.match_diacritics") return searchOptsStore.get("match_diacritics");
+    if (id === "search.enable_regex") return searchOptsStore.get("enable_regex");
+    if (id === "view.theme.system") return settingsStore.state.theme === "system";
+    if (id === "view.theme.light") return settingsStore.state.theme === "light";
+    if (id === "view.theme.dark") return settingsStore.state.theme === "dark";
+    if (id === "view.sort.ascending") return sortStore.order === "asc";
+    if (id === "view.sort.descending") return sortStore.order === "desc";
+    if (id === "view.lens.filename") return settingsStore.state.lens_visibility.filename;
+    if (id === "view.lens.content") return settingsStore.state.lens_visibility.content;
+    if (id === "view.lens.audio") return settingsStore.state.lens_visibility.audio;
+    if (id === "view.lens.similarity") return settingsStore.state.lens_visibility.similarity;
+    if (id === "view.on_top.never") return settingsStore.state.on_top === "never";
+    if (id === "view.on_top.always") return settingsStore.state.on_top === "always";
+    if (id === "view.on_top.while_searching") return settingsStore.state.on_top === "while_searching";
+    if (id in SORT_FIELD_BY_ID) return sortStore.field === SORT_FIELD_BY_ID[id];
+    if (id === "search.filter.everything") return typeFilterStore.isEverythingChecked();
+    if (id in FILTER_ID_BY_MENU_ID) return typeFilterStore.has(FILTER_ID_BY_MENU_ID[id]!);
+    return false;
+  }
 
   let openIdx = $state<number | null>(null);
   let openSubmenuPath = $state<string | null>(null);
@@ -93,6 +154,7 @@
           toggle(i);
           if (openIdx !== null) menuHoverStore.set(root.hint);
         }}
+        onclick={(e) => e.stopPropagation()}
         onmouseenter={() => onRootEnter(root, i)}
         onkeydown={(e) => rootKey(e, i, root)}
       >
@@ -133,6 +195,7 @@
                     openSubmenuPath = isSubmenuOpen(subKey) ? null : subKey;
                   }}
                 >
+                  <span class="check" aria-hidden="true"></span>
                   <span class="label">{child.label}</span>
                   <span class="caret" aria-hidden="true">▸</span>
                 </button>
@@ -142,10 +205,12 @@
                       {#if gc.kind === "separator"}
                         <div class="sep" role="separator"></div>
                       {:else if gc.kind === "item"}
+                        {@const gcChecked = isItemChecked(gc)}
                         <button
                           type="button"
                           class="item"
-                          role="menuitem"
+                          role={gc.radio ? "menuitemradio" : gc.checkable ? "menuitemcheckbox" : "menuitem"}
+                          aria-checked={gc.radio || gc.checkable ? gcChecked : undefined}
                           aria-keyshortcuts={gc.accelerator}
                           onmouseenter={() => onItemEnter(gc, child.hint ?? root.hint)}
                           onfocus={() => onItemEnter(gc, child.hint ?? root.hint)}
@@ -154,6 +219,7 @@
                             void fire(gc);
                           }}
                         >
+                          <span class="check" aria-hidden="true">{gcChecked ? "✓" : ""}</span>
                           <span class="label">{gc.label}</span>
                           {#if gc.accelerator}
                             <span class="accel">{gc.accelerator}</span>
@@ -165,18 +231,26 @@
                 {/if}
               </div>
             {:else}
+              {@const childChecked = isItemChecked(child)}
+              {@const childEnabled = isItemEnabled(child)}
               <button
                 type="button"
                 class="item"
-                role="menuitem"
+                class:disabled={!childEnabled}
+                disabled={!childEnabled}
+                role={child.radio ? "menuitemradio" : child.checkable ? "menuitemcheckbox" : "menuitem"}
+                aria-checked={child.radio || child.checkable ? childChecked : undefined}
+                aria-disabled={!childEnabled}
                 aria-keyshortcuts={child.accelerator}
                 onmouseenter={() => onItemEnter(child, root.hint)}
                 onfocus={() => onItemEnter(child, root.hint)}
                 onclick={(e) => {
                   e.stopPropagation();
+                  if (!childEnabled) return;
                   void fire(child);
                 }}
               >
+                <span class="check" aria-hidden="true">{childChecked ? "✓" : ""}</span>
                 <span class="label">{child.label}</span>
                 {#if child.accelerator}
                   <span class="accel">{child.accelerator}</span>
@@ -255,8 +329,21 @@
   .submenu-row.submenu-open .submenu-trigger {
     background: var(--bg-surface-2);
   }
+  .item.disabled {
+    color: var(--text-secondary);
+    opacity: 0.55;
+    pointer-events: none;
+  }
   .submenu-row {
     position: relative;
+  }
+  .check {
+    width: 14px;
+    margin-right: 8px;
+    color: var(--accent-cyan);
+    font-size: 12px;
+    text-align: center;
+    flex-shrink: 0;
   }
   .label {
     flex: 1;

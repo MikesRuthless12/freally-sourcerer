@@ -15,6 +15,8 @@
   async function addFolder() {
     const picked = await openDialog({ directory: true, multiple: false });
     if (typeof picked === "string") {
+      // Don't re-add a folder that's already in the list.
+      if (excludesStore.rules.folders.includes(picked)) return;
       patch({ folders: [...excludesStore.rules.folders, picked] });
     }
   }
@@ -33,24 +35,47 @@
     patch({ folders: all });
   }
 
-  function excludeByClass(cls: "video" | "audio" | "image" | "archive" | "executable") {
-    const exts: Record<typeof cls, string[]> = {
-      video: ["mp4", "mkv", "avi", "mov", "webm"],
-      audio: ["mp3", "wav", "flac", "ogg", "aac", "m4a", "aiff"],
-      image: ["jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff"],
-      archive: ["zip", "7z", "tar", "gz", "rar", "bz2"],
-      executable: ["exe", "msi", "app", "dmg", "deb", "rpm"]
-    };
-    const list = exts[cls].map((e) => `*.${e}`).join(";");
+  type Cls = "video" | "audio" | "image" | "archive" | "executable";
+  const CLASS_EXTS: Record<Cls, string[]> = {
+    video: ["mp4", "mkv", "avi", "mov", "webm"],
+    audio: ["mp3", "wav", "flac", "ogg", "aac", "m4a", "aiff"],
+    image: ["jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff"],
+    archive: ["zip", "7z", "tar", "gz", "rar", "bz2"],
+    executable: ["exe", "msi", "app", "dmg", "deb", "rpm"]
+  };
+
+  function currentGlobs(): Set<string> {
     const cur = excludesStore.rules.exclude_files ?? "";
-    const next = cur.length > 0 ? `${cur};${list}` : list;
-    patch({ exclude_files: next });
+    const set = new Set<string>();
+    for (const part of cur.split(";")) {
+      const trimmed = part.trim();
+      if (trimmed.length > 0) set.add(trimmed);
+    }
+    return set;
+  }
+
+  /** A class is "active" iff every one of its extensions is already in
+   *  the exclude-files glob list. Used to drive button highlight state. */
+  function isClassActive(cls: Cls): boolean {
+    const set = currentGlobs();
+    return CLASS_EXTS[cls].every((e) => set.has(`*.${e}`));
+  }
+
+  function toggleClass(cls: Cls) {
+    const set = currentGlobs();
+    const active = CLASS_EXTS[cls].every((e) => set.has(`*.${e}`));
+    if (active) {
+      for (const e of CLASS_EXTS[cls]) set.delete(`*.${e}`);
+    } else {
+      for (const e of CLASS_EXTS[cls]) set.add(`*.${e}`);
+    }
+    patch({ exclude_files: Array.from(set).join(";") });
   }
 </script>
 
 <h1>Exclude</h1>
 
-<Section title="Top-level (E)">
+<Section title="Top-level">
   <Checkbox id="ex-hidden" label="Exclude hidden files and folders"
     checked={excludesStore.rules.exclude_hidden} onChange={(v) => patch({ exclude_hidden: v })} />
   <Checkbox id="ex-system" label="Exclude system files and folders"
@@ -59,7 +84,7 @@
     checked={excludesStore.rules.list_enabled} onChange={(v) => patch({ list_enabled: v })} />
 </Section>
 
-<Section title="Exclude folders (E)">
+<Section title="Exclude folders">
   <ul>
     {#each excludesStore.rules.folders as f, i (f + i)}
       <li>
@@ -73,7 +98,7 @@
   </div>
 </Section>
 
-<Section title="File globs (E)">
+<Section title="File globs">
   <TextInput id="ex-include-only" label="Include only files (glob)"
     value={excludesStore.rules.include_only_files ?? ""}
     onChange={(v) => patch({ include_only_files: v.length === 0 ? null : v })} />
@@ -86,11 +111,16 @@
   <button type="button" onclick={applyOsRecommended}>Apply OS-recommended excludes</button>
   <div class="cls-row">
     <span>Exclude by extension class:</span>
-    <button type="button" onclick={() => excludeByClass("video")}>Video</button>
-    <button type="button" onclick={() => excludeByClass("audio")}>Audio</button>
-    <button type="button" onclick={() => excludeByClass("image")}>Image</button>
-    <button type="button" onclick={() => excludeByClass("archive")}>Archive</button>
-    <button type="button" onclick={() => excludeByClass("executable")}>Executable</button>
+    <button type="button" class:active={isClassActive("video")}
+      aria-pressed={isClassActive("video")} onclick={() => toggleClass("video")}>Video</button>
+    <button type="button" class:active={isClassActive("audio")}
+      aria-pressed={isClassActive("audio")} onclick={() => toggleClass("audio")}>Audio</button>
+    <button type="button" class:active={isClassActive("image")}
+      aria-pressed={isClassActive("image")} onclick={() => toggleClass("image")}>Image</button>
+    <button type="button" class:active={isClassActive("archive")}
+      aria-pressed={isClassActive("archive")} onclick={() => toggleClass("archive")}>Archive</button>
+    <button type="button" class:active={isClassActive("executable")}
+      aria-pressed={isClassActive("executable")} onclick={() => toggleClass("executable")}>Executable</button>
   </div>
 </Section>
 
@@ -100,6 +130,11 @@
   li { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--border); color: var(--text-primary); font-size: 13px; }
   li:last-child { border-bottom: 0; }
   button { padding: 3px 10px; background: var(--bg-canvas); border: 1px solid var(--border); color: var(--text-primary); border-radius: 3px; cursor: pointer; font: inherit; }
+  button.active {
+    background: color-mix(in srgb, var(--accent-cyan) 30%, transparent);
+    border-color: var(--accent-cyan);
+    color: var(--text-primary);
+  }
   .actions { margin-top: 6px; }
   .cls-row { display: flex; gap: 6px; align-items: center; padding: 6px 0; flex-wrap: wrap; color: var(--text-primary); font-size: 13px; }
 </style>

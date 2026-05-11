@@ -1,7 +1,7 @@
 <script lang="ts" module>
   function journalLabel(fs: string): string {
     const f = fs.toLowerCase();
-    if (f === "ntfs" || f === "refs" || f === "exfat" || f === "fat32") return "Enable USN Journal (E)";
+    if (f === "ntfs" || f === "refs" || f === "exfat" || f === "fat32") return "Enable USN Journal";
     if (f === "apfs" || f === "hfs+") return "Enable FSEvents stream";
     return "Enable inotify (or fanotify if elevated)";
   }
@@ -128,7 +128,7 @@
 <p class="hint">Cross-platform analogue of voidtools-Everything's NTFS / ReFS panels. Auto-detects
 NTFS / ReFS / exFAT / FAT32 (Win), APFS / HFS+ (macOS), ext4 / Btrfs / ZFS / XFS / F2FS (Linux).</p>
 
-<Section title="Auto-include (E)">
+<Section title="Auto-include">
   <Checkbox id="vols-auto-fixed" label="Automatically include new fixed volumes"
     checked={volsCfg.auto_include_fixed} onChange={(v) => patchTopLevel({ auto_include_fixed: v })} />
   <Checkbox id="vols-auto-removable" label="Automatically include new removable volumes"
@@ -166,10 +166,10 @@ NTFS / ReFS / exFAT / FAT32 (Win), APFS / HFS+ (macOS), ext4 / Btrfs / ZFS / XFS
 
   <div class="vdetail">
     {#if selected}
-      <Checkbox id={`vol-${selected.id}-indexed`} label="Include in index (E)"
+      <Checkbox id={`vol-${selected.id}-indexed`} label="Include in index"
         checked={selected.indexed} disabled={busyVol === selected.id}
         onChange={(v) => selected && setIndexed(selected, v)} />
-      <TextInput id={`vol-${selected.id}-include`} label="Include only (glob/regex) (E)"
+      <TextInput id={`vol-${selected.id}-include`} label="Include only (glob/regex)"
         value={selected.include_only ?? ""} onChange={(s) => selected && setIncludeOnly(selected, s)} />
       <Checkbox id={`vol-${selected.id}-journal`}
         label={journalLabel(selected.fs_kind)}
@@ -186,7 +186,7 @@ NTFS / ReFS / exFAT / FAT32 (Win), APFS / HFS+ (macOS), ext4 / Btrfs / ZFS / XFS
       <Checkbox id={`vol-${selected.id}-load-recent`} label="Load recent changes from journal on startup"
         checked={selected.load_recent_changes}
         onChange={(v) => selected && setLoadRecent(selected, v)} />
-      <Checkbox id={`vol-${selected.id}-monitor`} label="Monitor changes (E)"
+      <Checkbox id={`vol-${selected.id}-monitor`} label="Monitor changes"
         checked={selected.monitor_changes}
         onChange={(v) => selected && setMonitor(selected, v)} />
 

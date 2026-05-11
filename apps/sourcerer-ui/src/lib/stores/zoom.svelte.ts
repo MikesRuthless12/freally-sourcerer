@@ -1,4 +1,6 @@
-// Zoom store — adjusts root font-size. View → Zoom In/Out/Reset.
+// Zoom store — scales the `#app` container via a CSS transform. The
+// app uses absolute px everywhere, so adjusting :root font-size has no
+// visible effect; a transform scales every descendant in lockstep.
 
 const STORAGE_KEY = "sourcerer.zoom";
 const MIN = 0.7;
@@ -14,7 +16,13 @@ function readInitial(): number {
 
 function apply(scale: number) {
   if (typeof document === "undefined") return;
-  document.documentElement.style.fontSize = `${14 * scale}px`;
+  // Use WebView2's setting; falls through to the CSS transform for
+  // anything outside `#app` (currently nothing of consequence). The
+  // `zoom` property on the root element is the cross-engine knob the
+  // Tauri webview honors and gives a crisp, non-blurry result that
+  // `transform: scale` can't (transform produces aliased text below 1).
+  const el = document.documentElement;
+  el.style.setProperty("zoom", String(scale));
 }
 
 class ZoomStore {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { settingsDialog } from "../../lib/stores/settings_dialog.svelte";
   import SettingsTreeNav from "./SettingsTreeNav.svelte";
   import SettingsButtonBar from "./SettingsButtonBar.svelte";
@@ -36,7 +37,8 @@
   let { open, onClose }: Props = $props();
 
   $effect(() => {
-    settingsDialog.openDialog(open);
+    const isOpen = open;
+    untrack(() => settingsDialog.openDialog(isOpen));
   });
 
   function handleEsc(e: KeyboardEvent) {
@@ -121,7 +123,7 @@
           {/if}
         </main>
       </div>
-      <SettingsButtonBar />
+      <SettingsButtonBar {onClose} />
     </div>
   </div>
 {/if}

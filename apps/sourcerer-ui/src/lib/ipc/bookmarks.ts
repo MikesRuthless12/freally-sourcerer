@@ -5,8 +5,8 @@ export function list(): Promise<Bookmark[]> {
   return call<Bookmark[]>("bookmarks_list");
 }
 
-export function save(name: string, query: string): Promise<Bookmark> {
-  return call<Bookmark>("bookmarks_save", { name, query });
+export function save(name: string, query: string, filters?: string[]): Promise<Bookmark> {
+  return call<Bookmark>("bookmarks_save", { name, query, filters: filters ?? [] });
 }
 
 export function remove(id: string): Promise<void> {

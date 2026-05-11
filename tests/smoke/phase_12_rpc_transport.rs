@@ -49,9 +49,7 @@ async fn unix_round_trip_through_socket() {
 
     // Start the server.
     let svc = Arc::new(EchoService);
-    let server = Server::new(ServerConfig {
-        socket: socket.clone(),
-    });
+    let server = Server::new(ServerConfig::new(socket.clone()));
     let _join = server.spawn(svc);
 
     // Wait for the listener to bind.
@@ -95,9 +93,7 @@ async fn windows_round_trip_through_pipe() {
     let socket = SocketPath::Pipe(pipe.clone());
 
     let svc = Arc::new(EchoService);
-    let server = Server::new(ServerConfig {
-        socket: socket.clone(),
-    });
+    let server = Server::new(ServerConfig::new(socket.clone()));
     let _join = server.spawn(svc);
 
     // Allow the listener to bind.

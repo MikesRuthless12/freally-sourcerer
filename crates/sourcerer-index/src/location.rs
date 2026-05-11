@@ -22,6 +22,29 @@ pub fn default_index_root() -> Result<PathBuf, IndexError> {
     Ok(p)
 }
 
+/// Returns the system-wide index root used by the Windows service. On
+/// Windows this is `%PROGRAMDATA%\Sourcerer\index` (typically
+/// `C:\ProgramData\Sourcerer\index`) — writeable by SYSTEM, readable
+/// by all local users, so the service can own the index and the
+/// per-user UI process can still read its `index.state` stats. On
+/// non-Windows platforms this falls back to `default_index_root` so
+/// the launchd/systemd code can use it without `cfg` fences.
+#[cfg(windows)]
+pub fn service_index_root() -> Result<PathBuf, IndexError> {
+    let base = std::env::var_os("PROGRAMDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    let mut p = base;
+    p.push("Sourcerer");
+    p.push("index");
+    Ok(p)
+}
+
+#[cfg(not(windows))]
+pub fn service_index_root() -> Result<PathBuf, IndexError> {
+    default_index_root()
+}
+
 #[cfg(windows)]
 fn platform_data_dir() -> Result<PathBuf, IndexError> {
     if let Some(v) = std::env::var_os("LOCALAPPDATA") {

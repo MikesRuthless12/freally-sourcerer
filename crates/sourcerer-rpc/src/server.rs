@@ -33,6 +33,20 @@ const PER_CONN_OUT_QUEUE: usize = 256;
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub socket: SocketPath,
+    /// Windows only: optional SDDL string for the pipe's DACL. When
+    /// `None`, the transport uses the current-user SDDL (per-user
+    /// pipes). The Windows service sets this to `service_sddl()` so
+    /// unelevated user processes can connect to the elevated pipe.
+    pub sddl_override: Option<String>,
+}
+
+impl ServerConfig {
+    pub fn new(socket: SocketPath) -> Self {
+        Self {
+            socket,
+            sddl_override: None,
+        }
+    }
 }
 
 pub struct Server {
@@ -82,7 +96,7 @@ async fn run_accept_loop<S: Service>(cfg: ServerConfig, service: Arc<S>) -> Resu
 
 #[cfg(windows)]
 async fn run_accept_loop<S: Service>(cfg: ServerConfig, service: Arc<S>) -> Result<(), RpcError> {
-    use crate::transport::windows::{create_next_instance, listen};
+    use crate::transport::windows::{create_next_instance_with_sddl, listen_with_sddl};
     let pipe_name = match &cfg.socket {
         SocketPath::Pipe(n) => n.clone(),
         SocketPath::Path(_) => {
@@ -91,11 +105,12 @@ async fn run_accept_loop<S: Service>(cfg: ServerConfig, service: Arc<S>) -> Resu
             ));
         }
     };
-    let mut current = listen(&pipe_name)?;
+    let sddl = cfg.sddl_override.clone();
+    let mut current = listen_with_sddl(&pipe_name, sddl.as_deref())?;
     tracing::info!(pipe = %pipe_name, "rpc server listening");
     loop {
         current.connect().await?;
-        let next = create_next_instance(&pipe_name)?;
+        let next = create_next_instance_with_sddl(&pipe_name, sddl.as_deref())?;
         let connected = std::mem::replace(&mut current, next);
         let svc = service.clone();
         tokio::spawn(async move {

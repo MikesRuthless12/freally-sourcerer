@@ -29,6 +29,12 @@ pub struct QueryHit {
     #[serde(rename = "type")]
     pub kind: String,
     pub score: f32,
+    /// Win32 FILE_ATTRIBUTE_* bitmask. Bit `0x10` =
+    /// `FILE_ATTRIBUTE_DIRECTORY`, which the UI uses to render a folder
+    /// icon. `#[serde(default)]` keeps older daemons / older recorded
+    /// fixtures readable without re-serialization.
+    #[serde(default)]
+    pub attrs: u32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

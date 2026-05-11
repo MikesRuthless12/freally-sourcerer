@@ -1,6 +1,7 @@
 <script lang="ts">
   import { settingsStore } from "../../lib/stores/settings.svelte";
   import { themeStore } from "../../lib/stores/theme.svelte";
+  import { foldersStore } from "../../lib/stores/folders.svelte";
   import { SUPPORTED_LOCALES } from "../../lib/i18n/bundle";
 
   let step = $state(0);
@@ -22,6 +23,18 @@
       newRoot = "";
     }
   }
+
+  async function browseRoot() {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const picked = await open({ directory: true, multiple: false });
+      if (typeof picked === "string" && picked.length > 0 && !roots.includes(picked)) {
+        roots = [...roots, picked];
+      }
+    } catch (e) {
+      console.warn("[wizard] folder picker failed:", e);
+    }
+  }
   function removeRoot(r: string) {
     roots = roots.filter((x) => x !== r);
   }
@@ -34,6 +47,20 @@
       hotkey,
       first_run_complete: true
     });
+    for (const path of roots) {
+      try {
+        await foldersStore.add({
+          id: `wizard-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          path,
+          monitor_changes: true,
+          buffer_kb: 64,
+          rescan_on_full_buffer: true,
+          rescan_schedule: { kind: "never" }
+        });
+      } catch (e) {
+        console.warn("[wizard] failed to register root:", path, e);
+      }
+    }
   }
 </script>
 
@@ -50,9 +77,10 @@
           <h3>Choose what to index</h3>
           <p class="hint">Add the folders or volumes you want Sourcerer to watch. You can change this later from Indexes settings.</p>
           <div class="root-add">
+            <button type="button" class="primary" onclick={browseRoot}>Browse…</button>
             <input
               type="text"
-              placeholder="/Users/you/Documents"
+              placeholder="…or paste a path"
               bind:value={newRoot}
               onkeydown={(e) => e.key === "Enter" && addRoot()}
             />

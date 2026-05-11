@@ -1,6 +1,11 @@
 <script lang="ts">
   import { settingsDialog } from "../../lib/stores/settings_dialog.svelte";
 
+  interface Props {
+    onClose: () => void;
+  }
+  let { onClose }: Props = $props();
+
   let busy = $state(false);
 
   async function restoreDefaults() {
@@ -30,12 +35,14 @@
       await settingsDialog.ok();
     } finally {
       busy = false;
+      onClose();
     }
   }
 
   function cancel() {
     if (busy) return;
     settingsDialog.cancel();
+    onClose();
   }
 </script>
 

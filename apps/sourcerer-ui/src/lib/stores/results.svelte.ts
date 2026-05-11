@@ -14,6 +14,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as ipcQuery from "../ipc/query";
 import type { LensId, LensTimings, QueryBatch, QueryDone, QueryHit } from "../ipc/types";
 import { settingsStore } from "./settings.svelte";
+import { typeFilterStore } from "./type_filter.svelte";
 
 interface RunningQuery {
   handle: string;
@@ -71,7 +72,24 @@ class ResultsStore {
         console.warn("[results] cancel-prior failed:", e);
       }
     }
-    if (!source.trim()) {
+    // Compose the actual query sent to the daemon based on the
+    // multi-select type-filter set + the user's typed source:
+    //   - No types selected → user explicitly disabled everything; show 0.
+    //   - All types selected + empty source → "Everything" mode; match every
+    //     file/folder with a bare `*` wildcard (voidtools-Everything parity).
+    //   - Partial types selected → `(audio: OR video: …)` group prepended
+    //     to whatever the user typed.
+    const trimmedSource = source.trim();
+    let composed: string;
+    if (typeFilterStore.isNoneSelected()) {
+      composed = "";
+    } else if (typeFilterStore.isAllSelected() && trimmedSource.length === 0) {
+      composed = "*";
+    } else {
+      const fragment = typeFilterStore.toQueryFragment();
+      composed = [fragment, trimmedSource].filter((s) => s.length > 0).join(" ");
+    }
+    if (!composed.trim()) {
       if (my !== this.seq) return;
       this.batches = [];
       this.timings = null;
@@ -82,7 +100,7 @@ class ResultsStore {
     const t0 = performance.now();
     let handle: string;
     try {
-      ({ handle } = await ipcQuery.run(source, {
+      ({ handle } = await ipcQuery.run(composed, {
         strict_everything: settingsStore.state.strict_everything_mode,
         per_lens_limits: settingsStore.state.default_lens_result_limits
       }));

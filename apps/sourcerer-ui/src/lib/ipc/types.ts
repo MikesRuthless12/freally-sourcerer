@@ -86,6 +86,10 @@ export interface QueryHit {
   modified_ms: number;
   type: string;
   score: number;
+  /** Win32 FILE_ATTRIBUTE_* bitmask. Bit 0x10 = FILE_ATTRIBUTE_DIRECTORY,
+   *  used by ResultRow to render a folder icon. Optional for backward
+   *  compat with older daemon responses. */
+  attrs?: number;
 }
 
 export interface LensTimings {
@@ -130,6 +134,9 @@ export interface Bookmark {
   name: string;
   query: string;
   created_ms: number;
+  /** Type-filter chip set active when the bookmark was saved. Optional
+   *  for forward compatibility — older bookmarks have no filters. */
+  filters?: string[];
 }
 
 // ---- extractors ----

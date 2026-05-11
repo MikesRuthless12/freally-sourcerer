@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { settingsStore } from "../../../lib/stores/settings.svelte";
   import { settingsDialog } from "../../../lib/stores/settings_dialog.svelte";
+  import { applyFontsAndColors } from "../../../lib/stores/fonts_apply.svelte";
   import Section from "../controls/Section.svelte";
-  import TextInput from "../controls/TextInput.svelte";
   import NumberInput from "../controls/NumberInput.svelte";
   import Checkbox from "../controls/Checkbox.svelte";
   import type {
@@ -11,6 +12,61 @@
     LensId,
     RgbColor
   } from "../../../lib/ipc/types";
+
+  // Curated fallback list — used when the Local Font Access API isn't
+  // available or rejects. Covers the common cross-OS families so the
+  // dropdown is never empty.
+  const CURATED_FONTS = [
+    "default",
+    "Arial",
+    "Cascadia Code",
+    "Cascadia Mono",
+    "Comic Sans MS",
+    "Consolas",
+    "Courier New",
+    "Georgia",
+    "Helvetica",
+    "Helvetica Neue",
+    "Impact",
+    "Inter",
+    "JetBrains Mono",
+    "Lucida Console",
+    "Menlo",
+    "Microsoft Sans Serif",
+    "Monaco",
+    "Roboto",
+    "Roboto Mono",
+    "Segoe UI",
+    "Source Code Pro",
+    "Tahoma",
+    "Times New Roman",
+    "Trebuchet MS",
+    "Verdana",
+  ];
+
+  let fontOptions = $state<string[]>(CURATED_FONTS);
+
+  onMount(async () => {
+    // window.queryLocalFonts() enumerates every installed system font.
+    // Supported by the Tauri 2 WebView2 runtime on Windows; on macOS /
+    // Linux it may be gated or absent — fall back to the curated list.
+    type FontFace = { family: string };
+    const q = (window as unknown as {
+      queryLocalFonts?: () => Promise<FontFace[]>;
+    }).queryLocalFonts;
+    if (typeof q !== "function") return;
+    try {
+      const fonts = await q();
+      const families = Array.from(new Set(fonts.map((f) => f.family))).sort((a, b) =>
+        a.localeCompare(b),
+      );
+      if (families.length > 0) {
+        fontOptions = ["default", ...families];
+      }
+    } catch {
+      // Permission denied or unsupported — keep the curated list.
+    }
+  });
 
   const STATE_KEYS: { key: keyof FontsAndColorsState["states"]; label: string }[] = [
     { key: "normal", label: "Normal" },
@@ -46,11 +102,13 @@
       }
     });
     settingsDialog.markDirty("general.fonts_colors");
+    applyFontsAndColors();
   }
 
   function updateRoot(patch: Partial<FontsAndColorsState>) {
     settingsStore.patch({ fonts_and_colors: { ...settingsStore.state.fonts_and_colors, ...patch } });
     settingsDialog.markDirty("general.fonts_colors");
+    applyFontsAndColors();
   }
 
   function updateLensAccent(lens: LensId, hex: string | null) {
@@ -62,14 +120,30 @@
       }
     });
     settingsDialog.markDirty("general.fonts_colors");
+    applyFontsAndColors();
   }
 </script>
 
 <h1>Fonts & Colors</h1>
 
-<Section title="Font (E)">
-  <TextInput id="fc-font" label="Font" value={settingsStore.state.fonts_and_colors.font}
-    onChange={(v) => updateRoot({ font: v })} />
+<Section title="Font">
+  <div class="row">
+    <span class="lbl">Font</span>
+    <select
+      id="fc-font"
+      class="font-select"
+      value={settingsStore.state.fonts_and_colors.font}
+      onchange={(e) => updateRoot({ font: (e.currentTarget as HTMLSelectElement).value })}
+      style="font-family: {settingsStore.state.fonts_and_colors.font &&
+        settingsStore.state.fonts_and_colors.font !== 'default'
+          ? `'${settingsStore.state.fonts_and_colors.font}'`
+          : 'inherit'}"
+    >
+      {#each fontOptions as f (f)}
+        <option value={f} style="font-family: {f === 'default' ? 'inherit' : `'${f}'`}">{f}</option>
+      {/each}
+    </select>
+  </div>
   <NumberInput id="fc-size" label="Size" min={9} max={24} value={settingsStore.state.fonts_and_colors.size_px}
     suffix="px" onChange={(n) => updateRoot({ size_px: n })} />
 </Section>
@@ -139,4 +213,18 @@
   .lbl { flex: 1; }
   button { padding: 3px 8px; background: var(--bg-canvas); color: var(--text-primary); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; font: inherit; }
   input[type="color"] { width: 40px; height: 24px; border: 1px solid var(--border); }
+  .font-select {
+    flex: 2;
+    min-width: 220px;
+    padding: 5px 8px;
+    background: var(--bg-canvas);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-size: 13px;
+  }
+  .font-select:focus {
+    outline: none;
+    border-color: var(--accent-cyan);
+  }
 </style>

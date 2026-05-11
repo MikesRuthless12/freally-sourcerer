@@ -46,15 +46,17 @@ use tantivy::{
 use tracing::{debug, warn};
 
 pub use error::IndexError;
-pub use location::default_index_root;
+pub use location::{default_index_root, service_index_root};
 pub use manifest::Manifest;
 pub use pipeline::{DEFAULT_CAPACITY, EventQueue};
 pub use store::FileRow;
 
-/// Default tantivy writer heap (50 MiB) — comfortably above tantivy's
-/// 15 MiB minimum and below the per-extractor budget called out for
-/// Phase 7.
-const TANTIVY_WRITER_HEAP_BYTES: usize = 50 * 1024 * 1024;
+/// Tantivy writer heap. Bumped to 256 MiB so the bulk-bootstrap path
+/// can ingest a full NTFS MFT walk (~1M files) without forcing
+/// intermediate segment commits — those are the dominant cost in the
+/// per-batch commit loop, and one final commit at end-of-bootstrap is
+/// what gets the indexer near Everything-tier fps.
+const TANTIVY_WRITER_HEAP_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct IndexStats {
@@ -177,6 +179,121 @@ impl Index {
             applied_events: m.applied_events,
             trigram_buckets: self.name_index.trigram_buckets(),
         })
+    }
+
+    /// Fast-path apply for the initial MFT/walkdir bootstrap. Only
+    /// emits Tantivy `add_document` calls — no `delete_term` (no
+    /// duplicates on a fresh scan), no SQLite write, no name_index
+    /// write. Caller must finish with [`Index::finalize_bootstrap`]
+    /// to rebuild the SQLite + name_index from Tantivy in one bulk
+    /// pass. This is ~10× faster than `apply()` for `Create`-heavy
+    /// workloads (initial scan of `C:\`).
+    pub fn bootstrap_apply(&self, events: &[JournalEvent]) -> Result<(), IndexError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        let writer = self.writer.lock();
+        for ev in events {
+            if let JournalEvent::Create {
+                path,
+                size,
+                mtime_ns,
+                ctime_ns,
+                attrs,
+            } = ev
+            {
+                let row = path_to_row(
+                    path,
+                    *size,
+                    clamp_i64(*mtime_ns),
+                    clamp_i64(*ctime_ns),
+                    *attrs as u64,
+                );
+                let path_str = row.path.to_string_lossy().into_owned();
+                writer.add_document(doc!(
+                    self.fields.file_id => row.file_id as u64,
+                    self.fields.name => row.name.clone(),
+                    self.fields.name_lower => row.name_lower.clone(),
+                    self.fields.path => path_str,
+                    self.fields.ext => row.ext.clone().unwrap_or_default(),
+                    self.fields.size => row.size,
+                    self.fields.mtime_ns => row.mtime_ns,
+                    self.fields.ctime_ns => row.ctime_ns,
+                    self.fields.attrs => row.attrs,
+                    self.fields.volume => row.volume.clone(),
+                ))?;
+            }
+            // Bootstrap mode only handles Create; other variants are
+            // routed through the regular `apply()` path post-bootstrap.
+        }
+        let mut m = self.manifest.lock();
+        m.applied_events = m.applied_events.saturating_add(events.len() as u64);
+        Ok(())
+    }
+
+    /// Commit the bootstrap pass: flush Tantivy once, then walk the
+    /// committed index and bulk-rebuild SQLite + name_index from it.
+    /// One SQLite transaction wraps the whole insert pass — that's
+    /// where the speed comes from (per-row autocommit is what made
+    /// the legacy path ~7K fps).
+    ///
+    /// Returns the number of documents rebuilt into the canonical
+    /// stores.
+    pub fn finalize_bootstrap(&self) -> Result<u64, IndexError> {
+        // 1) Single Tantivy commit.
+        {
+            let mut writer = self.writer.lock();
+            writer.commit()?;
+        }
+        if let Err(e) = self.reader.reload() {
+            warn!(?e, "tantivy reader reload (non-fatal)");
+        }
+
+        // 2) Walk every committed doc and collect FileRows.
+        let searcher = self.reader.searcher();
+        let mut rebuilt: u64 = 0;
+        let mut batch: Vec<FileRow> = Vec::with_capacity(8192);
+        for segment_reader in searcher.segment_readers() {
+            let store_reader = segment_reader
+                .get_store_reader(0)
+                .map_err(|e| IndexError::Tantivy(format!("get_store_reader: {e}")))?;
+            let max_doc = segment_reader.max_doc();
+            for doc_id in 0..max_doc {
+                if segment_reader.is_deleted(doc_id) {
+                    continue;
+                }
+                let doc: tantivy::TantivyDocument = store_reader
+                    .get(doc_id)
+                    .map_err(|e| IndexError::Tantivy(format!("store_reader.get: {e}")))?;
+                if let Some(row) = doc_to_file_row(&doc, &self.fields) {
+                    batch.push(row);
+                    if batch.len() >= 8192 {
+                        self.store.bulk_upsert(&batch)?;
+                        for r in &batch {
+                            self.name_index
+                                .upsert(r.file_id as u64, &r.name_lower)?;
+                        }
+                        rebuilt += batch.len() as u64;
+                        batch.clear();
+                    }
+                }
+            }
+        }
+        if !batch.is_empty() {
+            self.store.bulk_upsert(&batch)?;
+            for r in &batch {
+                self.name_index.upsert(r.file_id as u64, &r.name_lower)?;
+            }
+            rebuilt += batch.len() as u64;
+        }
+
+        // 3) Flush name_index + SQLite checkpoint, persist manifest.
+        self.name_index.flush()?;
+        self.store.checkpoint()?;
+        let mut m = self.manifest.lock();
+        m.tantivy_generation = m.tantivy_generation.saturating_add(1);
+        m.save(&self.root)?;
+        Ok(rebuilt)
     }
 
     /// Apply a batch of events. Tantivy mutations and SQLite mutations
@@ -504,6 +621,44 @@ fn derive_file_id(path: &Path) -> i64 {
 
 fn clamp_i64(v: i128) -> i64 {
     v.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
+}
+
+/// Reconstruct a `FileRow` from a fully-stored Tantivy doc. Used by
+/// `Index::finalize_bootstrap` to rebuild the SQLite + name_index
+/// after the Tantivy-only fast scan. Returns `None` if any required
+/// field is missing.
+fn doc_to_file_row(
+    doc: &tantivy::TantivyDocument,
+    fields: &schema::Fields,
+) -> Option<FileRow> {
+    use tantivy::schema::Value;
+    let file_id = doc.get_first(fields.file_id)?.as_u64()? as i64;
+    let name = doc.get_first(fields.name)?.as_str()?.to_string();
+    let name_lower = doc.get_first(fields.name_lower)?.as_str()?.to_string();
+    let path = doc.get_first(fields.path)?.as_str()?.to_string();
+    let ext_str = doc.get_first(fields.ext).and_then(|v| v.as_str());
+    let ext = ext_str.filter(|s| !s.is_empty()).map(|s| s.to_string());
+    let size = doc.get_first(fields.size)?.as_u64()?;
+    let mtime_ns = doc.get_first(fields.mtime_ns)?.as_i64()?;
+    let ctime_ns = doc.get_first(fields.ctime_ns)?.as_i64()?;
+    let attrs = doc.get_first(fields.attrs)?.as_u64()?;
+    let volume = doc
+        .get_first(fields.volume)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some(FileRow {
+        file_id,
+        path: PathBuf::from(path),
+        name,
+        name_lower,
+        ext,
+        size,
+        mtime_ns,
+        ctime_ns,
+        attrs,
+        volume,
+    })
 }
 
 fn path_to_row(path: &Path, size: u64, mtime_ns: i64, ctime_ns: i64, attrs: u64) -> FileRow {

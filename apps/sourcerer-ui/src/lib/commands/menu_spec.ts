@@ -191,14 +191,14 @@ export const MENU_BAR: MenuRoot[] = [
       { kind: "item", id: "search.add_to_filters", label: "Add to Filters…" },
       { kind: "item", id: "search.organize_filters", label: "Organize Filters…", accelerator: "Ctrl+Shift+F" },
       { kind: "separator" },
-      { kind: "item", id: "search.filter.everything", label: "Everything", radio: true },
-      { kind: "item", id: "search.filter.audio", label: "Audio", radio: true },
-      { kind: "item", id: "search.filter.compressed", label: "Compressed (Archive)", radio: true },
-      { kind: "item", id: "search.filter.document", label: "Document", radio: true },
-      { kind: "item", id: "search.filter.executable", label: "Executable", radio: true },
-      { kind: "item", id: "search.filter.folder", label: "Folder", radio: true },
-      { kind: "item", id: "search.filter.picture", label: "Picture", radio: true },
-      { kind: "item", id: "search.filter.video", label: "Video", radio: true },
+      { kind: "item", id: "search.filter.everything", label: "Everything", checkable: true },
+      { kind: "item", id: "search.filter.audio", label: "Audio", checkable: true },
+      { kind: "item", id: "search.filter.compressed", label: "Compressed (Archive)", checkable: true },
+      { kind: "item", id: "search.filter.document", label: "Document", checkable: true },
+      { kind: "item", id: "search.filter.executable", label: "Executable", checkable: true },
+      { kind: "item", id: "search.filter.folder", label: "Folder", checkable: true },
+      { kind: "item", id: "search.filter.picture", label: "Picture", checkable: true },
+      { kind: "item", id: "search.filter.video", label: "Video", checkable: true },
       { kind: "separator" },
       { kind: "item", id: "search.filter.custom", label: "Custom Filter…" }
     ]
@@ -218,8 +218,8 @@ export const MENU_BAR: MenuRoot[] = [
     l10n: "menu.tools",
     hint: "Contains tools commands.",
     children: [
-      { kind: "item", id: "tools.connect_endpoint", label: "Connect to HTTPS API Endpoint…" },
-      { kind: "item", id: "tools.disconnect_endpoint", label: "Disconnect from HTTPS API Endpoint" },
+      { kind: "item", id: "tools.connect_endpoint", label: "Connect to FTP Server…" },
+      { kind: "item", id: "tools.disconnect_endpoint", label: "Disconnect from FTP Server" },
       { kind: "item", id: "tools.file_list_editor", label: "File List Editor…" },
       {
         kind: "submenu",

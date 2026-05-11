@@ -25,7 +25,7 @@
 
 <h1>History</h1>
 
-<Section title="Search History (E)">
+<Section title="Search History">
   <Checkbox id="hi-search-en" label="Enable search history"
     checked={historyStore.cfg.search_history_enabled}
     onChange={(v) => patch({ search_history_enabled: v })} />
@@ -36,7 +36,7 @@
   <button type="button" onclick={clearNow} disabled={busy}>Clear Now</button>
 </Section>
 
-<Section title="Run History (E)">
+<Section title="Run History">
   <Checkbox id="hi-run-en" label="Enable run history"
     checked={historyStore.cfg.run_history_enabled}
     onChange={(v) => patch({ run_history_enabled: v })} />

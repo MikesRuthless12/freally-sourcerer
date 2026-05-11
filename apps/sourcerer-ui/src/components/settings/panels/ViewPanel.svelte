@@ -14,7 +14,7 @@
 
 <h1>View</h1>
 
-<Section title="Rendering (E)">
+<Section title="Rendering">
   <Checkbox id="vw-double" label="Double buffer (Windows-only legacy; macOS/Linux always double-buffered)"
     checked={settingsStore.state.double_buffer} onChange={(v) => patch("double_buffer", v)} />
   <Checkbox id="vw-alt-rows" label="Alternate row color"
@@ -29,7 +29,7 @@
     checked={settingsStore.state.update_display_immediately_after_scrolling} onChange={(v) => patch("update_display_immediately_after_scrolling", v)} />
 </Section>
 
-<Section title="Status Bar (E)">
+<Section title="Status Bar">
   <Checkbox id="vw-sel-status" label="Show selected item in status bar"
     checked={settingsStore.state.show_selected_item_in_status_bar} onChange={(v) => patch("show_selected_item_in_status_bar", v)} />
   <Checkbox id="vw-rc-sel" label="Show the result count with the selection count"
@@ -38,7 +38,7 @@
     checked={settingsStore.state.show_size_in_status_bar} onChange={(v) => patch("show_size_in_status_bar", v)} />
 </Section>
 
-<Section title="Display Format (E)">
+<Section title="Display Format">
   <Dropdown id="vw-size-fmt" label="Size format"
     value={settingsStore.state.size_format}
     options={[ { value: "b", label: "B" }, { value: "kb", label: "KB" }, { value: "mb", label: "MB" }, { value: "gb", label: "GB" }, { value: "auto_binary", label: "Auto (binary)" }, { value: "auto_decimal", label: "Auto (decimal)" } ]}

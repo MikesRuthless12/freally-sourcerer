@@ -28,16 +28,36 @@
     if (!path || path === lastPath) return;
     lastPath = path;
     loading = true;
-    files.preview(path).then(
-      (p) => {
-        payload = p;
-        loading = false;
-      },
-      () => {
-        payload = { kind: "unsupported", message: "Preview unavailable" };
-        loading = false;
-      }
-    );
+    // KnownPaths only gets populated by user-initiated dialogs by
+    // default; query-result hits aren't registered, so we whitelist
+    // the path explicitly right before calling `files.preview` — the
+    // user just selected it, which is a legitimate trust signal.
+    const target = path;
+    const t0 = performance.now();
+    console.log("[preview] requesting", target);
+    files
+      .whitelistUserChosen(target)
+      .catch((e) => console.warn("[preview] whitelist failed:", e))
+      .then(() => files.preview(target))
+      .then(
+        (p) => {
+          console.log(
+            "[preview] resolved",
+            target,
+            "kind:",
+            p.kind,
+            "ms:",
+            Math.round(performance.now() - t0),
+          );
+          payload = p;
+          loading = false;
+        },
+        (e) => {
+          console.error("[preview] rejected", target, e);
+          payload = { kind: "unsupported", message: "Preview unavailable" };
+          loading = false;
+        },
+      );
   });
 </script>
 

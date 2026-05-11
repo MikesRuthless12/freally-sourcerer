@@ -6,6 +6,240 @@ All notable changes documented here. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Phase-12 polish pass — UX, reliability, and live-apply (2026-05-11)
+
+Major behavioral pass during a long debugging session. Most fixes are direct
+voidtools-Everything parity gains plus the foundational reliability work that
+makes the desktop app pleasant to run repeatedly during development.
+
+**Single-instance + non-blocking daemon boot.**
+
+- `kill_other_sourcerer_instances()` runs at the top of `run()` on Windows
+  (taskkill `/F /T` against `sourcerer-ui.exe` + `sourcerer-indexd.exe`,
+  filtered to PIDs ≠ self) so relaunching the app always starts from a clean
+  slate without manual process killing. macOS / Linux stub for parity.
+- `Daemon::boot` now spawns a dedicated `sourcerer-daemon-boot` thread inside
+  `tauri::Builder::setup`; the setup hook returns immediately and the window
+  appears right away. Previously the canonical-store replay could block the
+  GUI thread for 10-15 s, tripping the Windows non-responsive-window watchdog
+  and tearing the process down before any HWND existed.
+- `Client::connect` is wrapped in a 500 × 40 ms retry loop on the consumer
+  side so a slow daemon boot doesn't lose to a single connect race.
+
+**Filter chips + Search menu — multi-select with OR composition.**
+
+- New `lib/stores/type_filter.svelte.ts` holds a `Set<TypeFilterId>`; default
+  is the full set (Everything mode). `toQueryFragment()` emits a parser-level
+  `(audio: OR video: OR …)` group for partial selections, empty string for
+  "everything" or "none" so the daemon-side AND-of-prefixes pitfall is gone.
+- `QuickFiltersPalette.svelte` chips toggle the store directly; the menu
+  items in `Search → …` switch from `radio` to `checkable`, with
+  `MenuBar.isItemChecked` reading the store. "Everything" derives from
+  `selected.size === ALL.length` — clicking any individual chip flips both
+  that chip and Everything off, leaving the others.
+- `bookmarks.add` saves the active filter set alongside the search text; the
+  Rust `Bookmark` DTO gains `filters: Vec<String>` with `#[serde(default)]`
+  so existing `bookmarks.json` files keep deserializing. Clicking a bookmark
+  restores both the textbox content (via `queryStore.setSource`) and the
+  chip selection (via `typeFilterStore.setFromIds`).
+- Fixed Archive's token: `compressed: "zip:"` → `"archive:"` (the real
+  `QuickFilter::Archive` alias from `sourcerer-query::quick_filters`). The
+  old `zip:` was just an extension within the group, so Archive never
+  matched anything.
+
+**Initial Everything query + everything-mode parity.**
+
+- `runInitialEverythingQuery()` in `bootstrap.ts` fires once after hydrate
+  and polls `resultsStore.batches.length` for up to 60 × 800 ms, kicking
+  fresh `run()` calls only when nothing is in-flight so the auto-fire
+  doesn't cancel its own queries. First paint after launch shows results
+  immediately instead of "Type a query to begin."
+- When the full type-filter set is selected and the search box is empty,
+  `resultsStore.run()` composes a bare `*` wildcard so the filename lens
+  lists every indexed entry (voidtools-Everything parity).
+- `ResultList.svelte` placeholder gate updated: shows "Type a query to
+  begin" only when the source is empty AND no type filters are selected
+  (i.e. the user has explicitly deselected every chip).
+
+**Folder indexing.**
+
+- `crates/sourcerer-indexd/src/scanner.rs::scan_folder` now indexes
+  directories alongside files; the walkdir path filters on
+  `is_file() || is_dir()` and stamps `FILE_ATTRIBUTE_DIRECTORY (0x10)`
+  into the journal event's `attrs` field.
+- `crates/sourcerer-journal-win/src/subscriber.rs` MFT bootstrap path no
+  longer skips directory records — they ride through with their real
+  `file_attributes` bitmask intact.
+- `QueryHit` (Rust DTO + matching TS interface) gains an
+  `attrs: u32 #[serde(default)]` field that the daemon populates from
+  `FileRow.attrs`. UI distinguishes file vs folder via the `0x10` bit.
+
+**Real Windows shell icons + per-row rendering.**
+
+- New `apps/sourcerer-ui/src-tauri/src/commands/icons.rs` —
+  `icon_for_ext(ext, is_dir) -> Option<String>` async Tauri command that
+  runs Win32 `SHGetFileInfoW` with `SHGFI_USEFILEATTRIBUTES` (so a dummy
+  path like `_.xml` resolves the registered handler's icon without the
+  file actually existing on disk) → `GetIconInfo` → 32-bit BGRA via
+  `GetDIBits` → BGRA→RGBA channel swap → PNG via `image` crate → base64
+  data URL. Returns `None` on macOS / Linux for now.
+- `src-tauri/Cargo.toml`: adds `image = "0.25" --no-default-features
+  --features png`, `base64 = "0.22"`, and the relevant `windows = "0.59"`
+  feature set under `cfg(windows)`.
+- New `lib/stores/icon_store.svelte.ts` — `Map<(ext, is_dir),
+  Promise<dataUrl | null>>` cache so 200 result rows fire one IPC per
+  unique extension, not per row. Reactive `tick` field that increments
+  on each resolution so $derived consumers re-render.
+- `ResultRow.svelte` Name column renders `<img class="row-icon" src=…>`
+  pulled from `iconStore.get(hit.ext, isDir)`, with an emoji fallback
+  (`📁` / `📄`) while the data URL is loading.
+
+**Real metadata in MFT bootstrap.**
+
+- USN records carry FRN + attrs + a single timestamp but no file size, so
+  the MFT-fast-path used to write `size: 0` and a USN-only timestamp into
+  the index. `subscriber.rs` now does a `std::fs::metadata(&full)` per
+  emitted event to populate real `len`, `modified`, `created`. Slower
+  than the pure USN walk but correct — the Size and Modified columns
+  finally show non-zero values without forcing the walkdir fallback.
+
+**Search box + result row visuals.**
+
+- `SearchBar.svelte` now binds the `<input value={queryStore.source}>` so
+  programmatic updates (bookmark click, Escape clear, future deep-link)
+  reflect in the textbox. Also dropped the broken `color: transparent`
+  on `.raw` (the "mirror" syntax-highlight layer wasn't aligning, so the
+  typed text was effectively invisible in dark mode) — input renders its
+  own text now and the mirror is hidden.
+- `ResultRow.svelte` row CSS reads `--row-{state}-fg/bg/weight/style` so
+  the Fonts & Colors panel's per-state controls are live. States wired:
+  normal, highlighted (hover), selected, selected_highlighted.
+- Fixed alternate-row + hover specificity bug that made a selected row
+  appear unselected when its `:nth-child(even)` rule outranked
+  `.row.selected`. Both selectors now have `:not(.selected)` so a
+  selected row keeps its cyan tint regardless of index or hover.
+
+**Fonts & Colors live-apply + persistence.**
+
+- New `lib/stores/fonts_apply.svelte.ts::applyFontsAndColors()` writes
+  CSS custom properties on `<html>` from `settings.fonts_and_colors`:
+  `--font-ui` (with cross-OS fallback chain), `--app-font-size`,
+  per-state `--row-…-fg/bg/weight/style`, per-lens `--lens-…` overrides.
+  Called once on bootstrap (post-hydrate) and again on every panel
+  patch — restores across launches and live-applies on change.
+- `FontsAndColorsPanel.svelte` font input switched to a `<select>` dropdown
+  populated via `window.queryLocalFonts()` (Local Font Access API
+  supported by the Tauri 2 WebView2 runtime on Windows) with a curated
+  25-family fallback for non-Chromium webviews. Each option renders in
+  its own font for visual preview.
+- Theme dropdown in UIPanel calls `themeStore.set(value)` alongside the
+  settings patch so light/dark switches live-apply on selection — no
+  Apply / restart needed.
+
+**View panel toggles wired.**
+
+- App.svelte's $effect mirrors selected settings to `<body data-*>`
+  attributes; new CSS rules in `app.css` react to them:
+  `data-alternate-rows`, `data-row-mouseover` (overrides `.row:hover`
+  to no-op when false), `data-show-tooltips`, `data-show-lufs-badges`,
+  `data-show-similarity-score`.
+- `ResultRow` row `title={hit.path}` is conditional on the Show tooltips
+  setting.
+- `formatBytes` honors the Size Format setting (`auto_binary` |
+  `bytes` | `kb` | `mb` | `gb`).
+
+**Window controls — always-on-top, size, zoom.**
+
+- `capabilities/default.json` adds the missing
+  `core:window:allow-set-size`, `core:window:allow-set-always-on-top`,
+  `core:window:allow-set-resizable`, `core:window:allow-inner-size`,
+  `core:window:allow-outer-size` grants. Without these, every
+  `setSize` / `setAlwaysOnTop` call was being silently rejected by the
+  Tauri IPC permission gate.
+- App.svelte gains an `$effect` that translates `settings.on_top` +
+  `queryStore.source` into `setAlwaysOnTop(...)` calls: Never / Always
+  / WhileSearching modes all live, re-applied on every settings change
+  and every keystroke. Restored on launch.
+- `setWindowSize` import fixed: `LogicalSize` comes from
+  `@tauri-apps/api/window`, not the non-existent
+  `@tauri-apps/api/dpi`. Picked size also writes
+  `settings.window_size = { w, h }` (allowlisted in
+  `ALLOWED_PATCH_KEYS`), and bootstrap restores the saved size on
+  next launch.
+- `zoomStore` swapped from `document.documentElement.style.fontSize`
+  to the WebView's `zoom` CSS property so Ctrl+= / Ctrl+- actually
+  rescale the (px-based) UI. Crisp at all factors.
+
+**Image preview.**
+
+- `preview/windows_host.rs::preview` returns real image data URLs for
+  PNG, JPG/JPEG/JFIF, GIF, WEBP, BMP, SVG, ICO, AVIF: reads the file
+  (4 MiB cap), encodes via `commands::files::base64_encode`, returns
+  `PreviewPayload { kind: Image, data_url: "data:image/…;base64,…" }`.
+  Non-image extensions still return `None` so the text-head fallback
+  handles text files.
+- `files_preview`, `files_thumbnail`, and `icon_for_ext` are now
+  `async fn` and offload the actual work to
+  `tokio::task::spawn_blocking`. The synchronous versions were
+  blocking Tauri's IPC dispatch thread for seconds during shell-icon
+  extraction + multi-MB base64 encoding, which froze the entire UI.
+- Fixed `PreviewPane.svelte` calling a missing
+  `files.whitelistUserChosen` — the helper lived in `ipc/bookmarks.ts`
+  but the pane imports `* as files from "ipc/files"`. Re-exported
+  `whitelistUserChosen` from `ipc/files.ts` so the call resolves; the
+  synchronous `TypeError` was leaving `loading = true` forever and
+  blocking the preview $effect.
+- Added a Rust tracing pass on the preview / icon paths plus a
+  `log_event` Tauri command for forwarding TS console events into the
+  cargo dev log, and a `std::panic::set_hook` that surfaces Rust
+  panics in the console.
+
+**FTP endpoint + greyed Disconnect.**
+
+- New `ConnectEndpointDialog.svelte` modeled on the voidtools dialog:
+  Host (required), Port (default 21), Username, Password, Link type
+  dropdown. On OK, writes `settings.endpoint = { name: host, kind:
+  "ftp" }`.
+- `MenuBar.isItemEnabled` returns `false` for
+  `tools.disconnect_endpoint` when `settings.endpoint.kind === "local"`;
+  CSS adds an `.item.disabled` greyed style with `pointer-events: none`.
+- `View → Filters` now pre-selects the `indexes.exclude` panel before
+  opening the settings dialog (voidtools-Everything parity).
+
+**Exclusions — toggleable extension classes + dedup.**
+
+- `ExcludePanel.svelte` extension-class buttons (Video / Audio / Image
+  / Archive / Executable) now toggle: click adds the class's globs and
+  highlights the button; click again removes them and un-highlights.
+  Computes "active" as "every glob in the class is currently in the
+  exclude-files set" so the highlight reflects real state, not just
+  the last click.
+- `Add Folder…` and `Apply OS-recommended excludes` both dedupe so the
+  same entry never gets added twice.
+
+**Bookmarks reliability.**
+
+- `bookmarks.add` no longer requires a non-empty query — empty-query
+  bookmarks are allowed (named "Bookmark N" so the user can rename
+  them in Organize). Dedupe key is now (name, query, filter-set).
+- `bookmarksStore.hydrate()` retries every 500 ms for up to ~10 s so
+  the first hydrate doesn't lose the bookmarks list to a
+  daemon-not-ready IPC error during the background-boot window.
+- `bookmarks.organize` re-hydrates before opening the Organize dialog
+  so a stale dropdown can't show "No bookmarks yet" when there are
+  bookmarks on disk.
+
+**Misc.**
+
+- `tracing_subscriber` default filter raised to
+  `warn,sourcerer=info,sourcerer_ui_lib=info,sourcerer_indexd=info`
+  so the instrumentation lands without forcing `RUST_LOG`.
+- Settings dialog `markDirty` now also calls `applyFontsAndColors()`
+  inside the Fonts & Colors panel patch path so the preview is
+  instant.
+- `ipc/types.ts::QueryHit` gains `attrs?: number`; `Bookmark` gains
+  `filters?: string[]`. Both optional for forward compat.
+
 ### Added
 
 - **[all platforms]** Phase 12 settings dialog + real daemon IPC + custom-extractor framework + i18n. Replaces the Phase-11 mock IPC layer with a real `sourcerer-rpc` length-prefixed JSON-RPC transport over a per-user Unix socket / named pipe and lands the full PRD §8.1-§8.27 settings dialog plus the Wasm-sandboxed custom-extractor host.

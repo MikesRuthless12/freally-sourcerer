@@ -27,9 +27,11 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 toml = "0.8"
+walkdir = "2"
 
 sourcerer-rpc = { path = "../sourcerer-rpc" }
 sourcerer-index = { path = "../sourcerer-index" }
+sourcerer-journal = { path = "../sourcerer-journal" }
 sourcerer-query = { path = "../sourcerer-query" }
 sourcerer-extractors = { path = "../sourcerer-extractors" }
 sourcerer-audio = { path = "../sourcerer-audio" }

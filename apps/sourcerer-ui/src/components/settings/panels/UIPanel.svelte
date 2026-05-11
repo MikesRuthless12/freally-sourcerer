@@ -1,6 +1,7 @@
 <script lang="ts">
   import { settingsStore } from "../../../lib/stores/settings.svelte";
   import { settingsDialog } from "../../../lib/stores/settings_dialog.svelte";
+  import { themeStore, type ThemeChoice } from "../../../lib/stores/theme.svelte";
   import Section from "../controls/Section.svelte";
   import Checkbox from "../controls/Checkbox.svelte";
   import Dropdown from "../controls/Dropdown.svelte";
@@ -9,6 +10,11 @@
   function patch<K extends keyof SettingsState>(key: K, value: SettingsState[K]) {
     settingsStore.patch({ [key]: value } as Partial<SettingsState>);
     settingsDialog.markDirty("general.ui");
+    // Live-apply the theme switcher so the dialog (and the rest of the
+    // app) re-skins immediately — no restart needed.
+    if (key === "theme") {
+      themeStore.set(value as ThemeChoice);
+    }
   }
 </script>
 
@@ -39,31 +45,31 @@ voidtools-Everything parity plus Sourcerer additions marked with (+).</p>
 <Section title="Tray / Menu Bar">
   <Checkbox
     id="ui-run-bg"
-    label="Run in background (E)"
+    label="Run in background"
     checked={settingsStore.state.run_in_background}
     onChange={(v) => patch("run_in_background", v)}
   />
   <Checkbox
     id="ui-show-tray"
-    label="Show tray / menu-bar icon (E)"
+    label="Show tray / menu-bar icon"
     checked={settingsStore.state.show_tray_icon}
     onChange={(v) => patch("show_tray_icon", v)}
   />
   <Checkbox
     id="ui-single-click-tray"
-    label="Single click tray / menu bar (E)"
+    label="Single click tray / menu bar"
     checked={settingsStore.state.single_click_tray}
     onChange={(v) => patch("single_click_tray", v)}
   />
   <Checkbox
     id="ui-new-window-from-tray"
-    label="Open new window from tray icon (E)"
+    label="Open new window from tray icon"
     checked={settingsStore.state.open_new_window_from_tray}
     onChange={(v) => patch("open_new_window_from_tray", v)}
   />
   <Checkbox
     id="ui-new-window-on-launch"
-    label="Open new window when launching Sourcerer (E)"
+    label="Open new window when launching Sourcerer"
     checked={settingsStore.state.open_new_window_when_launching}
     onChange={(v) => patch("open_new_window_when_launching", v)}
   />
@@ -72,19 +78,19 @@ voidtools-Everything parity plus Sourcerer additions marked with (+).</p>
 <Section title="Search Behavior">
   <Checkbox
     id="ui-search-as-you-type"
-    label="Search as you type (E)"
+    label="Search as you type"
     checked={settingsStore.state.search_as_you_type}
     onChange={(v) => patch("search_as_you_type", v)}
   />
   <Checkbox
     id="ui-select-on-mouse-click"
-    label="Select search on mouse click (E)"
+    label="Select search on mouse click"
     checked={settingsStore.state.select_search_on_mouse_click}
     onChange={(v) => patch("select_search_on_mouse_click", v)}
   />
   <Checkbox
     id="ui-focus-on-activate"
-    label="Focus search on activate (E)"
+    label="Focus search on activate"
     checked={settingsStore.state.focus_search_on_activate}
     onChange={(v) => patch("focus_search_on_activate", v)}
   />
@@ -93,13 +99,13 @@ voidtools-Everything parity plus Sourcerer additions marked with (+).</p>
 <Section title="Result Rows">
   <Checkbox
     id="ui-full-row-select"
-    label="Full row select (E)"
+    label="Full row select"
     checked={settingsStore.state.full_row_select}
     onChange={(v) => patch("full_row_select", v)}
   />
   <Dropdown
     id="ui-single-click-open"
-    label="Single click open (E)"
+    label="Single click open"
     value={settingsStore.state.single_click_open}
     options={[
       { value: "system_settings", label: "System settings (default)" },
@@ -110,7 +116,7 @@ voidtools-Everything parity plus Sourcerer additions marked with (+).</p>
   />
   <Dropdown
     id="ui-underline-titles"
-    label="Underline icon titles (E)"
+    label="Underline icon titles"
     value={settingsStore.state.underline_icon_titles}
     options={[
       { value: "system_settings", label: "System settings (default)" },

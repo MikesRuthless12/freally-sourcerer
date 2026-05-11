@@ -49,17 +49,31 @@ pub fn build() -> (Schema, Fields) {
 
     // Filename — TEXT (default tokenizer) for substring-style queries.
     // `raw` keeps original casing; `lower` is normalised for case-insensitive.
+    // Bootstrap-perf: `Basic` indexing (no term-frequencies, no positions).
+    // Filename queries are membership-style (does the doc contain this
+    // token?) so the freq/position tables are pure indexing overhead.
+    // Switching from WithFreqsAndPositions → Basic ~halves the per-doc
+    // ingest cost in Tantivy's tokenizer + index writer.
     let name_options = TextOptions::default()
         .set_indexing_options(
             TextFieldIndexing::default()
                 .set_tokenizer("default")
-                .set_index_option(tantivy::schema::IndexRecordOption::WithFreqsAndPositions),
+                .set_index_option(tantivy::schema::IndexRecordOption::Basic),
         )
         .set_stored();
     let name = sb.add_text_field("name", name_options.clone());
     let name_lower = sb.add_text_field("name_lower", name_options);
 
-    let path = sb.add_text_field("path", TEXT | STORED);
+    // Path field: same Basic-indexing tradeoff. Path queries are
+    // prefix / substring, never phrase.
+    let path_options = TextOptions::default()
+        .set_indexing_options(
+            TextFieldIndexing::default()
+                .set_tokenizer("default")
+                .set_index_option(tantivy::schema::IndexRecordOption::Basic),
+        )
+        .set_stored();
+    let path = sb.add_text_field("path", path_options);
 
     // Extension is exact-match: STRING (no tokenizing) is right here.
     let ext = sb.add_text_field("ext", STRING | STORED);

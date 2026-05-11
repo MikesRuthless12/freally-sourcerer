@@ -61,6 +61,27 @@ pub fn default_pipe_name() -> String {
     format!(r"\\.\pipe\sourcerer-indexd-{user}")
 }
 
+/// Well-known pipe name for the elevated Windows service. Unlike the
+/// per-user `default_pipe_name`, this is a single shared endpoint that
+/// any logged-in user can connect to (DACL governs access — see
+/// `service_sddl`). The Tauri UI prefers this pipe over spawning its
+/// own child daemon when the service is installed.
+#[cfg(windows)]
+pub fn service_pipe_name() -> String {
+    r"\\.\pipe\sourcerer-indexd".to_string()
+}
+
+/// SDDL string for the service-mode pipe. Grants GENERIC_ALL to:
+///   * Authenticated Users (AU)  — any logged-in local user can connect
+///   * SYSTEM (SY)               — the service itself
+///
+/// The pipe server already calls `reject_remote_clients(true)`, so the
+/// AU grant does not extend across the network.
+#[cfg(windows)]
+pub fn service_sddl() -> String {
+    "D:(A;;GA;;;AU)(A;;GA;;;SY)".to_string()
+}
+
 #[cfg(windows)]
 fn current_user_sid_string() -> Option<String> {
     use windows::Win32::Foundation::HANDLE;

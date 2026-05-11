@@ -1,39 +1,28 @@
 <script lang="ts">
   import { queryStore } from "../../lib/stores/query.svelte";
   import { resultsStore } from "../../lib/stores/results.svelte";
+  import { typeFilterStore, type TypeFilterId } from "../../lib/stores/type_filter.svelte";
 
   interface FilterChip {
-    id: string;
+    id: TypeFilterId;
     label: string;
-    token: string;
     icon: string;
   }
 
   // PRD §8.28 Search filter set + Sourcerer additions.
   const CHIPS: FilterChip[] = [
-    { id: "audio", label: "Audio", token: "audio:", icon: "♪" },
-    { id: "video", label: "Video", token: "video:", icon: "▶" },
-    { id: "picture", label: "Image", token: "picture:", icon: "▣" },
-    { id: "document", label: "Document", token: "document:", icon: "📄" },
-    { id: "executable", label: "Executable", token: "exec:", icon: "▷" },
-    { id: "compressed", label: "Archive", token: "zip:", icon: "🗜" },
-    { id: "folder", label: "Folder", token: "folder:", icon: "📁" }
+    { id: "audio", label: "Audio", icon: "♪" },
+    { id: "video", label: "Video", icon: "▶" },
+    { id: "picture", label: "Image", icon: "▣" },
+    { id: "document", label: "Document", icon: "📄" },
+    { id: "executable", label: "Executable", icon: "▷" },
+    { id: "compressed", label: "Archive", icon: "🗜" },
+    { id: "folder", label: "Folder", icon: "📁" }
   ];
 
-  function isActive(chip: FilterChip): boolean {
-    return queryStore.source.includes(chip.token);
-  }
-
   async function toggle(chip: FilterChip) {
-    const cur = queryStore.source;
-    let next: string;
-    if (cur.includes(chip.token)) {
-      next = cur.replace(new RegExp(`\\s*${chip.token}\\s*`, "g"), " ").replace(/\s+/g, " ").trim();
-    } else {
-      next = cur.trim() ? `${chip.token} ${cur}` : chip.token;
-    }
-    await queryStore.setSource(next);
-    await resultsStore.run(next);
+    typeFilterStore.toggle(chip.id);
+    await resultsStore.run(queryStore.source);
   }
 </script>
 
@@ -42,8 +31,8 @@
     <button
       type="button"
       class="chip"
-      class:active={isActive(chip)}
-      aria-pressed={isActive(chip)}
+      class:active={typeFilterStore.has(chip.id)}
+      aria-pressed={typeFilterStore.has(chip.id)}
       onclick={() => toggle(chip)}
     >
       <span class="icon" aria-hidden="true">{chip.icon}</span>

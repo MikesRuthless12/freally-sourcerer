@@ -243,15 +243,42 @@ fn bootstrap_thread(
                 .expect("path cache mutex poisoned")
                 .insert(rec.file_ref, full.clone());
 
-            if rec.is_directory() {
-                continue;
-            }
+            // Include directories so "Everything" mode lists folders too
+            // (voidtools-Everything parity). The FILE_ATTRIBUTE_DIRECTORY
+            // bit is preserved in `rec.file_attributes`, so the UI can
+            // tell them apart from files.
 
+            // USN records carry attrs + a single timestamp but NOT file
+            // size. For correctness (Size column / Modified column in
+            // the UI), pull `len` + `modified` + `created` via the
+            // standard metadata syscall. This costs one stat() per
+            // file but populates the columns properly.
+            let (size, mtime_ns, ctime_ns) = match std::fs::metadata(&full) {
+                Ok(m) => {
+                    let mtime = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_nanos() as i128)
+                        .unwrap_or_else(|| filetime_to_unix_ns(rec.timestamp_filetime));
+                    let ctime = m
+                        .created()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_nanos() as i128)
+                        .unwrap_or(mtime);
+                    (m.len(), mtime, ctime)
+                }
+                Err(_) => {
+                    let t = filetime_to_unix_ns(rec.timestamp_filetime);
+                    (0, t, t)
+                }
+            };
             let event = JournalEvent::Create {
                 path: full,
-                size: 0,
-                mtime_ns: filetime_to_unix_ns(rec.timestamp_filetime),
-                ctime_ns: filetime_to_unix_ns(rec.timestamp_filetime),
+                size,
+                mtime_ns,
+                ctime_ns,
                 attrs: rec.file_attributes,
             };
             if tx.unbounded_send(event).is_err() {

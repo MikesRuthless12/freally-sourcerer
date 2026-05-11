@@ -47,5 +47,7 @@ pub use jsonrpc::{
     ErrorObject, JSONRPC_VERSION, Notification, Request, RequestId, Response, ResponseEnvelope,
 };
 pub use path::{SocketPath, default_socket_path};
+#[cfg(windows)]
+pub use path::{service_pipe_name, service_sddl};
 pub use server::{Server, ServerConfig};
 pub use service::{NotificationSink, Service};

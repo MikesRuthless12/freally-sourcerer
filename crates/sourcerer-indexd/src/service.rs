@@ -345,6 +345,9 @@ async fn filename_lens_hits(
             modified_ms: (row.mtime_ns / 1_000_000) as u64,
             kind: row.ext.unwrap_or_else(|| "file".into()).to_uppercase(),
             score: 1.0,
+            // Pass the FILE_ATTRIBUTE_* bitmask through to the UI so it
+            // can render folder icons (0x10 = FILE_ATTRIBUTE_DIRECTORY).
+            attrs: row.attrs as u32,
         })
         .collect()
 }
@@ -379,7 +382,13 @@ async fn index_compact(_svc: &IndexdService) -> Result<Value, RpcError> {
     Ok(json!({ "ok": true }))
 }
 
-async fn index_rebuild(_svc: &IndexdService) -> Result<Value, RpcError> {
+async fn index_rebuild(svc: &IndexdService) -> Result<Value, RpcError> {
+    let folders = svc.state.folders.read().await.clone();
+    tracing::info!(count = folders.len(), "index.rebuild received");
+    for f in folders {
+        let scan_path = std::path::PathBuf::from(&f.path);
+        crate::scanner::spawn_scan(svc.state.index.clone(), &scan_path);
+    }
     Ok(json!({ "ok": true }))
 }
 
@@ -510,6 +519,11 @@ async fn volumes_list(svc: &IndexdService) -> Result<Value, RpcError> {
 async fn volumes_update(svc: &IndexdService, params: Value) -> Result<Value, RpcError> {
     let p: VolumeUpdate = serde_json::from_value(params)?;
     let mut cfg = svc.state.volumes.write().await;
+    let was_indexed = cfg
+        .overrides
+        .get(&p.id)
+        .and_then(|o| o.indexed)
+        .unwrap_or(false);
     let entry = cfg.overrides.entry(p.id.clone()).or_default();
     if let Some(b) = p.indexed {
         entry.indexed = Some(b);
@@ -537,6 +551,22 @@ async fn volumes_update(svc: &IndexdService, params: Value) -> Result<Value, Rpc
         .persist()
         .await
         .map_err(|e| RpcError::Other(e.to_string()))?;
+    // If the user just flipped "Include in index" ON, kick off a scan
+    // of the volume's mount point. (Walkdir or MFT — `spawn_scan` picks.)
+    if matches!(p.indexed, Some(true)) && !was_indexed {
+        let detected = crate::volumes::detect();
+        if let Some(v) = detected.into_iter().find(|v| v.id == p.id) {
+            tracing::info!(
+                id = %p.id,
+                mount = %v.mount_point,
+                "volumes.update: indexing newly-included volume"
+            );
+            let mount = std::path::PathBuf::from(&v.mount_point);
+            crate::scanner::spawn_scan(svc.state.index.clone(), &mount);
+        } else {
+            tracing::warn!(id = %p.id, "volumes.update: no matching volume to scan");
+        }
+    }
     Ok(json!({ "ok": true }))
 }
 
@@ -588,6 +618,8 @@ async fn folders_list(svc: &IndexdService) -> Result<Value, RpcError> {
 
 async fn folders_add(svc: &IndexdService, params: Value) -> Result<Value, RpcError> {
     let folder: WatchedFolder = serde_json::from_value(params)?;
+    tracing::info!(id = %folder.id, path = %folder.path, "folders.add received");
+    let scan_path = std::path::PathBuf::from(&folder.path);
     let mut cur = svc.state.folders.write().await;
     cur.retain(|f| f.id != folder.id);
     cur.push(folder);
@@ -596,6 +628,7 @@ async fn folders_add(svc: &IndexdService, params: Value) -> Result<Value, RpcErr
         .persist()
         .await
         .map_err(|e| RpcError::Other(e.to_string()))?;
+    crate::scanner::spawn_scan(svc.state.index.clone(), &scan_path);
     Ok(json!({ "ok": true }))
 }
 
@@ -632,12 +665,28 @@ async fn folders_update(svc: &IndexdService, params: Value) -> Result<Value, Rpc
     Ok(json!({ "ok": true }))
 }
 
-async fn folders_rescan(_svc: &IndexdService, params: Value) -> Result<Value, RpcError> {
-    let _: FolderIdParams = serde_json::from_value(params)?;
+async fn folders_rescan(svc: &IndexdService, params: Value) -> Result<Value, RpcError> {
+    let p: FolderIdParams = serde_json::from_value(params)?;
+    tracing::info!(id = %p.id, "folders.rescan received");
+    let cur = svc.state.folders.read().await;
+    let target = cur.iter().find(|f| f.id == p.id).cloned();
+    drop(cur);
+    if let Some(f) = target {
+        let scan_path = std::path::PathBuf::from(&f.path);
+        crate::scanner::spawn_scan(svc.state.index.clone(), &scan_path);
+    } else {
+        tracing::warn!(id = %p.id, "folders.rescan: no folder with that id");
+    }
     Ok(json!({ "ok": true }))
 }
 
-async fn folders_rescan_all(_svc: &IndexdService) -> Result<Value, RpcError> {
+async fn folders_rescan_all(svc: &IndexdService) -> Result<Value, RpcError> {
+    let folders = svc.state.folders.read().await.clone();
+    tracing::info!(count = folders.len(), "folders.rescan_all received");
+    for f in folders {
+        let scan_path = std::path::PathBuf::from(&f.path);
+        crate::scanner::spawn_scan(svc.state.index.clone(), &scan_path);
+    }
     Ok(json!({ "ok": true }))
 }
 

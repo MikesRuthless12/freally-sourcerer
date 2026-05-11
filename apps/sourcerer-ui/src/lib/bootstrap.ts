@@ -6,7 +6,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 
-import { registry } from "./commands/registry";
+import { registry } from "./commands/registry.svelte";
 import type { CommandId } from "./commands/ids";
 import { COMMAND_IDS, isCommandId } from "./commands/ids";
 import { BINDINGS, shortcutMatches } from "./commands/shortcuts";
@@ -21,6 +21,9 @@ import { zoomStore } from "./stores/zoom.svelte";
 import { sortStore, type SortField } from "./stores/sort.svelte";
 import { dialogsStore } from "./stores/dialogs.svelte";
 import { searchOptsStore, type SearchOptKey } from "./stores/search_opts.svelte";
+import { typeFilterStore, type TypeFilterId } from "./stores/type_filter.svelte";
+import { applyFontsAndColors } from "./stores/fonts_apply.svelte";
+import { settingsDialog } from "./stores/settings_dialog.svelte";
 import * as files from "./ipc/files";
 import * as indexIpc from "./ipc/index_api";
 
@@ -39,6 +42,18 @@ export async function bootstrap() {
   // Apply persisted theme + zoom on first paint.
   themeStore.set(settingsStore.state.theme);
   zoomStore.set(settingsStore.state.zoom ?? 1);
+  applyFontsAndColors();
+  // Restore the persisted window size, if any.
+  const ws = (settingsStore.state as unknown as { window_size?: { w: number; h: number } })
+    .window_size;
+  if (ws && typeof ws.w === "number" && typeof ws.h === "number") {
+    try {
+      const { LogicalSize } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().setSize(new LogicalSize(ws.w, ws.h));
+    } catch (e) {
+      console.warn("[bootstrap] restore window size failed:", e);
+    }
+  }
 
   // Apply RTL layout when locale is Arabic. Phase 12 ships with a
   // single RTL ship-locale (`ar`); when more land, this `endsWith` /
@@ -49,6 +64,27 @@ export async function bootstrap() {
   bindKeyboard();
   await bindNativeEvents();
   bindShutdownHooks();
+
+  // Kick off the initial "Everything" query so first paint isn't empty.
+  // resultsStore.run() composes a bare `*` when all type filters are
+  // selected and the source is empty (the default boot state), which
+  // matches voidtools-Everything behavior. Retries briefly because the
+  // daemon may still be in its background canonical-store replay.
+  void runInitialEverythingQuery();
+}
+
+async function runInitialEverythingQuery() {
+  // Poll until results arrive. Crucially, we only fire a fresh `run()`
+  // when nothing is in-flight — otherwise the next iteration would
+  // cancel its own previous query before the daemon could respond
+  // (the `*` query takes ~600 ms on a million-file index).
+  for (let attempt = 0; attempt < 60; attempt++) {
+    if (resultsStore.batches.length > 0) return;
+    if (!resultsStore.running) {
+      await resultsStore.run(queryStore.source);
+    }
+    await new Promise((r) => setTimeout(r, 800));
+  }
 }
 
 /// RTL ship-locales. Phase 12 has only Arabic; if Hebrew / Persian /
@@ -140,7 +176,11 @@ function selectedPaths(): string[] {
 async function setWindowSize(w: number, h: number) {
   try {
     const win = getCurrentWindow();
-    await win.setSize(new (await import("@tauri-apps/api/dpi")).LogicalSize(w, h));
+    const { LogicalSize } = await import("@tauri-apps/api/window");
+    await win.setSize(new LogicalSize(w, h));
+    // Persist so the next launch restores this size. Stored in the
+    // SettingsState extras as `window_size: { w, h }`.
+    await settingsStore.patch({ window_size: { w, h } });
   } catch (e) {
     console.warn("[cmd] window resize failed:", e);
   }
@@ -295,8 +335,10 @@ function registerHandlers() {
 
   // ---- View ----
   registry.register("view.filters", async () => {
-    // Quick-filters palette is always visible in Phase 11; toggle status_bar
-    // shows/hides the chip strip indirectly via a Phase-12 setting.
+    // "Filters" in voidtools Everything jumps to the Exclude settings
+    // panel — that's where include/exclude rules live. Pre-select the
+    // panel before opening so the user lands there directly.
+    settingsDialog.setSelected("indexes.exclude");
     dialogsStore.open("settings");
   });
   registry.register("view.preview", async () =>
@@ -399,19 +441,17 @@ function registerHandlers() {
   registry.register("view.lens.audio", async () => toggleLens("audio"));
   registry.register("view.lens.similarity", async () => toggleLens("similarity"));
 
+  // App.svelte owns a $effect that translates settings.state.on_top +
+  // queryStore.source into setAlwaysOnTop calls, so these handlers just
+  // record the user's choice and let reactivity do the rest.
   registry.register("view.on_top.never", async () => {
-    await setAlwaysOnTop(false);
     await settingsStore.patch({ on_top: "never" });
   });
   registry.register("view.on_top.always", async () => {
-    await setAlwaysOnTop(true);
     await settingsStore.patch({ on_top: "always" });
   });
   registry.register("view.on_top.while_searching", async () => {
     await settingsStore.patch({ on_top: "while_searching" });
-    // The while-searching mode is honored by `App.svelte`'s effect that
-    // toggles always-on-top when `queryStore.source` is non-empty.
-    await setAlwaysOnTop(queryStore.source.trim().length > 0);
   });
 
   // ---- Search toggles ----
@@ -433,46 +473,53 @@ function registerHandlers() {
   });
   registry.register("search.organize_filters", async () => dialogsStore.open("organize_bookmarks"));
 
-  // Quick-filter chips: prepend the matching token to the active query.
-  const filterTokens: Record<string, string> = {
-    "search.filter.everything": "",
-    "search.filter.audio": "audio:",
-    "search.filter.compressed": "zip:",
-    "search.filter.document": "document:",
-    "search.filter.executable": "exec:",
-    "search.filter.folder": "folder:",
-    "search.filter.picture": "picture:",
-    "search.filter.video": "video:",
-    "search.filter.custom": ""
+  // Quick-filter chips and Search-menu items toggle the multi-select
+  // typeFilterStore; the actual lens-prefix composition happens inside
+  // resultsStore.run via typeFilterStore.toQueryFragment().
+  const filterMenuToId: Record<string, TypeFilterId> = {
+    "search.filter.audio": "audio",
+    "search.filter.compressed": "compressed",
+    "search.filter.document": "document",
+    "search.filter.executable": "executable",
+    "search.filter.folder": "folder",
+    "search.filter.picture": "picture",
+    "search.filter.video": "video"
   };
-  for (const [id, token] of Object.entries(filterTokens)) {
+  for (const [id, fid] of Object.entries(filterMenuToId)) {
     registry.register(id as CommandId, async () => {
-      if (!token) {
-        if (id === "search.filter.everything") {
-          await queryStore.setSource("");
-          await resultsStore.run("");
-        } else if (id === "search.filter.custom") {
-          dialogsStore.open("settings");
-        }
-        return;
-      }
-      const cur = queryStore.source;
-      const next = cur.includes(token) ? cur : `${token} ${cur}`.trim();
-      await queryStore.setSource(next);
-      await resultsStore.run(next);
+      typeFilterStore.toggle(fid);
+      await resultsStore.run(queryStore.source);
     });
   }
+  registry.register("search.filter.everything", async () => {
+    typeFilterStore.toggleEverything();
+    await resultsStore.run(queryStore.source);
+  });
+  registry.register("search.filter.custom", async () => dialogsStore.open("settings"));
 
   // ---- Bookmarks ----
   registry.register("bookmarks.add", async () => {
-    if (!queryStore.source.trim()) return;
-    // Dedupe by query string — Ctrl+D on an already-bookmarked query is a no-op.
-    const exists = bookmarksStore.items.some((b) => b.query === queryStore.source);
+    const q = queryStore.source;
+    const filters = typeFilterStore.toIds();
+    // Dedupe on (query, filter-set). Bookmarks with the same query but
+    // different filter selections are distinct entries.
+    const exists = bookmarksStore.items.some(
+      (b) =>
+        b.query === q &&
+        JSON.stringify(b.filters ?? []) === JSON.stringify(filters),
+    );
     if (exists) return;
-    const name = queryStore.source.slice(0, 60);
-    await bookmarksStore.add(name, queryStore.source);
+    const name = q.trim()
+      ? q.slice(0, 60)
+      : `Bookmark ${bookmarksStore.items.length + 1}`;
+    await bookmarksStore.add(name, q, filters);
   });
-  registry.register("bookmarks.organize", async () => dialogsStore.open("organize_bookmarks"));
+  registry.register("bookmarks.organize", async () => {
+    // Refresh from disk in case another window mutated the list while
+    // this one was open — Organize then reflects the real persisted set.
+    await bookmarksStore.hydrate();
+    dialogsStore.open("organize_bookmarks");
+  });
 
   // ---- Tools ----
   registry.register("tools.connect_endpoint", async () => dialogsStore.open("connect_endpoint"));

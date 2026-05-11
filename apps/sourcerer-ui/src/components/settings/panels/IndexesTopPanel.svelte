@@ -39,7 +39,7 @@
 
 <h1>Indexes</h1>
 
-<Section title="Storage (E)">
+<Section title="Storage">
   <TextInput id="ix-db-loc" label="Database location" value={settingsStore.state.index_core.database_location}
     onChange={(v) => patch({ database_location: v })} />
   <Checkbox id="ix-multiuser" label="Multi-user database filename"
@@ -50,7 +50,7 @@
     onChange={(v) => patch({ compress_database: v })} />
 </Section>
 
-<Section title="Index Fields (E)">
+<Section title="Index Fields">
   <Checkbox id="ix-recent" label="Index recent changes"
     checked={settingsStore.state.index_core.index_recent_changes}
     onChange={(v) => patch({ index_recent_changes: v })} />

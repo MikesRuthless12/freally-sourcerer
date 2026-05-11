@@ -19,6 +19,7 @@ pub mod extractors;
 pub mod files;
 pub mod folders;
 pub mod history;
+pub mod icons;
 pub mod index_state;
 pub mod known_paths;
 pub mod network;

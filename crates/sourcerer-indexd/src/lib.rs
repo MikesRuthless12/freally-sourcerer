@@ -18,6 +18,7 @@
 
 pub mod bookmarks;
 pub mod history;
+pub mod scanner;
 pub mod service;
 pub mod settings;
 pub mod state;
@@ -46,6 +47,6 @@ pub async fn spawn_default(state: Arc<DaemonState>) -> Result<JoinHandle<()>> {
 /// tests to bind to a temp path.
 pub async fn spawn_at(state: Arc<DaemonState>, socket: SocketPath) -> Result<JoinHandle<()>> {
     let service = Arc::new(IndexdService::new(state));
-    let server = Server::new(ServerConfig { socket });
+    let server = Server::new(ServerConfig::new(socket));
     Ok(server.spawn(service))
 }

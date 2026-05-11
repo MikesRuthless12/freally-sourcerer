@@ -49,7 +49,7 @@
 
 <h1>File Lists</h1>
 
-<Section title="File Lists (E)">
+<Section title="File Lists">
   <ul>
     {#each lists as l (l.id)}
       <li>
@@ -67,7 +67,7 @@
 
 {#if selected}
   <Section title="Settings for selected file list">
-    <Checkbox id="fl-monitor" label="Monitor changes (E)"
+    <Checkbox id="fl-monitor" label="Monitor changes"
       checked={selected.monitor_changes}
       onChange={(v) => {
         lists = lists.map((l) => (l.id === selected!.id ? { ...l, monitor_changes: v } : l));

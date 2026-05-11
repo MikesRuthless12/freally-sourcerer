@@ -641,6 +641,10 @@ const ALLOWED_PATCH_KEYS: &[&str] = &[
     "privacy_and_updates",
     "logs_and_debug",
     "locale_settings",
+    // Sourcerer-only: persisted window size (Width × Height in CSS px),
+    // applied on bootstrap and rewritten whenever the user picks one of
+    // the View → Window Size presets.
+    "window_size",
 ];
 
 const MAX_HOTKEY_LEN: usize = 64;

@@ -43,9 +43,11 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    /// Boot the sidecar daemon + connect a client. The returned
-    /// `Daemon` is held by the lazy `DAEMON` static so every Tauri
-    /// command body shares it.
+    /// Boot the daemon connection. On Windows, prefers the installed
+    /// elevated service (well-known pipe `\\.\pipe\sourcerer-indexd`);
+    /// falls back to spawning an unelevated child process if the
+    /// service isn't running. This is the lever that gives users
+    /// Everything-grade speed once they've installed the service.
     pub fn boot(app: &AppHandle) -> anyhow::Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -53,6 +55,43 @@ impl Daemon {
             .build()?;
         let runtime = Arc::new(runtime);
         let app_for_emit = app.clone();
+
+        // 1) Service-pipe fast path. If the elevated service is
+        //    running, connect to it and skip spawning a child entirely.
+        #[cfg(windows)]
+        {
+            let service_socket = SocketPath::Pipe(sourcerer_rpc::service_pipe_name());
+            let probe = runtime.block_on(async {
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    Client::connect(service_socket.clone()),
+                )
+                .await
+            });
+            if let Ok(Ok(client)) = probe {
+                tracing::info!(pipe = %sourcerer_rpc::service_pipe_name(), "connected to sourcerer-indexd service");
+                let mut stream = client.notifications();
+                let app_for_emit2 = app_for_emit.clone();
+                let notif_join = runtime.spawn(async move {
+                    while let Some(n) = stream.next().await {
+                        let payload = n.params.unwrap_or(serde_json::Value::Null);
+                        if let Err(e) = app_for_emit2.emit(&n.method, payload) {
+                            tracing::warn!(method = %n.method, error = %e, "tauri emit failed");
+                        }
+                    }
+                });
+                return Ok(Self {
+                    client,
+                    _child: parking_lot::Mutex::new(None),
+                    _notif_join: notif_join,
+                    runtime,
+                    socket: service_socket,
+                });
+            }
+            tracing::info!("sourcerer-indexd service not detected; falling back to child process");
+        }
+
+        // 2) Per-user child-spawn fallback (unelevated; uses walkdir).
         let socket = pick_socket(app);
         let bin = locate_indexd_binary().ok_or_else(|| {
             anyhow::anyhow!(
@@ -85,7 +124,22 @@ impl Daemon {
         let socket_for_connect = socket.clone();
         let (client, notif_join) = runtime.block_on(async move {
             wait_for_socket(&socket_for_connect).await;
-            let client = Client::connect(socket_for_connect).await?;
+            // Elevated startups can take several seconds — the daemon may
+            // replay its canonical store before opening the pipe. Retry
+            // the connect for up to ~20s so we don't lose to that race.
+            let client = {
+                let mut attempt = 0u32;
+                loop {
+                    match Client::connect(socket_for_connect.clone()).await {
+                        Ok(c) => break c,
+                        Err(_) if attempt < 500 => {
+                            attempt += 1;
+                            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+                        }
+                        Err(e) => return Err::<_, anyhow::Error>(e.into()),
+                    }
+                }
+            };
             let mut stream = client.notifications();
             let app = app_for_emit.clone();
             let notif_join = tokio::spawn(async move {

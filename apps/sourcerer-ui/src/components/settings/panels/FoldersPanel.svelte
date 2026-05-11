@@ -54,7 +54,7 @@
 </script>
 
 <h1>Folders</h1>
-<p class="hint">Additional watched folders beyond the default volumes (E).</p>
+<p class="hint">Additional watched folders beyond the default volumes.</p>
 
 <div class="split">
   <div class="flist">
@@ -83,12 +83,12 @@
   <div class="fdetail">
     {#if selected}
       <Section title="Settings for {selected.path}">
-        <Checkbox id={`fld-${selected.id}-monitor`} label="Attempt to monitor changes (E)"
+        <Checkbox id={`fld-${selected.id}-monitor`} label="Attempt to monitor changes"
           checked={selected.monitor_changes} onChange={(v) => update({ monitor_changes: v })} />
         <NumberInput id={`fld-${selected.id}-buf`} label="Buffer size"
           min={0} max={65536} suffix="KB"
           value={selected.buffer_kb} onChange={(n) => update({ buffer_kb: n })} />
-        <Checkbox id={`fld-${selected.id}-on-full`} label="Rescan on full buffer (E)"
+        <Checkbox id={`fld-${selected.id}-on-full`} label="Rescan on full buffer"
           checked={selected.rescan_on_full_buffer}
           onChange={(v) => update({ rescan_on_full_buffer: v })} />
         <Dropdown id={`fld-${selected.id}-sched`} label="Rescan schedule"

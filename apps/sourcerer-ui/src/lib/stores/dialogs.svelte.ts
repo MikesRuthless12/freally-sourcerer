@@ -6,6 +6,7 @@ export type ModalId =
   | null
   | "about"
   | "organize_bookmarks"
+  | "new_bookmark"
   | "settings"
   | "connect_endpoint"
   | "custom_extractor_manager";

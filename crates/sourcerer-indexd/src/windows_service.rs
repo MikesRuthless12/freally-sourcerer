@@ -14,10 +14,15 @@
 use std::ffi::{OsStr, c_void};
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
+use sourcerer_index::service_index_root;
+use sourcerer_rpc::{Server, ServerConfig, SocketPath, service_pipe_name, service_sddl};
+
+use sourcerer_indexd::scanner;
+use sourcerer_indexd::{DaemonOptions, DaemonState, IndexdService};
 use windows::Win32::Foundation::{ERROR_SERVICE_DOES_NOT_EXIST, NO_ERROR};
 use windows::Win32::System::Services::{
     ChangeServiceConfig2W, CloseServiceHandle, CreateServiceW, DeleteService, ENUM_SERVICE_TYPE,
@@ -149,23 +154,142 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut windows::core::PW
 
     SERVICE_HANDLE.set(h.0 as usize).ok();
 
-    set_state(SERVICE_START_PENDING, 0, 3000);
-    // Accept both Stop and Shutdown so a system shutdown drives us through
-    // our normal stop path instead of getting force-killed.
+    // Initialize logging to a file under PROGRAMDATA — service runs as
+    // SYSTEM and has no stderr to inherit. Errors here would otherwise
+    // be invisible during dev.
+    init_service_logging();
+
+    set_state(SERVICE_START_PENDING, 0, 30_000);
+
+    // Run the daemon body on a fresh tokio runtime. The runtime is
+    // owned by this thread for the service's lifetime; STOP signals
+    // from SCM flip `STOP_REQUESTED`, which the daemon polls.
+    let runtime_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let rt = match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                tracing::error!(error = %e, "service: failed to build tokio runtime");
+                return;
+            }
+        };
+        rt.block_on(async {
+            if let Err(e) = run_service_daemon().await {
+                tracing::error!(error = %e, "service: daemon body returned error");
+            }
+        });
+    }));
+    if let Err(_panic) = runtime_result {
+        tracing::error!("service: daemon panicked");
+    }
+
+    set_state(SERVICE_STOP_PENDING, 0, 5000);
+    set_state(SERVICE_STOPPED, 0, 0);
+}
+
+fn init_service_logging() {
+    // PROGRAMDATA\Sourcerer\logs\indexd-service.log. The service runs
+    // as Local System and has no stderr to inherit, so this is the
+    // only place errors show up during dev. `Mutex<File>` impls
+    // `MakeWriter` cleanly (tracing-subscriber blanket impl), one
+    // shared file handle, no per-event reopen.
+    let mut log_dir = std::env::var_os("PROGRAMDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    log_dir.push("Sourcerer");
+    log_dir.push("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join("indexd-service.log");
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(std::sync::Mutex::new(file))
+        .with_ansi(false)
+        .try_init();
+    tracing::info!(
+        log = %log_path.display(),
+        "sourcerer-indexd service starting"
+    );
+}
+
+async fn run_service_daemon() -> Result<()> {
+    // Service writes to %PROGRAMDATA%\Sourcerer\index (system-wide) so
+    // the per-user UI can still read `index.state` stats.
+    let index_root = service_index_root().context("service_index_root")?;
+    tracing::info!(index_root = %index_root.display(), "service: opening daemon state");
+
+    let opts = DaemonOptions {
+        index_root: Some(index_root),
+        ..Default::default()
+    };
+    let state: Arc<DaemonState> = DaemonState::open(opts)?;
+
+    // Well-known pipe + permissive SDDL so unelevated user processes
+    // can connect to the elevated service.
+    let socket = SocketPath::Pipe(service_pipe_name());
+    let sddl = service_sddl();
+    tracing::info!(pipe = %service_pipe_name(), "service: binding RPC pipe");
+
+    let service_impl = Arc::new(IndexdService::new(state.clone()));
+    let server = Server::new(ServerConfig {
+        socket,
+        sddl_override: Some(sddl),
+    });
+    let server_handle = server.spawn(service_impl);
+
+    // SCM expected us to transition RUNNING by now.
     set_state(
         SERVICE_RUNNING,
         SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN,
         0,
     );
 
-    while !STOP_REQUESTED.load(Ordering::SeqCst) {
-        // Phase 1: SCM-shape only. Phase 4 will spawn per-volume
-        // subscribers + the index core here.
-        std::thread::sleep(std::time::Duration::from_millis(500));
+    // Kick off an initial scan for every configured folder so the
+    // service does useful work on its own — the per-user UI may not
+    // launch until much later (or ever, if Sourcerer is being used
+    // exclusively via its CLI / HTTP endpoint).
+    {
+        let folders = state.folders.read().await.clone();
+        if folders.is_empty() {
+            tracing::info!("service: no folders configured yet; waiting for IPC");
+        } else {
+            tracing::info!(count = folders.len(), "service: starting initial scans");
+            for f in folders {
+                let path = std::path::PathBuf::from(&f.path);
+                scanner::spawn_scan(state.index.clone(), &path);
+            }
+        }
     }
 
-    set_state(SERVICE_STOP_PENDING, 0, 1000);
-    set_state(SERVICE_STOPPED, 0, 0);
+    // Wait for SCM stop or the server task to exit.
+    loop {
+        if STOP_REQUESTED.load(Ordering::SeqCst) {
+            tracing::info!("service: stop requested by SCM");
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if server_handle.is_finished() {
+            tracing::warn!("service: RPC accept loop exited unexpectedly");
+            break;
+        }
+    }
+
+    server_handle.abort();
+    let _ = state.persist().await;
+    tracing::info!("service: clean shutdown");
+    Ok(())
 }
 
 unsafe extern "system" fn service_ctrl_handler(

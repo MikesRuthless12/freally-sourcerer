@@ -31,28 +31,61 @@ use crate::error::{RpcError, RpcResult};
 /// current user (and SYSTEM). Subsequent calls to `create` re-use the
 /// same security descriptor for additional pipe instances.
 pub fn listen(pipe_name: &str) -> RpcResult<NamedPipeServer> {
-    let sd_string = current_user_sddl()
-        .ok_or_else(|| RpcError::Other("could not resolve current-user SID".into()))?;
-    let pipe = unsafe { create_first_instance(pipe_name, &sd_string) }?;
-    Ok(pipe)
+    listen_with_sddl(pipe_name, None)
 }
 
 /// Create one additional pipe-instance with the same DACL. Used by the
 /// server's accept loop to keep at least one pending instance available
 /// while previous ones service connections.
 pub fn create_next_instance(pipe_name: &str) -> RpcResult<NamedPipeServer> {
-    let sd_string = current_user_sddl()
-        .ok_or_else(|| RpcError::Other("could not resolve current-user SID".into()))?;
+    create_next_instance_with_sddl(pipe_name, None)
+}
+
+/// `listen` variant that lets the caller pin the DACL (used by the
+/// Windows service so logged-in users can connect to the elevated
+/// pipe). When `sddl_override` is `None`, falls back to per-user SDDL.
+pub fn listen_with_sddl(
+    pipe_name: &str,
+    sddl_override: Option<&str>,
+) -> RpcResult<NamedPipeServer> {
+    let sd_string = match sddl_override {
+        Some(s) => s.to_string(),
+        None => current_user_sddl()
+            .ok_or_else(|| RpcError::Other("could not resolve current-user SID".into()))?,
+    };
+    let pipe = unsafe { create_first_instance(pipe_name, &sd_string) }?;
+    Ok(pipe)
+}
+
+/// `create_next_instance` variant that pins the DACL.
+pub fn create_next_instance_with_sddl(
+    pipe_name: &str,
+    sddl_override: Option<&str>,
+) -> RpcResult<NamedPipeServer> {
+    let sd_string = match sddl_override {
+        Some(s) => s.to_string(),
+        None => current_user_sddl()
+            .ok_or_else(|| RpcError::Other("could not resolve current-user SID".into()))?,
+    };
     let pipe = unsafe { create_subsequent_instance(pipe_name, &sd_string) }?;
     Ok(pipe)
 }
 
 pub async fn connect(pipe_name: &str) -> RpcResult<NamedPipeClient> {
-    // Retry on PIPE_BUSY using ClientOptions::open's loop semantics.
+    // Retry on PIPE_BUSY (server saturated) and on FILE_NOT_FOUND
+    // (sidecar hasn't created the pipe yet) so a client that wins the
+    // race against a freshly-spawned server still connects. Bounded so
+    // a truly absent daemon surfaces the error instead of hanging.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         match ClientOptions::new().open(pipe_name) {
             Ok(c) => return Ok(c),
-            Err(e) if e.raw_os_error() == Some(231) /* ERROR_PIPE_BUSY */ => {
+            Err(e)
+                if matches!(
+                    e.raw_os_error(),
+                    Some(231) /* ERROR_PIPE_BUSY */ | Some(2) /* ERROR_FILE_NOT_FOUND */
+                ) && std::time::Instant::now() < deadline =>
+            {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 continue;
             }

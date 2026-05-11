@@ -41,6 +41,7 @@
       data-testid="search-input"
       placeholder={t("search-placeholder")}
       aria-label={t("search-placeholder")}
+      value={queryStore.source}
       oninput={onInput}
       onkeydown={onKey}
     />
@@ -83,10 +84,14 @@
   }
 
   .raw {
-    color: transparent;
+    color: var(--text-primary);
     caret-color: var(--text-primary);
+    background: var(--bg-canvas);
     z-index: 1;
     outline: none;
+  }
+  .mirror {
+    display: none;
   }
   .raw::placeholder {
     color: var(--text-secondary);

@@ -1,11 +1,11 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 @import "./theme/tokens.shared.css";
 @import "./theme/tokens.dark.css";
 @import "./theme/tokens.light.css";
 @import "./theme/animations.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 html,
 body {
@@ -16,7 +16,8 @@ body {
   background: var(--bg-canvas);
   color: var(--text-primary);
   font-family: var(--font-ui);
-  font-size: 14px;
+  /* Fonts & Colors panel writes --app-font-size; fall back to 14px. */
+  font-size: var(--app-font-size, 14px);
   overflow: hidden;
 }
 
@@ -29,4 +30,14 @@ body {
 :focus-visible {
   outline: 2px solid var(--accent-cyan);
   outline-offset: 2px;
+}
+
+/* View → Rendering toggles. Driven by App.svelte's $effect that writes
+ * data-* attrs on <body> based on settingsStore.state. */
+body[data-alternate-rows="true"] .row:not(.selected):nth-child(even) {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+body[data-row-mouseover="false"] .row:not(.selected):hover {
+  background: transparent;
+  color: inherit;
 }

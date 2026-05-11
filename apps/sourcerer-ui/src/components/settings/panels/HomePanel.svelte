@@ -68,7 +68,7 @@
 
 <h1>Home</h1>
 <p class="hint">Defaults loaded on app launch — every dropdown can stick to "Use last value"
-or pin a fixed value (E). Lens visibility / result limits are Sourcerer additions (+).</p>
+or pin a fixed value. Lens visibility / result limits are Sourcerer additions (+).</p>
 
 <Section title="Match Defaults">
   <Dropdown id="hm-match-case" label="Match case" value={settingsStore.state.default_match_case}

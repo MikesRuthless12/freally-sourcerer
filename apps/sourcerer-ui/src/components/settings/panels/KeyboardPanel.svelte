@@ -41,7 +41,7 @@
 
 <h1>Keyboard</h1>
 
-<Section title="Global Hotkeys (E)">
+<Section title="Global Hotkeys">
   <TextInput id="kb-global" label="Global Hotkey" value={settingsStore.state.hotkey}
     placeholder="Super+Space"
     onChange={(v) => patchHotkey(v)} />
@@ -53,7 +53,7 @@
     onChange={(v) => patchKbd({ toggle_window_hotkey: v })} />
 </Section>
 
-<Section title="Commands (E)">
+<Section title="Commands">
   <TextInput id="kb-filter" label="Show commands containing" value={filter}
     onChange={(v) => (filter = v)} />
   <button type="button" class="add" onclick={addChord}>+ Add chord</button>

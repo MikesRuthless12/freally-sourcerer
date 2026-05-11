@@ -25,18 +25,72 @@ fn app_exit(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// TS-side debug bridge: forwards a message to the Rust tracing stream
+/// so console.log-style events show up in the cargo dev log (which is
+/// what external monitors tail).
+#[tauri::command]
+fn log_event(tag: String, message: String) {
+    tracing::info!(target: "sourcerer::trace", tag = %tag, message = %message);
+}
+
 use commands::bookmarks::BookmarksStore;
 use commands::known_paths::KnownPaths;
 use commands::settings::SettingsStore;
+
+/// Single-instance enforcement: kill any other live `sourcerer-ui` /
+/// `sourcerer-indexd` processes before this one boots, so the new launch
+/// can take ownership of the tantivy writer lock + the RPC pipe.
+#[cfg(windows)]
+fn kill_other_sourcerer_instances() {
+    use std::process::{Command, Stdio};
+    let me = std::process::id();
+    let filter = format!("PID ne {me}");
+    for name in ["sourcerer-ui.exe", "sourcerer-indexd.exe"] {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/FI", filter.as_str(), "/IM", name])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    // Give Windows a beat to release the tantivy writer lock + named pipe
+    // before the new daemon tries to claim them.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+}
+
+#[cfg(not(windows))]
+fn kill_other_sourcerer_instances() {
+    // No-op for non-Windows; equivalent pkill-based logic can land later.
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+                // Default raises the floor to `info` for our own crates
+                // so the targeted instrumentation (sourcerer::preview,
+                // sourcerer::icons, sourcerer_ui_lib) is visible without
+                // forcing RUST_LOG. Third-party noisy crates stay at
+                // `warn` so the console doesn't get swamped.
+                .unwrap_or_else(|_| {
+                    tracing_subscriber::EnvFilter::new(
+                        "warn,sourcerer=info,sourcerer_ui_lib=info,sourcerer_indexd=info",
+                    )
+                }),
         )
         .try_init();
+
+    // Surface Rust panics in the console with the panic message + a
+    // best-effort backtrace location, so a panicking command thread
+    // doesn't disappear silently.
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!(target: "sourcerer::panic", panic = %info,
+            "Rust panic — check the location above for the panicking thread");
+        prev_hook(info);
+    }));
+
+    kill_other_sourcerer_instances();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -48,15 +102,25 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .setup(|app| {
             let handle = app.handle();
-            // Boot the daemon + RPC client. Failures here are fatal —
-            // there is no fallback layer in Phase 12; the UI is built
-            // around a live indexd. Surface the error before any window
-            // is shown so the user sees a clear failure dialog.
-            let daemon_arc = Arc::new(daemon::Daemon::boot(handle).map_err(|e| {
-                tracing::error!(error = %e, "daemon boot failed");
-                e
-            })?);
-            daemon::install(daemon_arc.clone());
+            // Boot the daemon + RPC client on a background thread so the
+            // Tauri setup hook returns immediately and the window can
+            // appear right away. Blocking the setup hook on a 10-15s
+            // canonical-store replay would trip Windows' GUI watchdog and
+            // kill the process before any HWND is created.
+            // Commands that route through the daemon check
+            // `daemon::get()` and surface a "daemon not ready" error
+            // until the background boot finishes; the TS side retries.
+            let boot_handle = handle.clone();
+            std::thread::Builder::new()
+                .name("sourcerer-daemon-boot".into())
+                .spawn(move || match daemon::Daemon::boot(&boot_handle) {
+                    Ok(d) => {
+                        daemon::install(Arc::new(d));
+                        tracing::info!("sourcerer daemon ready");
+                    }
+                    Err(e) => tracing::error!(error = %e, "daemon boot failed"),
+                })
+                .expect("failed to spawn daemon-boot thread");
 
             app.manage(BookmarksStore::new(handle));
             app.manage(SettingsStore::new(handle));
@@ -144,6 +208,8 @@ pub fn run() {
             commands::history::history_get,
             commands::history::history_set,
             commands::history::history_clear,
+            // Real shell-extracted icons for result rows.
+            commands::icons::icon_for_ext,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sourcerer");

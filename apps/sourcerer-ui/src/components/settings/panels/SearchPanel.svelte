@@ -16,7 +16,7 @@
 <p class="hint">DSL behavior — voidtools-Everything compatibility on top, Sourcerer extensions
 (strict-Everything mode, auto-regex, modifier completions) below.</p>
 
-<Section title="Compatibility (E)">
+<Section title="Compatibility">
   <Checkbox id="se-fast-ascii" label="Fast ASCII search"
     checked={settingsStore.state.fast_ascii_search} onChange={(v) => patch("fast_ascii_search", v)} />
   <Checkbox id="se-mp-sep" label="Match path when a search term contains a path separator"

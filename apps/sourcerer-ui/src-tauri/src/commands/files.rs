@@ -123,7 +123,7 @@ pub fn files_delete(paths: Vec<String>, known: State<'_, KnownPaths>) -> Result<
 }
 
 #[tauri::command]
-pub fn files_thumbnail(
+pub async fn files_thumbnail(
     path: String,
     size: u32,
     known: State<'_, KnownPaths>,
@@ -131,15 +131,42 @@ pub fn files_thumbnail(
     verify_path(&path, &known)?;
     // Clamp size so a hostile caller can't request a 4-billion-pixel SVG.
     let size = size.clamp(16, 512);
+    let path_for_task = path.clone();
     let host_result: Option<String> =
-        preview::thumbnail(&path, size).map_err(|e: anyhow::Error| e.to_string())?;
+        tokio::task::spawn_blocking(move || preview::thumbnail(&path_for_task, size))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e: anyhow::Error| e.to_string())?;
     Ok(host_result.unwrap_or_else(|| typed_icon_svg(&path, size)))
 }
 
 #[tauri::command]
-pub fn files_preview(path: String, known: State<'_, KnownPaths>) -> Result<PreviewPayload, String> {
-    verify_path(&path, &known)?;
-    match preview::preview(&path) {
+pub async fn files_preview(
+    path: String,
+    known: State<'_, KnownPaths>,
+) -> Result<PreviewPayload, String> {
+    let t0 = std::time::Instant::now();
+    tracing::info!(target: "sourcerer::preview", path = %path, "files_preview ENTER");
+    if let Err(e) = verify_path(&path, &known) {
+        tracing::warn!(target: "sourcerer::preview", path = %path, error = %e,
+            "files_preview verify_path REJECTED");
+        return Err(e);
+    }
+    // The actual preview work (file read + base64 encode for images,
+    // text decode for the fallback) is CPU/IO heavy. Run it on a
+    // blocking thread so Tauri's IPC dispatcher stays responsive —
+    // otherwise multi-MB images freeze the entire UI while encoding.
+    let path_for_task = path.clone();
+    let res = tokio::task::spawn_blocking(move || preview::preview(&path_for_task))
+        .await
+        .map_err(|e| {
+            tracing::error!(target: "sourcerer::preview", error = %e,
+                "files_preview spawn_blocking JOIN FAILED");
+            e.to_string()
+        })?;
+    tracing::info!(target: "sourcerer::preview", path = %path,
+        ms = t0.elapsed().as_millis() as u64, "files_preview EXIT");
+    match res {
         Ok(Some(p)) => Ok(p),
         Ok(None) => Ok(PreviewPayload {
             kind: PreviewKind::Unsupported,

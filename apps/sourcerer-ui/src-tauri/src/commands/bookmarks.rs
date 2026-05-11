@@ -19,6 +19,12 @@ pub struct Bookmark {
     pub name: String,
     pub query: String,
     pub created_ms: u64,
+    /// Type-filter chip set active when the bookmark was saved (e.g.
+    /// `["audio","video"]`). On restore the UI re-applies it to
+    /// `typeFilterStore`. Optional + defaulted so older bookmarks.json
+    /// files keep deserializing.
+    #[serde(default)]
+    pub filters: Vec<String>,
 }
 
 pub struct BookmarksStore {
@@ -94,6 +100,7 @@ pub fn bookmarks_list(store: State<'_, BookmarksStore>) -> Vec<Bookmark> {
 pub fn bookmarks_save(
     name: String,
     query: String,
+    filters: Option<Vec<String>>,
     store: State<'_, BookmarksStore>,
 ) -> Result<Bookmark, String> {
     if name.is_empty() {
@@ -111,10 +118,14 @@ pub fn bookmarks_save(
             query.len()
         ));
     }
+    let filters = filters.unwrap_or_default();
     let mut guard = store.items.lock().unwrap();
-    // Dedupe on (name, query) — repeated Ctrl+D on the same query returns
-    // the existing bookmark instead of creating duplicates.
-    if let Some(existing) = guard.iter().find(|b| b.name == name && b.query == query) {
+    // Dedupe on (name, query, filters) — repeated Ctrl+D on the same
+    // state returns the existing bookmark instead of creating duplicates.
+    if let Some(existing) = guard
+        .iter()
+        .find(|b| b.name == name && b.query == query && b.filters == filters)
+    {
         return Ok(existing.clone());
     }
     if guard.len() >= MAX_BOOKMARKS {
@@ -127,6 +138,7 @@ pub fn bookmarks_save(
         name,
         query,
         created_ms: now_ms(),
+        filters,
     };
     guard.push(bm.clone());
     write_to_disk(&store.path, &guard);

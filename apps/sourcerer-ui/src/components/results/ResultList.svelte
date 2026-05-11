@@ -4,6 +4,7 @@
   import { resultsStore } from "../../lib/stores/results.svelte";
   import { queryStore } from "../../lib/stores/query.svelte";
   import { settingsStore } from "../../lib/stores/settings.svelte";
+  import { typeFilterStore } from "../../lib/stores/type_filter.svelte";
   import { t } from "../../lib/i18n/t";
   import type { LensId } from "../../lib/ipc/types";
 
@@ -30,7 +31,7 @@
 
 <div class="result-area">
   <div class="result-list">
-    {#if !queryStore.source.trim()}
+    {#if !queryStore.source.trim() && typeFilterStore.isNoneSelected()}
       <div class="empty-state">
         <p>{t("parse-error-empty")}</p>
       </div>

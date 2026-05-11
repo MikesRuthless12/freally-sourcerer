@@ -84,6 +84,51 @@ impl Store {
         &self.path
     }
 
+    /// Bulk variant of [`Store::upsert`] — wraps every row in a single
+    /// transaction and reuses one prepared statement. ~100× faster than
+    /// looping `upsert()` when the per-statement autocommit dominates
+    /// (the common case during bootstrap, where N is 100K-1M+).
+    pub fn bulk_upsert(&self, rows: &[FileRow]) -> Result<(), IndexError> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.inner.lock();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO files (file_id, path, name, name_lower, ext, size, mtime_ns, ctime_ns, attrs, volume)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT(file_id) DO UPDATE SET
+                    path=excluded.path,
+                    name=excluded.name,
+                    name_lower=excluded.name_lower,
+                    ext=excluded.ext,
+                    size=excluded.size,
+                    mtime_ns=excluded.mtime_ns,
+                    ctime_ns=excluded.ctime_ns,
+                    attrs=excluded.attrs,
+                    volume=excluded.volume",
+            )?;
+            for row in rows {
+                let path_str = row.path.to_string_lossy();
+                stmt.execute(params![
+                    row.file_id,
+                    path_str,
+                    row.name,
+                    row.name_lower,
+                    row.ext,
+                    row.size as i64,
+                    row.mtime_ns,
+                    row.ctime_ns,
+                    row.attrs as i64,
+                    row.volume,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Insert-or-replace a row keyed by `file_id`.
     pub fn upsert(&self, row: &FileRow) -> Result<(), IndexError> {
         let conn = self.inner.lock();

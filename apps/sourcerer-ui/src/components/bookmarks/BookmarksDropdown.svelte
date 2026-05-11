@@ -2,13 +2,18 @@
   import { bookmarksStore } from "../../lib/stores/bookmarks.svelte";
   import { queryStore } from "../../lib/stores/query.svelte";
   import { resultsStore } from "../../lib/stores/results.svelte";
+  import { typeFilterStore } from "../../lib/stores/type_filter.svelte";
+  import type { Bookmark } from "../../lib/ipc/types";
 
   let open = $state(false);
 
-  async function load(query: string) {
+  async function load(bm: Bookmark) {
     open = false;
-    await queryStore.setSource(query);
-    await resultsStore.run(query);
+    // Restore the chip selection first so resultsStore.run() composes
+    // the same lens-prefix the bookmark was saved with.
+    typeFilterStore.setFromIds(bm.filters ?? []);
+    await queryStore.setSource(bm.query);
+    await resultsStore.run(bm.query);
   }
 </script>
 
@@ -39,7 +44,7 @@
             role="menuitem"
             onclick={(e) => {
               e.stopPropagation();
-              void load(bm.query);
+              void load(bm);
             }}
           >
             <span class="name">{bm.name}</span>
