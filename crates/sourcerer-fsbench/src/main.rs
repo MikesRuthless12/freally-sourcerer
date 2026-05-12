@@ -155,7 +155,7 @@ fn scan_fast(root: &std::path::Path) -> Result<ScanStats> {
 
 #[cfg(target_os = "linux")]
 fn fast_label() -> &'static str {
-    "linux/getdents64+statx"
+    "linux/getdents64+statx (parallel, AT_STATX_DONT_SYNC)"
 }
 
 #[cfg(target_os = "macos")]

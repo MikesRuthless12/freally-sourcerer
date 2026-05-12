@@ -1,39 +1,49 @@
-//! Linux fast walker — raw `getdents64` for directory enumeration plus
-//! `statx` per entry for size + type. `statx` is faster than `lstat`
-//! because the caller passes a "what fields do I actually care about?"
-//! mask (`STATX_TYPE | STATX_SIZE | STATX_INO`) and the kernel skips
-//! the rest.
+//! Linux fast walker — Phase 13 optimised path.
 //!
-//! Cycle-safe via a `(dev, ino)` visited set so bind-mount loops can't
-//! send us spinning forever.
+//! Three optimisations over the textbook `getdents64 + statx`:
+//!
+//! 1. **Parallel descent via `rayon::scope`** — each directory we
+//!    discover is spawned as a fresh task on the rayon pool, so a
+//!    16-core runner walks 16 subtrees concurrently instead of one
+//!    DFS line. Shared state (file / dir / byte totals, visited set)
+//!    is held in lock-free atomics + a single `Mutex<HashSet>` whose
+//!    contention is bounded by the *directory* count, not the file
+//!    count.
+//! 2. **dirfd-relative `statx`** — we keep the open `dirfd` from the
+//!    `getdents64` loop and pass `(dirfd, basename)` to `SYS_statx`
+//!    instead of `(AT_FDCWD, absolute_path)`. The kernel skips the
+//!    component-by-component lookup of the parent path, which on a
+//!    deep tree is the largest single cost of statx.
+//! 3. **`AT_STATX_DONT_SYNC`** — when stat is satisfied by the cached
+//!    inode the kernel returns immediately; we never block waiting for
+//!    a remote filesystem (NFS / SMB / Ceph / 9P) to confirm the
+//!    canonical state. For local filesystems this is a no-op; for
+//!    network mounts it's the difference between a microsecond and a
+//!    round-trip.
+//!
+//! Additionally: the `getdents64` buffer is 256 KB (up from 64 KB) so
+//! each syscall returns more dirent records before the kernel has to
+//! pause us on the syscall boundary.
+//!
+//! Cycle-safe via a shared `(dev, ino)` visited set so bind-mount
+//! loops can't send us spinning.
 
 #![cfg(target_os = "linux")]
 
 use std::collections::HashSet;
 use std::ffi::{CString, OsStr};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::Result;
 
 use crate::ScanStats;
 
-/// Linux `linux_dirent64` layout. We don't pull it from libc because
-/// some libc revisions gate it behind feature flags; the structure is
-/// stable kernel ABI.
-#[repr(C)]
-#[allow(non_camel_case_types, dead_code)]
-struct LinuxDirent64Hdr {
-    d_ino: u64,
-    d_off: i64,
-    d_reclen: u16,
-    d_type: u8,
-    // d_name follows: NUL-terminated, up to d_reclen - 19 bytes long.
-}
+// ---- kernel ABI -----------------------------------------------------
 
-/// Linux `statx` structure (kernel ABI). We define it locally so the
-/// build doesn't depend on libc's `statx` feature flag.
 #[repr(C)]
 #[derive(Default)]
 #[allow(non_camel_case_types, non_snake_case)]
@@ -73,174 +83,181 @@ struct StatxTimestamp {
     __reserved: i32,
 }
 
-const AT_STATX_SYNC_AS_STAT: i32 = 0;
 const AT_SYMLINK_NOFOLLOW: i32 = 0x100;
+const AT_STATX_DONT_SYNC: i32 = 0x4000;
 const STATX_TYPE: u32 = 0x0001;
 const STATX_MODE: u32 = 0x0002;
 const STATX_SIZE: u32 = 0x0200;
 const STATX_INO: u32 = 0x0100;
+/// 256 KB buffer — sized so a typical directory of 5-10k entries fits
+/// in 1-2 `getdents64` calls.
+const DENTS_BUF: usize = 256 * 1024;
 
-/// Walk `root` once via getdents64 + statx and return aggregate stats.
+// ---- shared state ---------------------------------------------------
+
+struct Counters {
+    files: AtomicU64,
+    dirs: AtomicU64,
+    bytes: AtomicU64,
+    visited: Mutex<HashSet<(u64, u64)>>,
+}
+
+// ---- public entrypoint ----------------------------------------------
+
 pub fn scan(root: &Path) -> Result<ScanStats> {
-    let mut stats = ScanStats::default();
-    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
-    let mut visited: HashSet<(u64, u64)> = HashSet::new();
-    // Seed the visited set with the root inode so a bind-mount of root
-    // back under itself doesn't double-count.
-    if let Some((dev, ino)) = statx_dev_ino(root) {
-        visited.insert((dev, ino));
-        stats.dirs += 1;
+    let counters = Counters {
+        files: AtomicU64::new(0),
+        dirs: AtomicU64::new(1), // count root itself
+        bytes: AtomicU64::new(0),
+        visited: Mutex::new(HashSet::new()),
+    };
+
+    // Seed visited with root inode (path-based statx, only one such call).
+    if let Some(key) = statx_dev_ino_path(root) {
+        counters.visited.lock().unwrap().insert(key);
     }
-    let mut buf = vec![0u8; 64 * 1024];
 
-    while let Some(dir) = stack.pop() {
-        let cdir = match CString::new(dir.as_os_str().as_bytes()) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        // SAFETY: thin syscall wrapper; the kernel does not retain
-        // `cdir` past the call. O_NOFOLLOW prevents following a
-        // symlinked directory.
-        let fd = unsafe {
-            libc::open(
-                cdir.as_ptr(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-            )
-        };
-        if fd < 0 {
-            // EACCES / ENOENT / etc. on a single subtree — keep walking
-            // the rest of the volume. This mirrors the journal crate's
-            // best-effort stance and matches `find`'s default behaviour.
-            continue;
+    rayon::scope(|s| {
+        walk_dir(root.to_path_buf(), s, &counters);
+    });
+
+    Ok(ScanStats {
+        files: counters.files.load(Ordering::Relaxed),
+        dirs: counters.dirs.load(Ordering::Relaxed),
+        bytes: counters.bytes.load(Ordering::Relaxed),
+    })
+}
+
+// ---- inner walker ---------------------------------------------------
+
+fn walk_dir<'scope>(dir: PathBuf, scope: &rayon::Scope<'scope>, counters: &'scope Counters) {
+    let cdir = match CString::new(dir.as_os_str().as_bytes()) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    // SAFETY: thin syscall wrapper. O_NOFOLLOW + O_DIRECTORY refuses
+    // symlinked dirs and non-directories.
+    let raw_fd = unsafe {
+        libc::open(
+            cdir.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if raw_fd < 0 {
+        // EACCES / ENOENT — best-effort, skip subtree.
+        return;
+    }
+    // SAFETY: fresh fd we just opened.
+    let dirfd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+    let dirfd_raw = dirfd.as_raw_fd();
+
+    let mut buf = vec![0u8; DENTS_BUF];
+    loop {
+        // SAFETY: SYS_getdents64 writes ≤ buf.len() bytes into buf and
+        // returns the byte count (or 0 = EOF, -1 = error).
+        let n =
+            unsafe { libc::syscall(libc::SYS_getdents64, dirfd_raw, buf.as_mut_ptr(), buf.len()) };
+        if n <= 0 {
+            break;
         }
-        // SAFETY: fresh fd we just opened.
-        let dirfd = unsafe { OwnedFd::from_raw_fd(fd) };
-
-        loop {
-            // SAFETY: SYS_getdents64 writes at most `buf.len()` bytes
-            // into `buf` starting at offset 0 and returns the number of
-            // bytes filled (or -1 on error, 0 on EOF).
-            let n = unsafe {
-                libc::syscall(
-                    libc::SYS_getdents64,
-                    dirfd.as_raw_fd(),
-                    buf.as_mut_ptr(),
-                    buf.len(),
-                )
-            };
-            if n <= 0 {
+        let bytes = n as usize;
+        let mut off = 0usize;
+        while off + 19 <= bytes {
+            let reclen = u16::from_ne_bytes(buf[off + 16..off + 18].try_into().unwrap()) as usize;
+            if reclen == 0 || off + reclen > bytes {
                 break;
             }
-            let bytes = n as usize;
-            let mut off = 0usize;
-            while off + 19 <= bytes {
-                // Manual struct walk — d_reclen at offset 16, d_type at
-                // offset 18, d_name at offset 19.
-                let reclen =
-                    u16::from_ne_bytes(buf[off + 16..off + 18].try_into().unwrap()) as usize;
-                if reclen == 0 || off + reclen > bytes {
-                    break;
-                }
-                let d_type = buf[off + 18];
-                let name_start = off + 19;
-                let name_end_max = off + reclen;
-                let nul = buf[name_start..name_end_max]
-                    .iter()
-                    .position(|&b| b == 0)
-                    .map(|p| name_start + p)
-                    .unwrap_or(name_end_max);
-                let name_bytes = &buf[name_start..nul];
-                off += reclen;
-                if name_bytes == b"." || name_bytes == b".." {
-                    continue;
-                }
-                let name_os = OsStr::from_bytes(name_bytes);
-                let full = dir.join(name_os);
+            let d_type = buf[off + 18];
+            let name_start = off + 19;
+            let name_end = off + reclen;
+            let nul = buf[name_start..name_end]
+                .iter()
+                .position(|&b| b == 0)
+                .map(|p| name_start + p)
+                .unwrap_or(name_end);
+            // Copy the name out of `buf` so we don't keep a borrow
+            // across the spawn-into-rayon boundary below.
+            let name_bytes: Vec<u8> = buf[name_start..nul].to_vec();
+            off += reclen;
+            if name_bytes == b"." || name_bytes == b".." {
+                continue;
+            }
 
-                match d_type {
-                    libc::DT_DIR => {
-                        // Confirm dev+ino (cycle guard) and recurse.
-                        let key = statx_dev_ino(&full);
-                        if let Some(k) = key
-                            && !visited.insert(k)
-                        {
-                            continue;
-                        }
-                        stats.dirs += 1;
-                        stack.push(full);
+            match d_type {
+                libc::DT_DIR => {
+                    // Cycle-guard via dirfd-relative statx (avoids
+                    // re-walking the parent path).
+                    if let Some(key) = statx_dev_ino_relative(dirfd_raw, &name_bytes)
+                        && counters.visited.lock().unwrap().insert(key)
+                    {
+                        counters.dirs.fetch_add(1, Ordering::Relaxed);
+                        let full = dir.join(OsStr::from_bytes(&name_bytes));
+                        scope.spawn(move |s| walk_dir(full, s, counters));
                     }
-                    libc::DT_REG => {
-                        // Single statx pulls the file size + inode in
-                        // one syscall, skipping uid/gid/perms/timestamps
-                        // we don't need.
-                        if let Some(size) = statx_size(&full) {
-                            stats.files += 1;
-                            stats.bytes += size;
-                        } else {
-                            // Race with deletion — count the file
-                            // (the dirent existed) but not its bytes.
-                            stats.files += 1;
-                        }
-                    }
-                    libc::DT_LNK => {
-                        // Don't follow symlinks; don't count them as
-                        // files. Matches Sourcerer's index policy.
-                    }
-                    libc::DT_UNKNOWN => {
-                        // Some filesystems (older XFS, network FSes)
-                        // return DT_UNKNOWN — fall through to statx
-                        // to figure out what we're looking at.
-                        let Some(stx) = statx_full(&full) else {
-                            continue;
-                        };
-                        let mode = stx.stx_mode & 0o170000;
-                        if mode == 0o040000 {
-                            // S_IFDIR
-                            if visited.insert((
-                                ((stx.stx_dev_major as u64) << 32) | stx.stx_dev_minor as u64,
-                                stx.stx_ino,
-                            )) {
-                                stats.dirs += 1;
-                                stack.push(full);
-                            }
-                        } else if mode == 0o100000 {
-                            // S_IFREG
-                            stats.files += 1;
-                            stats.bytes += stx.stx_size;
-                        }
-                    }
-                    _ => { /* sockets, fifos, char/block devices — skip */ }
                 }
+                libc::DT_REG => {
+                    counters.files.fetch_add(1, Ordering::Relaxed);
+                    if let Some(size) = statx_size_relative(dirfd_raw, &name_bytes) {
+                        counters.bytes.fetch_add(size, Ordering::Relaxed);
+                    }
+                }
+                libc::DT_LNK => { /* symlink — don't follow, don't count */ }
+                libc::DT_UNKNOWN => {
+                    // Some FSes (older XFS, network FSes) return
+                    // DT_UNKNOWN; resolve via a full statx.
+                    let Some(stx) = statx_full_relative(dirfd_raw, &name_bytes) else {
+                        continue;
+                    };
+                    let mode = stx.stx_mode & 0o170000;
+                    if mode == 0o040000 {
+                        // S_IFDIR
+                        let key = pack_dev_ino(&stx);
+                        if counters.visited.lock().unwrap().insert(key) {
+                            counters.dirs.fetch_add(1, Ordering::Relaxed);
+                            let full = dir.join(OsStr::from_bytes(&name_bytes));
+                            scope.spawn(move |s| walk_dir(full, s, counters));
+                        }
+                    } else if mode == 0o100000 {
+                        // S_IFREG
+                        counters.files.fetch_add(1, Ordering::Relaxed);
+                        counters.bytes.fetch_add(stx.stx_size, Ordering::Relaxed);
+                    }
+                }
+                _ => { /* sockets, fifos, devs — skip */ }
             }
         }
     }
-    Ok(stats)
 }
 
-fn statx_size(path: &Path) -> Option<u64> {
-    statx_full(path).map(|s| s.stx_size)
+// ---- statx wrappers -------------------------------------------------
+
+fn statx_size_relative(dirfd: RawFd, name: &[u8]) -> Option<u64> {
+    statx_relative(dirfd, name, STATX_SIZE).map(|s| s.stx_size)
 }
 
-fn statx_dev_ino(path: &Path) -> Option<(u64, u64)> {
-    let s = statx_full(path)?;
-    Some((
-        ((s.stx_dev_major as u64) << 32) | s.stx_dev_minor as u64,
-        s.stx_ino,
-    ))
+fn statx_dev_ino_relative(dirfd: RawFd, name: &[u8]) -> Option<(u64, u64)> {
+    statx_relative(dirfd, name, STATX_INO).map(|s| pack_dev_ino(&s))
 }
 
-fn statx_full(path: &Path) -> Option<Statx> {
-    let cpath = CString::new(path.as_os_str().as_bytes()).ok()?;
+fn statx_full_relative(dirfd: RawFd, name: &[u8]) -> Option<Statx> {
+    statx_relative(
+        dirfd,
+        name,
+        STATX_TYPE | STATX_MODE | STATX_SIZE | STATX_INO,
+    )
+}
+
+fn statx_relative(dirfd: RawFd, name: &[u8], mask: u32) -> Option<Statx> {
+    let cname = CString::new(name).ok()?;
     let mut buf = Statx::default();
-    let mask = STATX_TYPE | STATX_MODE | STATX_SIZE | STATX_INO;
-    // SAFETY: thin syscall wrapper. statx(2) writes to buf, doesn't
-    // retain pointers, and returns 0 on success.
+    // SAFETY: SYS_statx writes to buf; the kernel does not retain
+    // cname or buf past return.
     let rc = unsafe {
         libc::syscall(
             libc::SYS_statx,
-            libc::AT_FDCWD,
-            cpath.as_ptr(),
-            AT_SYMLINK_NOFOLLOW | AT_STATX_SYNC_AS_STAT,
+            dirfd,
+            cname.as_ptr(),
+            AT_SYMLINK_NOFOLLOW | AT_STATX_DONT_SYNC,
             mask,
             &mut buf as *mut Statx,
         )
@@ -248,13 +265,29 @@ fn statx_full(path: &Path) -> Option<Statx> {
     if rc == 0 { Some(buf) } else { None }
 }
 
-#[allow(dead_code)]
-fn err_msg(prefix: &str) -> anyhow::Error {
-    let e = std::io::Error::last_os_error();
-    anyhow!("{prefix}: {e}")
+fn statx_dev_ino_path(path: &Path) -> Option<(u64, u64)> {
+    let cpath = CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut buf = Statx::default();
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_statx,
+            libc::AT_FDCWD,
+            cpath.as_ptr(),
+            AT_SYMLINK_NOFOLLOW | AT_STATX_DONT_SYNC,
+            STATX_INO,
+            &mut buf as *mut Statx,
+        )
+    };
+    if rc == 0 {
+        Some(pack_dev_ino(&buf))
+    } else {
+        None
+    }
 }
 
-#[allow(dead_code)]
-fn context<T>(r: Result<T>, what: impl Into<String>) -> Result<T> {
-    r.with_context(|| what.into())
+fn pack_dev_ino(s: &Statx) -> (u64, u64) {
+    (
+        ((s.stx_dev_major as u64) << 32) | s.stx_dev_minor as u64,
+        s.stx_ino,
+    )
 }
