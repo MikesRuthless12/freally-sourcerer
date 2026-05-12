@@ -342,7 +342,14 @@ async fn filename_lens_hits(
             path: row.path.to_string_lossy().into_owned(),
             ext: row.ext.clone().unwrap_or_default(),
             size: row.size,
-            modified_ms: (row.mtime_ns / 1_000_000) as u64,
+            // `row.mtime_ns` is signed; if a journal record carried a
+            // zero/unset FILETIME (some MFT bootstrap entries do), the
+            // stored value is a large negative i64. Casting that to u64
+            // directly wraps to ~1.8e19, which overflows JS's max Date
+            // (8.64e15) and renders as `NaN-NaN-NaN`. Clamp to 0 so the
+            // UI shows 1970-01-01 — surfaced through `formatDateMs`'s
+            // em-dash for "unknown timestamp" once the UI guards land.
+            modified_ms: (row.mtime_ns.max(0) / 1_000_000) as u64,
             kind: row.ext.unwrap_or_else(|| "file".into()).to_uppercase(),
             score: 1.0,
             // Pass the FILE_ATTRIBUTE_* bitmask through to the UI so it
