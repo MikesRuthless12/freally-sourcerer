@@ -19,7 +19,7 @@
 //! filename-lens shape lives here so Phase 4 has the canonical core.
 
 use tantivy::schema::{
-    FAST, INDEXED, STORED, STRING, Schema, SchemaBuilder, TEXT, TextFieldIndexing, TextOptions,
+    FAST, INDEXED, STORED, STRING, Schema, SchemaBuilder, TextFieldIndexing, TextOptions,
 };
 
 /// Field handles bound to a built [`Schema`]. Owners hold this alongside

@@ -24,6 +24,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Disable Defender real-time scan for workspace (Windows only)
+        # Windows-hosted runners ship Defender with real-time
+        # protection on. When Tantivy commits a segment, Defender
+        # briefly opens the new file to scan it, holding a handle
+        # that races with Tantivy's rename/delete and surfaces as
+        # `Access is denied (os error 5)`. PR #16 hit this in
+        # `phase_04_index::recovery_from_simulated_kill_dash_9`.
+        # Excluding the workspace + runner temp is the standard fix
+        # used by most Rust-on-Windows CI flows.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE
+          Add-MpPreference -ExclusionPath $env:RUNNER_TEMP
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -70,6 +85,66 @@ jobs:
 
       - name: xtask i18n-lint
         run: cargo run -p xtask -- i18n-lint
+
+      - name: Phase 13 — fsbench correctness + benchmark (1.5M files)
+        # Generates a 1.5M-file synthetic tree, walks it once via the
+        # OS-specific fast primitive (getattrlistbulk on macOS,
+        # getdents64+statx on Linux) and once via the walkdir baseline.
+        # The CI gate is correctness — both walkers must report
+        # identical file/dir/byte totals. The full scan-output lines
+        # (with elapsed-time + files/s throughput) are echoed loudly so
+        # the benchmark numbers show up clearly in the job log.
+        #
+        # Skips on Windows: Sourcerer's production Windows bootstrap is
+        # the MFT-direct-read in `sourcerer-journal-win`, not a userland
+        # FindFirstFileExW walk. On Windows the fsbench binary falls
+        # back to walkdir so the comparison would be tautological;
+        # MFT verification lives in the sourcerer-journal-win test
+        # suite instead.
+        if: runner.os == 'macOS' || runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::build sourcerer-fsbench --release"
+          cargo build -p sourcerer-fsbench --release
+          echo "::endgroup::"
+          bin=./target/release/sourcerer-fsbench
+          tmpdir=$(mktemp -d)
+          trap 'rm -rf "$tmpdir"' EXIT
+          count=1500000
+          echo "::group::gen — ${count} synthetic files"
+          "$bin" gen --root "$tmpdir/tree" --count "$count"
+          echo "::endgroup::"
+
+          # Fast path
+          echo "::group::scan — fast path"
+          fast_line=$("$bin" scan --root "$tmpdir/tree")
+          echo "$fast_line"
+          echo "::endgroup::"
+
+          # Baseline path
+          echo "::group::scan — walkdir baseline"
+          base_line=$("$bin" scan --root "$tmpdir/tree" --baseline)
+          echo "$base_line"
+          echo "::endgroup::"
+
+          # Correctness gate — count-trimmed summaries must match.
+          fast=$(printf '%s' "$fast_line" \
+            | grep -oE '[0-9]+ file\(s\), [0-9]+ dir\(s\), [0-9]+ bytes')
+          base=$(printf '%s' "$base_line" \
+            | grep -oE '[0-9]+ file\(s\), [0-9]+ dir\(s\), [0-9]+ bytes')
+          if [ "$fast" != "$base" ]; then
+            echo "::error::fsbench fast path and walkdir baseline disagree"
+            echo "  fast    : $fast"
+            echo "  baseline: $base"
+            exit 1
+          fi
+
+          # Benchmark summary — emitted as a CI notice so it surfaces
+          # in the PR's check-run sidebar, not just buried in the log.
+          echo "::notice title=fsbench ${{ matrix.os }}::FAST: $fast_line"
+          echo "::notice title=fsbench ${{ matrix.os }}::BASE: $base_line"
+          echo "::notice title=fsbench ${{ matrix.os }}::counts agree ✓ ($fast)"
 
       - name: Install cargo-deny
         # `EmbarkStudios/cargo-deny-action@v2` is a Docker container

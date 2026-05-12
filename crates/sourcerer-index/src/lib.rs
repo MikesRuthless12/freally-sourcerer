@@ -39,7 +39,7 @@ use tantivy::{
     Term,
     collector::TopDocs,
     doc,
-    query::{QueryParser, TermQuery},
+    query::{BooleanQuery, Occur, Query, TermQuery},
     schema::IndexRecordOption,
     schema::Value,
 };
@@ -270,8 +270,7 @@ impl Index {
                     if batch.len() >= 8192 {
                         self.store.bulk_upsert(&batch)?;
                         for r in &batch {
-                            self.name_index
-                                .upsert(r.file_id as u64, &r.name_lower)?;
+                            self.name_index.upsert(r.file_id as u64, &r.name_lower)?;
                         }
                         rebuilt += batch.len() as u64;
                         batch.clear();
@@ -554,8 +553,30 @@ impl Index {
     /// the full DSL on top.
     pub fn search_name(&self, q: &str, limit: usize) -> Result<Vec<u64>, IndexError> {
         let searcher = self.reader.searcher();
-        let parser = QueryParser::for_index(&self.tantivy, vec![self.fields.name_lower]);
-        let query = parser.parse_query(&q.to_lowercase())?;
+        // Filename queries are membership-style — build a `BooleanQuery::Should`
+        // over individual tokens rather than going through `QueryParser`, which
+        // synthesises phrase queries for hyphenated input ("mid-stream" →
+        // phrase "mid stream"). The schema indexes `name_lower` with the
+        // `Basic` IndexRecordOption (no positions) for ingest perf, so any
+        // phrase query throws `field 'name_lower' does not have positions
+        // indexed`. Tokenising the query the same way as the field and
+        // OR-ing the term queries gives us substring-style matches with
+        // zero position-table lookups.
+        let mut tokenizer = self.tantivy.tokenizer_for_field(self.fields.name_lower)?;
+        let normalized = q.to_lowercase();
+        let mut stream = tokenizer.token_stream(&normalized);
+        let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+        while let Some(token) = stream.next() {
+            let term = Term::from_field_text(self.fields.name_lower, &token.text);
+            clauses.push((
+                Occur::Should,
+                Box::new(TermQuery::new(term, IndexRecordOption::Basic)),
+            ));
+        }
+        if clauses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let query = BooleanQuery::new(clauses);
         let top: Vec<(tantivy::Score, tantivy::DocAddress)> =
             searcher.search(&query, &TopDocs::with_limit(limit).order_by_score())?;
         let mut out = Vec::with_capacity(top.len());
@@ -627,10 +648,7 @@ fn clamp_i64(v: i128) -> i64 {
 /// `Index::finalize_bootstrap` to rebuild the SQLite + name_index
 /// after the Tantivy-only fast scan. Returns `None` if any required
 /// field is missing.
-fn doc_to_file_row(
-    doc: &tantivy::TantivyDocument,
-    fields: &schema::Fields,
-) -> Option<FileRow> {
+fn doc_to_file_row(doc: &tantivy::TantivyDocument, fields: &schema::Fields) -> Option<FileRow> {
     use tantivy::schema::Value;
     let file_id = doc.get_first(fields.file_id)?.as_u64()? as i64;
     let name = doc.get_first(fields.name)?.as_str()?.to_string();
