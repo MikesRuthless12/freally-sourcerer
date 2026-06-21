@@ -1,0 +1,83 @@
+name: release
+
+# Tag-triggered cross-platform release. Push a `v*` tag (or run manually with a
+# tag input) and tauri-action builds the installers on each OS and uploads them
+# to a GitHub release. The release is created as a DRAFT — verify all artifacts,
+# then publish it (gh release edit <tag> --draft=false).
+#
+# Bundles are UNSIGNED: no Apple/Windows signing secrets are configured, so macOS
+# users see a Gatekeeper warning and Windows users see SmartScreen. Add signing
+# secrets later and wire them into the "Build app" step env.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build/publish (e.g. v0.19.84)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Native build per OS/arch — Win (MSI+NSIS), macOS arm64 + Intel,
+        # Linux (deb/rpm/AppImage). Mirrors the green ci.yml build matrix.
+        platform: [windows-latest, macos-14, macos-13, ubuntu-22.04]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            apps/sourcerer-ui/src-tauri
+
+      - name: Install Linux build deps (ubuntu only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            patchelf
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/sourcerer-ui/pnpm-lock.yaml
+
+      - name: Install frontend deps
+        working-directory: apps/sourcerer-ui
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build app + upload to draft release (unsigned)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/sourcerer-ui
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: Sourcerer ${{ github.event.inputs.tag || github.ref_name }}
+          releaseDraft: true
+          prerelease: false
