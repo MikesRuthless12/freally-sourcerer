@@ -33,11 +33,21 @@ jobs:
         # `phase_04_index::recovery_from_simulated_kill_dash_9`.
         # Excluding the workspace + runner temp is the standard fix
         # used by most Rust-on-Windows CI flows.
+        #
+        # The phase_04_index smoke tests open the Tantivy index under
+        # `tempfile::tempdir()`, which resolves to the *process* temp dir
+        # (`%TEMP%` = C:\Users\runneradmin\AppData\Local\Temp) — NOT
+        # `$RUNNER_TEMP` (D:\a\_temp). Excluding only the workspace and
+        # $RUNNER_TEMP left that path scanned, so Defender still raced the
+        # segment commit and surfaced `Access is denied (os error 5)` in
+        # `round_trip_create_modify_rename_delete_attrchange`. Exclude the
+        # process temp dir too — that is where the index actually lives.
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE
           Add-MpPreference -ExclusionPath $env:RUNNER_TEMP
+          Add-MpPreference -ExclusionPath ([System.IO.Path]::GetTempPath())
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
