@@ -193,6 +193,14 @@ jobs:
 
       - name: tauri build (debug, current OS only)
         working-directory: apps/sourcerer-ui
+        # tauri.conf.json sets createUpdaterArtifacts:true (updater wiring,
+        # 216088b), so `tauri build` emits a SIGNED ed25519 updater artifact
+        # and aborts without the key. Provide the same signing secrets
+        # release.yml uses (available on push to main) so the debug-build
+        # verification doesn't fail on the missing key.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --debug
 
       - name: Phase 2 smoke — FSEvents subscriber (macOS only)
