@@ -161,8 +161,20 @@ jobs:
         # action — `Container action is only supported on Linux` on
         # macOS / Windows runners. License + advisory checks are OS-
         # agnostic, so one Linux run covers the workspace.
+        #
+        # The action's container ships rustup 1.85.0, but this repo's
+        # `rust-toolchain.toml` pins 1.94.0. rustup reads that file as an
+        # override and aborts with `override toolchain '1.94.0-...' is not
+        # installed` *before* cargo-deny runs. cargo-deny only parses
+        # Cargo.lock + deny.toml (it never compiles the workspace), so the
+        # container's own toolchain is sufficient. Setting RUSTUP_TOOLCHAIN
+        # tells rustup to ignore rust-toolchain.toml and use the named
+        # toolchain — 1.85.0 is already baked into the image, so this adds
+        # zero download and keeps the step deterministic.
         if: runner.os == 'Linux'
         uses: EmbarkStudios/cargo-deny-action@v2
+        env:
+          RUSTUP_TOOLCHAIN: "1.85.0"
         with:
           command: check
           arguments: --all-features
