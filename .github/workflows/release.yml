@@ -24,13 +24,19 @@ permissions:
 
 jobs:
   release:
-    name: release (${{ matrix.platform }})
+    name: release (${{ matrix.label }})
     strategy:
       fail-fast: false
       matrix:
         # Native build per OS/arch — Win (MSI+NSIS), macOS arm64 + Intel,
-        # Linux (deb/rpm/AppImage). Mirrors the green ci.yml build matrix.
-        platform: [windows-latest, macos-14, macos-13, ubuntu-22.04]
+        # Linux (deb/rpm/AppImage). The macOS Intel build cross-compiles on the
+        # Apple Silicon runner (macos-14) instead of the chronically-scarce
+        # macos-13 runner, which failed to deliver the Intel .dmg for v0.20.0.
+        include:
+          - { platform: windows-latest, label: windows-x86_64, args: "", rust-target: "" }
+          - { platform: macos-14, label: macos-aarch64, args: "", rust-target: "" }
+          - { platform: macos-14, label: macos-x86_64, args: "--target x86_64-apple-darwin", rust-target: "x86_64-apple-darwin" }
+          - { platform: ubuntu-22.04, label: linux-x86_64, args: "", rust-target: "" }
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
@@ -38,6 +44,11 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          # The macOS Intel leg cross-compiles, so it needs the
+          # x86_64-apple-darwin target std; every other leg builds for its host
+          # (empty target = no-op).
+          targets: ${{ matrix.rust-target }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -90,3 +101,8 @@ jobs:
           prerelease: false
           # Emit + upload latest.json (the updater manifest the app polls).
           includeUpdaterJson: true
+          # Per-leg build args — the macOS Intel leg passes
+          # `--target x86_64-apple-darwin` to cross-compile on the arm64 runner;
+          # tauri-action names its bundles per-arch and merges each platform into
+          # the release's latest.json.
+          args: ${{ matrix.args }}
