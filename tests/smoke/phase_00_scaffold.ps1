@@ -10,8 +10,8 @@ Write-Host "==> cargo build --all"
 cargo build --all
 if ($LASTEXITCODE -ne 0) { throw "cargo build --all failed (exit $LASTEXITCODE)" }
 
-Write-Host "==> pnpm install (apps/sourcerer-ui)"
-Set-Location (Join-Path $root "apps\sourcerer-ui")
+Write-Host "==> pnpm install (apps/freally-ui)"
+Set-Location (Join-Path $root "apps\freally-ui")
 pnpm install --frozen-lockfile=false
 if ($LASTEXITCODE -ne 0) { throw "pnpm install failed (exit $LASTEXITCODE)" }
 

@@ -1,0 +1,36 @@
+/* PRD §9 — Freally dark theme. */
+
+[data-theme="dark"] {
+  --bg-canvas: #0e1116;
+  --bg-surface: #161b22;
+  --bg-surface-2: #1f262e;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --border: #30363d;
+  --accent-orange: #ff6a00;
+  --accent-cyan: #39c5cf;
+  --accent-violet: #8e6bd9;
+  --success: #3fb950;
+  --warning: #d29922;
+  --danger: #f85149;
+  color-scheme: dark;
+}
+
+/* Follow prefers-color-scheme when no data-theme attribute is set. */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) {
+    --bg-canvas: #0e1116;
+    --bg-surface: #161b22;
+    --bg-surface-2: #1f262e;
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --border: #30363d;
+    --accent-orange: #ff6a00;
+    --accent-cyan: #39c5cf;
+    --accent-violet: #8e6bd9;
+    --success: #3fb950;
+    --warning: #d29922;
+    --danger: #f85149;
+    color-scheme: dark;
+  }
+}

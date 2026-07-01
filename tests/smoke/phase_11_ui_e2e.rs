@@ -2,9 +2,9 @@
 //! and the search-bar's live tokenization.
 //!
 //! Phase 11 ships the entire desktop UI on top of a deterministic
-//! mock backend in `apps/sourcerer-ui/src-tauri/src/commands/`. The
+//! mock backend in `apps/freally-ui/src-tauri/src/commands/`. The
 //! one command that talks to a real backend is `query_parse`, which
-//! routes straight to `sourcerer-query::parse_to_report` so live
+//! routes straight to `freally-query::parse_to_report` so live
 //! tokenization in the search bar exactly matches the production
 //! parser. This smoke test pins:
 //!
@@ -23,7 +23,7 @@
 //! harness (vitest + playwright).
 
 use serde_json::json;
-use sourcerer_query::{ParseOpts, TokenKind, parse_to_report};
+use freally_query::{ParseOpts, TokenKind, parse_to_report};
 
 #[test]
 fn parse_to_report_drives_search_bar_tokenization() {

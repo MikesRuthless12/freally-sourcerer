@@ -1,15 +1,15 @@
-//! Phase 12 smoke test — `sourcerer-rpc` round-trip + reject-foreign-uid +
+//! Phase 12 smoke test — `freally-rpc` round-trip + reject-foreign-uid +
 //! stream-via-notification + 0600 socket file mode (Unix) / first-pipe-instance
 //! exclusive (Windows).
 //!
-//! Run with `cargo test -p sourcerer-rpc --test phase_12_rpc_transport`.
+//! Run with `cargo test -p freally-rpc --test phase_12_rpc_transport`.
 
 #![cfg(test)]
 
 use std::sync::Arc;
 
 use serde_json::json;
-use sourcerer_rpc::{
+use freally_rpc::{
     Client, ClientHandle, Notification, NotificationSink, RpcError, Server, ServerConfig, Service,
     SocketPath,
 };
@@ -88,8 +88,8 @@ use std::os::unix::fs::PermissionsExt;
 #[tokio::test]
 #[cfg(windows)]
 async fn windows_round_trip_through_pipe() {
-    use sourcerer_rpc::path::default_pipe_name;
-    let pipe = format!(r"\\.\pipe\sourcerer-test-{}", random_suffix());
+    use freally_rpc::path::default_pipe_name;
+    let pipe = format!(r"\\.\pipe\freally-test-{}", random_suffix());
     let socket = SocketPath::Pipe(pipe.clone());
 
     let svc = Arc::new(EchoService);
@@ -130,7 +130,7 @@ async fn rejects_unknown_method() {
     // Server task (single connection).
     let server_task =
         tokio::spawn(
-            async move { sourcerer_rpc::server::handle_connection_for_tests(a, svc).await },
+            async move { freally_rpc::server::handle_connection_for_tests(a, svc).await },
         );
     let client = ClientHandle::from_stream(b);
     // EchoService accepts any method, so this test exists to assert

@@ -1,6 +1,6 @@
 //! Phase 4 smoke — OS-agnostic, runs on every CI matrix entry.
 //!
-//! Asserts the four invariants the Build Guide names for `sourcerer-index`:
+//! Asserts the four invariants the Build Guide names for `freally-index`:
 //!
 //!   1. `Index::open` materializes the per-OS directory tree.
 //!   2. `apply()` round-trips Create / Modify / Delete / Rename / AttrChange
@@ -13,8 +13,8 @@
 
 use std::path::PathBuf;
 
-use sourcerer_index::{EventQueue, Index, IndexError};
-use sourcerer_journal::JournalEvent;
+use freally_index::{EventQueue, Index, IndexError};
+use freally_journal::JournalEvent;
 use tempfile::tempdir;
 
 fn create(path: &str) -> JournalEvent {
@@ -45,9 +45,9 @@ fn round_trip_create_modify_rename_delete_attrchange() {
 
     // Create three files.
     idx.apply(&[
-        create("/tmp/sourcerer-smoke/alpha.md"),
-        create("/tmp/sourcerer-smoke/beta.md"),
-        create("/tmp/sourcerer-smoke/gamma.md"),
+        create("/tmp/freally-smoke/alpha.md"),
+        create("/tmp/freally-smoke/beta.md"),
+        create("/tmp/freally-smoke/gamma.md"),
     ])
     .unwrap();
     idx.commit().unwrap();
@@ -56,7 +56,7 @@ fn round_trip_create_modify_rename_delete_attrchange() {
     assert_eq!(alpha_hits.len(), 1);
 
     // Modify alpha — same path, new size.
-    let alpha = PathBuf::from("/tmp/sourcerer-smoke/alpha.md");
+    let alpha = PathBuf::from("/tmp/freally-smoke/alpha.md");
     idx.apply(&[JournalEvent::Modify {
         path: alpha.clone(),
         size: 4096,
@@ -72,7 +72,7 @@ fn round_trip_create_modify_rename_delete_attrchange() {
 
     // AttrChange on beta.
     idx.apply(&[JournalEvent::AttrChange {
-        path: PathBuf::from("/tmp/sourcerer-smoke/beta.md"),
+        path: PathBuf::from("/tmp/freally-smoke/beta.md"),
         attrs: 0x80,
     }])
     .unwrap();
@@ -80,8 +80,8 @@ fn round_trip_create_modify_rename_delete_attrchange() {
 
     // Rename gamma → delta.
     idx.apply(&[JournalEvent::Rename {
-        old_path: PathBuf::from("/tmp/sourcerer-smoke/gamma.md"),
-        new_path: PathBuf::from("/tmp/sourcerer-smoke/delta.md"),
+        old_path: PathBuf::from("/tmp/freally-smoke/gamma.md"),
+        new_path: PathBuf::from("/tmp/freally-smoke/delta.md"),
     }])
     .unwrap();
     idx.commit().unwrap();
@@ -105,7 +105,7 @@ fn round_trip_create_modify_rename_delete_attrchange() {
 #[test]
 fn recovery_from_simulated_kill_dash_9() {
     let dir = tempdir().unwrap();
-    let p = PathBuf::from("/tmp/sourcerer-smoke/canary-recovery.dat");
+    let p = PathBuf::from("/tmp/freally-smoke/canary-recovery.dat");
     {
         let idx = Index::open(dir.path()).unwrap();
         idx.apply(&[create(p.to_str().unwrap())]).unwrap();
@@ -130,7 +130,7 @@ fn manifest_persists_volume_cursor_across_commits() {
     let dir = tempdir().unwrap();
     {
         let idx = Index::open(dir.path()).unwrap();
-        idx.apply(&[create("/tmp/sourcerer-smoke/cursor-witness.txt")])
+        idx.apply(&[create("/tmp/freally-smoke/cursor-witness.txt")])
             .unwrap();
         idx.record_cursor("C:", "USN-12345");
         idx.commit().unwrap();
@@ -161,7 +161,7 @@ fn back_to_back_creates_dedupe_in_tantivy() {
     let dir = tempdir().unwrap();
     let idx = Index::open(dir.path()).unwrap();
     // Same path created twice — common after recovery replays.
-    let p = "/tmp/sourcerer-smoke/dupe.md";
+    let p = "/tmp/freally-smoke/dupe.md";
     idx.apply(&[create(p), create(p)]).unwrap();
     idx.commit().unwrap();
     let hits = idx.search_name("dupe", 16).unwrap();
@@ -180,7 +180,7 @@ fn modify_before_create_synthesizes_create() {
     // synthesize a Create rather than silently dropping the row.
     let dir = tempdir().unwrap();
     let idx = Index::open(dir.path()).unwrap();
-    let path = PathBuf::from("/tmp/sourcerer-smoke/mid-stream.bin");
+    let path = PathBuf::from("/tmp/freally-smoke/mid-stream.bin");
     idx.apply(&[JournalEvent::Modify {
         path: path.clone(),
         size: 256,
@@ -203,8 +203,8 @@ fn rename_of_unknown_path_degrades_to_delete_plus_create() {
     // index never disagree.
     let dir = tempdir().unwrap();
     let idx = Index::open(dir.path()).unwrap();
-    let unknown_old = PathBuf::from("/tmp/sourcerer-smoke/no-prior.txt");
-    let new_path = PathBuf::from("/tmp/sourcerer-smoke/now-known.txt");
+    let unknown_old = PathBuf::from("/tmp/freally-smoke/no-prior.txt");
+    let new_path = PathBuf::from("/tmp/freally-smoke/now-known.txt");
     idx.apply(&[JournalEvent::Rename {
         old_path: unknown_old.clone(),
         new_path: new_path.clone(),
@@ -271,7 +271,7 @@ fn torn_manifest_does_not_block_open() {
     let dir = tempdir().unwrap();
     {
         let idx = Index::open(dir.path()).unwrap();
-        idx.apply(&[create("/tmp/sourcerer-smoke/torn-canary.dat")])
+        idx.apply(&[create("/tmp/freally-smoke/torn-canary.dat")])
             .unwrap();
         idx.commit().unwrap();
     }

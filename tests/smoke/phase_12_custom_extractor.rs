@@ -6,12 +6,12 @@
 //! extractor library. Phase 12 ships the host + manifest contract;
 //! this smoke proves both.
 //!
-//! Run with `cargo test -p sourcerer-extractor-host
+//! Run with `cargo test -p freally-extractor-host
 //! --test phase_12_custom_extractor`.
 
 #![cfg(test)]
 
-use sourcerer_extractor_host::{Manifest, Registry};
+use freally_extractor_host::{Manifest, Registry};
 use tempfile::TempDir;
 
 fn write_min_extractor(root: &std::path::Path, id: &str) {
@@ -103,6 +103,6 @@ fn registry_skips_bad_manifest() {
 
 #[test]
 fn host_engine_initializes_with_fuel() {
-    let host = sourcerer_extractor_host::Host::new().expect("engine init");
+    let host = freally_extractor_host::Host::new().expect("engine init");
     let _ = host.engine();
 }

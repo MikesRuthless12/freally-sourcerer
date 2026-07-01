@@ -10,7 +10,7 @@ use crate::workspace_root;
 /// Standard PNG sizes shipped in `assets/icons/png/`.
 const PNG_SIZES: &[u32] = &[16, 32, 48, 64, 128, 256, 512, 1024];
 
-/// Hicolor PNG-set sizes shipped under `assets/icons/hicolor/<size>x<size>/apps/sourcerer.png`.
+/// Hicolor PNG-set sizes shipped under `assets/icons/hicolor/<size>x<size>/apps/freally.png`.
 const HICOLOR_SIZES: &[u32] = &[16, 22, 24, 32, 48, 64, 96, 128, 256, 512];
 
 /// Sizes embedded into the Windows `.ico` container.
@@ -30,7 +30,7 @@ const ICNS_TYPES: &[(u32, [u8; 4])] = &[
 
 pub fn run(assets: Option<PathBuf>) -> Result<()> {
     let assets = assets.unwrap_or_else(|| workspace_root().join("assets").join("icons"));
-    let svg_path = assets.join("sourcerer.svg");
+    let svg_path = assets.join("freally.svg");
     let svg_data = fs::read(&svg_path).with_context(|| format!("read {}", svg_path.display()))?;
     let tree = Tree::from_data(&svg_data, &Options::default())
         .with_context(|| format!("parse SVG {}", svg_path.display()))?;
@@ -40,19 +40,19 @@ pub fn run(assets: Option<PathBuf>) -> Result<()> {
     fs::create_dir_all(&png_dir)?;
     for &size in PNG_SIZES {
         let pixmap = render(&tree, size)?;
-        let path = png_dir.join(format!("sourcerer-{size}.png"));
+        let path = png_dir.join(format!("freally-{size}.png"));
         pixmap
             .save_png(&path)
             .with_context(|| format!("write {}", path.display()))?;
     }
     println!("wrote {} PNG sizes", PNG_SIZES.len());
 
-    // 2. Hicolor tree under assets/icons/hicolor/<size>x<size>/apps/sourcerer.png.
+    // 2. Hicolor tree under assets/icons/hicolor/<size>x<size>/apps/freally.png.
     let hicolor = assets.join("hicolor");
     for &size in HICOLOR_SIZES {
         let dir = hicolor.join(format!("{size}x{size}")).join("apps");
         fs::create_dir_all(&dir)?;
-        let path = dir.join("sourcerer.png");
+        let path = dir.join("freally.png");
         let pixmap = render(&tree, size)?;
         pixmap
             .save_png(&path)
@@ -61,10 +61,10 @@ pub fn run(assets: Option<PathBuf>) -> Result<()> {
     println!("wrote Hicolor PNG set ({} sizes)", HICOLOR_SIZES.len());
 
     // 3. Windows .ico.
-    write_ico(&tree, &assets.join("sourcerer.ico"))?;
+    write_ico(&tree, &assets.join("freally.ico"))?;
 
     // 4. macOS .icns.
-    write_icns(&tree, &assets.join("sourcerer.icns"))?;
+    write_icns(&tree, &assets.join("freally.icns"))?;
 
     Ok(())
 }

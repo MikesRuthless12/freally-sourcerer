@@ -5,8 +5,8 @@
 Cargo.lock.bak
 
 # Tauri
-apps/sourcerer-ui/src-tauri/target/
-apps/sourcerer-ui/src-tauri/gen/schemas/
+apps/freally-ui/src-tauri/target/
+apps/freally-ui/src-tauri/gen/schemas/
 
 # Node
 node_modules/
@@ -17,8 +17,8 @@ yarn-debug.log*
 yarn-error.log*
 
 # Build outputs
-apps/sourcerer-ui/dist/
-apps/sourcerer-ui/.svelte-kit/
+apps/freally-ui/dist/
+apps/freally-ui/.svelte-kit/
 
 # IDEs
 .idea/
@@ -70,7 +70,7 @@ coverage/
 # would let competitors clone the entire build path. Keep local only.
 # Use `git add -f <path>` only if you really mean to publish a specific file.
 # ─────────────────────────────────────────────────────────────────────────────
-/Sourcerer-Build-Prompts-Guide.md
+/Freally-Build-Prompts-Guide.md
 /docs/ROADMAP.md
 /docs/PRD.md
 /docs/PRODUCT-VISION.md

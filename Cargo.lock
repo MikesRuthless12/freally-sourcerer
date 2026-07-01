@@ -2506,7 +2506,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sourcerer-audio"
+name = "freally-audio"
 version = "0.20.0"
 dependencies = [
  "ebur128",
@@ -2520,21 +2520,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "sourcerer-cli"
+name = "freally-cli"
 version = "0.20.0"
 dependencies = [
  "anyhow",
  "clap",
  "serde_json",
- "sourcerer-query",
- "sourcerer-rpc",
+ "freally-query",
+ "freally-rpc",
  "tokio",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "sourcerer-extractor-host"
+name = "freally-extractor-host"
 version = "0.20.0"
 dependencies = [
  "anyhow",
@@ -2549,7 +2549,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sourcerer-extractors"
+name = "freally-extractors"
 version = "0.20.0"
 dependencies = [
  "blake3",
@@ -2608,7 +2608,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sourcerer-fsbench"
+name = "freally-fsbench"
 version = "0.20.0"
 dependencies = [
  "anyhow",
@@ -2619,21 +2619,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "sourcerer-http"
+name = "freally-http"
 version = "0.20.0"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
-name = "sourcerer-i18n"
+name = "freally-i18n"
 version = "0.20.0"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
-name = "sourcerer-index"
+name = "freally-index"
 version = "0.20.0"
 dependencies = [
  "blake3",
@@ -2642,7 +2642,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "sourcerer-journal",
+ "freally-journal",
  "tantivy",
  "tempfile",
  "thiserror",
@@ -2650,7 +2650,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sourcerer-indexd"
+name = "freally-indexd"
 version = "0.20.0"
 dependencies = [
  "anyhow",
@@ -2659,17 +2659,17 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
- "sourcerer-audio",
- "sourcerer-extractor-host",
- "sourcerer-extractors",
- "sourcerer-index",
- "sourcerer-journal",
- "sourcerer-journal-lin",
- "sourcerer-journal-mac",
- "sourcerer-journal-win",
- "sourcerer-query",
- "sourcerer-rpc",
- "sourcerer-similarity",
+ "freally-audio",
+ "freally-extractor-host",
+ "freally-extractors",
+ "freally-index",
+ "freally-journal",
+ "freally-journal-lin",
+ "freally-journal-mac",
+ "freally-journal-win",
+ "freally-query",
+ "freally-rpc",
+ "freally-similarity",
  "tempfile",
  "tokio",
  "toml",
@@ -2680,18 +2680,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "sourcerer-journal"
+name = "freally-journal"
 version = "0.20.0"
 dependencies = [
  "serde",
- "sourcerer-journal-lin",
- "sourcerer-journal-mac",
- "sourcerer-journal-win",
+ "freally-journal-lin",
+ "freally-journal-mac",
+ "freally-journal-win",
  "thiserror",
 ]
 
 [[package]]
-name = "sourcerer-journal-lin"
+name = "freally-journal-lin"
 version = "0.20.0"
 dependencies = [
  "futures",
@@ -2704,7 +2704,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sourcerer-journal-mac"
+name = "freally-journal-mac"
 version = "0.20.0"
 dependencies = [
  "core-foundation",
@@ -2720,7 +2720,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sourcerer-journal-win"
+name = "freally-journal-win"
 version = "0.20.0"
 dependencies = [
  "futures",
@@ -2733,17 +2733,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "sourcerer-query"
+name = "freally-query"
 version = "0.20.0"
 dependencies = [
  "parking_lot",
  "regex",
  "serde",
  "serde_json",
- "sourcerer-audio",
- "sourcerer-index",
- "sourcerer-journal",
- "sourcerer-similarity",
+ "freally-audio",
+ "freally-index",
+ "freally-journal",
+ "freally-similarity",
  "tempfile",
  "thiserror",
  "tracing",
@@ -2751,7 +2751,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sourcerer-rpc"
+name = "freally-rpc"
 version = "0.20.0"
 dependencies = [
  "anyhow",
@@ -2767,12 +2767,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "sourcerer-similarity"
+name = "freally-similarity"
 version = "0.20.0"
 dependencies = [
  "blake3",
  "parking_lot",
- "sourcerer-journal",
+ "freally-journal",
  "tempfile",
  "thiserror",
  "tracing",
@@ -4644,8 +4644,8 @@ dependencies = [
  "resvg",
  "serde",
  "serde_json",
- "sourcerer-index",
- "sourcerer-journal",
+ "freally-index",
+ "freally-journal",
  "tiny-skia",
  "usvg",
 ]

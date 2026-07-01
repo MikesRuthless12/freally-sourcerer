@@ -4,7 +4,7 @@
 //!
 //!   1. `parse_to_report` returns a complete `ParseReport` with
 //!      per-token spans, an AST summary, and (under
-//!      `--strict-everything`) every Sourcerer-only modifier listed
+//!      `--strict-everything`) every Freally-only modifier listed
 //!      in `errors`.
 //!   2. Strict-everything mode rejects audio modifiers, similarity,
 //!      and the audio/content/similar lens prefixes via typed
@@ -24,7 +24,7 @@
 //!   7. `content:(...)` lens prefix surfaces
 //!      `QueryError::UnsupportedModifier("content")` at execute time.
 //!
-//! Re-exported under `crates/sourcerer-query/tests/phase_10_query.rs`
+//! Re-exported under `crates/freally-query/tests/phase_10_query.rs`
 //! so the per-crate test runner picks it up alongside the cross-OS
 //! smoke harness.
 
@@ -32,9 +32,9 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use sourcerer_index::Index;
-use sourcerer_journal::JournalEvent;
-use sourcerer_query::{
+use freally_index::Index;
+use freally_journal::JournalEvent;
+use freally_query::{
     AstNode, ErrorCode, ExecOpts, LensKind, ModifierKind, ParseError, ParseOpts, QueryError,
     QueryNode, TokenKind, execute, is_audio_only_route, optimize, parse, parse_to_report,
     parse_with, selectivity_rank,
@@ -211,8 +211,8 @@ fn optimizer_does_not_reorder_or_children() {
     match opt.root() {
         QueryNode::Or(parts) => match (&parts[0], &parts[1]) {
             (
-                QueryNode::Text(sourcerer_query::TextPattern::Literal(a)),
-                QueryNode::Text(sourcerer_query::TextPattern::Literal(b)),
+                QueryNode::Text(freally_query::TextPattern::Literal(a)),
+                QueryNode::Text(freally_query::TextPattern::Literal(b)),
             ) => {
                 assert_eq!(a, "alpha");
                 assert_eq!(b, "beta");
@@ -335,14 +335,14 @@ fn audio_lens_prefix_filters_via_provider() {
     .unwrap();
     idx.commit().unwrap();
 
-    let cache: Arc<sourcerer_audio::AudioCache> =
-        Arc::new(sourcerer_audio::AudioCache::open(dir.path().join("c.json")).unwrap());
-    let provider: &dyn sourcerer_audio::AudioAttributesProvider = cache.as_ref();
+    let cache: Arc<freally_audio::AudioCache> =
+        Arc::new(freally_audio::AudioCache::open(dir.path().join("c.json")).unwrap());
+    let provider: &dyn freally_audio::AudioAttributesProvider = cache.as_ref();
 
     // `audio:(silence:>0.99)` — lens prefix wraps a silence
     // predicate. The synthetic silent WAV should match.
     let q = parse("audio:(silence:>0.99)").unwrap();
-    let result = sourcerer_query::execute_with_audio(
+    let result = freally_query::execute_with_audio(
         &idx,
         None,
         Some(provider),

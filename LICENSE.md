@@ -1,4 +1,4 @@
-# Sourcerer — All Rights Reserved
+# Freally — All Rights Reserved
 
 **Copyright © 2026 Mike Weaver. All rights reserved.**
 
@@ -66,7 +66,7 @@ CC-BY-NC, and CC-BY-SA dependencies are hard-banned.
 
 ## Trade-marks
 
-"Sourcerer" and the Sourcerer magnifying-glass mark are trade-marks of Mike
+"Freally" and the Freally magnifying-glass mark are trade-marks of Mike
 Weaver. No right to use any of Mike Weaver's trade-marks is granted by this
 notice.
 
@@ -93,12 +93,12 @@ is domiciled, without regard to conflict-of-law rules.
 ## Contact
 
 Permission requests, licensing enquiries, and trade-mark questions:
-`mythodikalone@gmail.com` — subject line `LICENSE: Sourcerer`.
+`mythodikalone@gmail.com` — subject line `LICENSE: Freally`.
 
 ---
 
 **Note for Mike:** retain a software-IP lawyer before tagging v0.19.84.
-Sourcerer ships on three operating systems and indexes user data — broader
+Freally ships on three operating systems and indexes user data — broader
 exposure than the Win-only Crash File. Pay extra attention to (a) whether
 index data on disk constitutes personal data under GDPR / CCPA when shipped
 at scale, (b) whether the OS-journal subscription pattern triggers any

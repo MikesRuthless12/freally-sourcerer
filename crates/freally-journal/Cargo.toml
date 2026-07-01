@@ -1,0 +1,26 @@
+[package]
+name = "freally-journal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+description = "OS-agnostic facade and JournalEvent normalizer for Freally."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+freally-journal-win = { path = "../freally-journal-win" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+freally-journal-mac = { path = "../freally-journal-mac" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+freally-journal-lin = { path = "../freally-journal-lin" }

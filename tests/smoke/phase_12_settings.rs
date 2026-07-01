@@ -12,13 +12,13 @@
 //!    losing the typed Phase-11 carry-over fields.
 //!
 //! UI-side per-control parity / wiring tests live under
-//! `apps/sourcerer-ui/tests/ui/settings/{parity,wiring}.{ts,rs}` and
+//! `apps/freally-ui/tests/ui/settings/{parity,wiring}.{ts,rs}` and
 //! run via the JS test harness.
 
 #![cfg(test)]
 
 // The Tauri-app's settings module lives under
-// `apps/sourcerer-ui/src-tauri` (workspace-excluded, separate Cargo).
+// `apps/freally-ui/src-tauri` (workspace-excluded, separate Cargo).
 // This smoke validates the JSON shape contract via a fixture round-trip
 // so the same JSON shape that the daemon round-trips also stays
 // stable in the UI's TypeScript SettingsState.

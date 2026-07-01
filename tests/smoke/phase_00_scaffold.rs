@@ -34,7 +34,7 @@ fn all_eighteen_locales_present() {
         "pl", "nl", "id", "uk",
     ];
     for code in codes {
-        let p = root.join(code).join("sourcerer.ftl");
+        let p = root.join(code).join("freally.ftl");
         assert!(p.exists(), "missing locale file: {}", p.display());
     }
 }
@@ -43,19 +43,19 @@ fn all_eighteen_locales_present() {
 fn workspace_lists_every_build_guide_crate() {
     let toml = read(&workspace_root().join("Cargo.toml"));
     let expected = [
-        "crates/sourcerer-journal",
-        "crates/sourcerer-journal-win",
-        "crates/sourcerer-journal-mac",
-        "crates/sourcerer-journal-lin",
-        "crates/sourcerer-index",
-        "crates/sourcerer-extractors",
-        "crates/sourcerer-audio",
-        "crates/sourcerer-similarity",
-        "crates/sourcerer-query",
-        "crates/sourcerer-http",
-        "crates/sourcerer-i18n",
-        "crates/sourcerer-cli",
-        "crates/sourcerer-indexd",
+        "crates/freally-journal",
+        "crates/freally-journal-win",
+        "crates/freally-journal-mac",
+        "crates/freally-journal-lin",
+        "crates/freally-index",
+        "crates/freally-extractors",
+        "crates/freally-audio",
+        "crates/freally-similarity",
+        "crates/freally-query",
+        "crates/freally-http",
+        "crates/freally-i18n",
+        "crates/freally-cli",
+        "crates/freally-indexd",
         "xtask",
     ];
     for member in expected {
@@ -71,11 +71,11 @@ fn tauri_conf_has_identifier_and_window() {
     let conf = read(
         &workspace_root()
             .join("apps")
-            .join("sourcerer-ui")
+            .join("freally-ui")
             .join("src-tauri")
             .join("tauri.conf.json"),
     );
-    assert!(conf.contains("\"io.mikeweaver.sourcerer\""));
+    assert!(conf.contains("\"io.mikeweaver.freally\""));
     assert!(conf.contains("\"width\": 1100"));
     assert!(conf.contains("\"height\": 720"));
     assert!(conf.contains("\"theme\": \"Dark\""));
@@ -87,7 +87,7 @@ fn icon_master_svg_present() {
     let svg = workspace_root()
         .join("assets")
         .join("icons")
-        .join("sourcerer.svg");
+        .join("freally.svg");
     assert!(svg.exists(), "missing {}", svg.display());
 }
 

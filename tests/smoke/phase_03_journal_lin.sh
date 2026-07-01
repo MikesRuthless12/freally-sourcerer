@@ -8,13 +8,13 @@
 # After the driver finishes, the harness also walks the post-workload
 # tree with `find -newer` for a sanity-check ground-truth comparison.
 #
-# When SOURCERER_LIN_SMOKE_FS lists multiple filesystems (default:
+# When FREALLY_LIN_SMOKE_FS lists multiple filesystems (default:
 # "ext4 btrfs zfs") the script repeats the workload on a scratch volume
 # of each type. Volumes are located via:
 #
-#     SOURCERER_LIN_SMOKE_<FS>_DIR=/mnt/sourcerer-test-<fs>
+#     FREALLY_LIN_SMOKE_<FS>_DIR=/mnt/freally-test-<fs>
 #
-# (uppercase fs name, e.g. SOURCERER_LIN_SMOKE_EXT4_DIR). When a
+# (uppercase fs name, e.g. FREALLY_LIN_SMOKE_EXT4_DIR). When a
 # filesystem-specific dir is unset OR not a directory, that fs is
 # skipped — useful for CI hosts that only have ext4. ext4 always
 # defaults to a tempdir under $HOME if its env var is unset, so the
@@ -32,8 +32,8 @@ fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-echo "==> cargo build --release --example phase03_smoke_driver -p sourcerer-journal-lin"
-cargo build --release --example phase03_smoke_driver -p sourcerer-journal-lin
+echo "==> cargo build --release --example phase03_smoke_driver -p freally-journal-lin"
+cargo build --release --example phase03_smoke_driver -p freally-journal-lin
 
 DRIVER="$ROOT/target/release/examples/phase03_smoke_driver"
 if [[ ! -x "$DRIVER" ]]; then
@@ -47,15 +47,15 @@ RENAMES=100
 DELETES=100
 
 # Filesystems to exercise. Default matches the Phase-3 spec; CI hosts
-# that have only ext4 can pass `SOURCERER_LIN_SMOKE_FS=ext4` to skip
+# that have only ext4 can pass `FREALLY_LIN_SMOKE_FS=ext4` to skip
 # btrfs/zfs without editing this script.
-FILESYSTEMS="${SOURCERER_LIN_SMOKE_FS:-ext4 btrfs zfs}"
+FILESYSTEMS="${FREALLY_LIN_SMOKE_FS:-ext4 btrfs zfs}"
 
 run_one_fs() {
     local fs="$1"
     local upper
     upper="$(echo "$fs" | tr '[:lower:]' '[:upper:]')"
-    local dir_var="SOURCERER_LIN_SMOKE_${upper}_DIR"
+    local dir_var="FREALLY_LIN_SMOKE_${upper}_DIR"
     local dir="${!dir_var:-}"
 
     if [[ -z "$dir" ]]; then
@@ -75,7 +75,7 @@ run_one_fs() {
 
     local stamp
     stamp="$(date +%Y%m%d-%H%M%S)"
-    local scratch="$dir/sourcerer-phase03-$fs-$stamp-$$"
+    local scratch="$dir/freally-phase03-$fs-$stamp-$$"
     local events_file="$scratch.events.jsonl"
     local cursor_dir="${scratch}_cursors"
 
@@ -117,10 +117,10 @@ run_one_fs() {
         return 1
     fi
 
-    # -- Sourcerer-event-set cross-check --
-    # Count distinct workload-touched paths from the Sourcerer event
+    # -- Freally-event-set cross-check --
+    # Count distinct workload-touched paths from the Freally event
     # stream. Phase 3's gate matches Phases 1 and 2: at least 99% of
-    # (CREATES - DELETES) distinct paths must appear as a Sourcerer event.
+    # (CREATES - DELETES) distinct paths must appear as a Freally event.
     local distinct_paths
     if [[ -s "$events_file" ]]; then
         distinct_paths=$(python3 - "$events_file" <<'PY'
@@ -148,9 +148,9 @@ PY
     fi
 
     local threshold=$(( expected_min * 99 / 100 ))
-    echo "Sourcerer-event distinct paths: $distinct_paths (>= $threshold required for 99% gate)"
+    echo "Freally-event distinct paths: $distinct_paths (>= $threshold required for 99% gate)"
     if (( distinct_paths < threshold )); then
-        echo "FAIL: Sourcerer event coverage $distinct_paths < 99% gate ($threshold) on $fs" >&2
+        echo "FAIL: Freally event coverage $distinct_paths < 99% gate ($threshold) on $fs" >&2
         return 1
     fi
 

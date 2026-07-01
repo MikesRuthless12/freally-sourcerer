@@ -1,11 +1,11 @@
-//! Sourcerer xtask — build helpers.
+//! Freally xtask — build helpers.
 //!
 //! Subcommands:
 //!   - i18n-lint: verify every locale file has the same keys as the English source.
 //!   - third-party-notices: (Phase 0 stub) regenerate THIRD-PARTY-NOTICES.md.
 //!   - icon-build: render the SVG master to .ico / .icns / Hicolor PNG set.
 //!   - release: (Phase 0 stub) wire the release pipeline in Phase 13.
-//!   - gen-fixture: build a synthetic Sourcerer index for the Phase-5
+//!   - gen-fixture: build a synthetic Freally index for the Phase-5
 //!     filename-lens bench / smoke runs.
 
 use std::path::PathBuf;
@@ -15,7 +15,7 @@ use clap::{Parser, Subcommand};
 mod cmd;
 
 #[derive(Parser, Debug)]
-#[command(name = "xtask", version, about = "Sourcerer build helpers")]
+#[command(name = "xtask", version, about = "Freally build helpers")]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
@@ -39,7 +39,7 @@ enum Cmd {
     },
     /// (Stub) Phase 0 placeholder; release pipeline lands in Phase 13.
     Release,
-    /// Generate a synthetic Sourcerer index for Phase-5 perf runs.
+    /// Generate a synthetic Freally index for Phase-5 perf runs.
     GenFixture {
         /// Output index root.
         #[arg(long)]

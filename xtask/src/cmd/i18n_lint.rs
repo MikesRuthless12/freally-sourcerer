@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use crate::workspace_root;
 
 const SOURCE_LOCALE: &str = "en";
-const FILENAME: &str = "sourcerer.ftl";
+const FILENAME: &str = "freally.ftl";
 
 pub fn run(locales: Option<PathBuf>) -> Result<()> {
     let root = locales.unwrap_or_else(|| workspace_root().join("locales"));

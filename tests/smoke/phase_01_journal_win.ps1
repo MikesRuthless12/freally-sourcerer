@@ -10,8 +10,8 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $root
 
-Write-Host "==> cargo build --release --example phase01_smoke_driver -p sourcerer-journal-win"
-cargo build --release --example phase01_smoke_driver -p sourcerer-journal-win 2>&1 | Out-Host
+Write-Host "==> cargo build --release --example phase01_smoke_driver -p freally-journal-win"
+cargo build --release --example phase01_smoke_driver -p freally-journal-win 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "build failed (exit $LASTEXITCODE)" }
 
 $driver = Join-Path $root "target\release\examples\phase01_smoke_driver.exe"
@@ -19,7 +19,7 @@ if (-not (Test-Path $driver)) { throw "smoke driver missing at $driver" }
 
 # Pick a scratch directory on the same NTFS volume as the user profile.
 $stamp = (Get-Date).ToString("yyyyMMdd-HHmmss")
-$scratch = Join-Path $env:TEMP "sourcerer-phase01-$stamp"
+$scratch = Join-Path $env:TEMP "freally-phase01-$stamp"
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 
 try {

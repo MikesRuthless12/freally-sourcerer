@@ -18,9 +18,9 @@
 
 use std::path::PathBuf;
 
-use sourcerer_index::Index;
-use sourcerer_journal::JournalEvent;
-use sourcerer_query::{
+use freally_index::Index;
+use freally_journal::JournalEvent;
+use freally_query::{
     ExecOpts, MatchMode, PlanCache, SortField, SortOrder, SortSpec, execute, parse,
 };
 use tempfile::tempdir;
@@ -68,7 +68,7 @@ fn day(epoch_day: i64) -> i128 {
     (epoch_day as i128) * 86_400 * 1_000_000_000
 }
 
-fn names(rows: &[sourcerer_index::FileRow]) -> Vec<&str> {
+fn names(rows: &[freally_index::FileRow]) -> Vec<&str> {
     rows.iter().map(|r| r.name.as_str()).collect()
 }
 

@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Sourcerer — Documentation</title>
+    <title>Freally — Documentation</title>
     <meta
       name="description"
-      content="Step-by-step help guide for Sourcerer — install, search, query syntax, bookmarks, the global hotkey, settings, and more."
+      content="Step-by-step help guide for Freally — install, search, query syntax, bookmarks, the global hotkey, settings, and more."
     />
     <link rel="icon" type="image/png" href="icon.png" />
     <link rel="apple-touch-icon" href="icon.png" />
@@ -111,9 +111,9 @@
   </head>
   <body>
     <header class="hero">
-      <img class="logo" src="icon.png" alt="Sourcerer icon" width="96" height="96" />
+      <img class="logo" src="icon.png" alt="Freally icon" width="96" height="96" />
       <h1>Documentation</h1>
-      <p class="sub">Step-by-step help for getting the most out of Sourcerer.</p>
+      <p class="sub">Step-by-step help for getting the most out of Freally.</p>
     </header>
 
     <div class="doc-layout">
@@ -144,17 +144,17 @@
         <!-- Install & First Run -->
         <section id="install">
           <h2>Install &amp; First Run</h2>
-          <p class="section-intro">Sourcerer runs as two pieces: a background daemon (<code>sourcerer-indexd</code>) that keeps the index up to date, and the desktop app that connects to it. Installation sets both up automatically.</p>
+          <p class="section-intro">Freally runs as two pieces: a background daemon (<code>freally-indexd</code>) that keeps the index up to date, and the desktop app that connects to it. Installation sets both up automatically.</p>
           <ol>
             <li><strong>Download the installer</strong> for your platform from the <a href="index.html" style="color:var(--accent)">Releases page</a>: <code>.exe</code> for Windows, <code>.dmg</code> for macOS, or <code>.AppImage</code> / <code>.deb</code> for Linux.</li>
-            <li><strong>Run the installer.</strong> On Windows, run <code>Sourcerer_0.19.84_x64-setup.exe</code> and follow the prompts. On macOS, open the <code>.dmg</code> and drag Sourcerer to Applications. On Linux, make the AppImage executable (<code>chmod +x Sourcerer*.AppImage</code>) and run it, or install the <code>.deb</code> with <code>sudo dpkg -i</code>.</li>
-            <li><strong>Launch Sourcerer.</strong> The first-run wizard opens automatically.</li>
-            <li><strong>Pick your index roots.</strong> In the wizard, select the folders you want Sourcerer to index — for example, your home folder or a specific project drive. You can add more roots later in Settings.</li>
-            <li><strong>Set a global hotkey.</strong> Choose the keyboard shortcut that will summon Sourcerer from anywhere (default is <code>Alt+Space</code> on Windows/Linux). You can change this at any time in Settings.</li>
+            <li><strong>Run the installer.</strong> On Windows, run <code>Freally_0.19.84_x64-setup.exe</code> and follow the prompts. On macOS, open the <code>.dmg</code> and drag Freally to Applications. On Linux, make the AppImage executable (<code>chmod +x Freally*.AppImage</code>) and run it, or install the <code>.deb</code> with <code>sudo dpkg -i</code>.</li>
+            <li><strong>Launch Freally.</strong> The first-run wizard opens automatically.</li>
+            <li><strong>Pick your index roots.</strong> In the wizard, select the folders you want Freally to index — for example, your home folder or a specific project drive. You can add more roots later in Settings.</li>
+            <li><strong>Set a global hotkey.</strong> Choose the keyboard shortcut that will summon Freally from anywhere (default is <code>Alt+Space</code> on Windows/Linux). You can change this at any time in Settings.</li>
             <li><strong>Choose a locale and theme.</strong> Pick your preferred language and Light / Dark / System theme, then click <strong>Finish</strong>.</li>
-            <li><strong>Wait for the initial index.</strong> Sourcerer crawls your chosen folders in the background. A progress badge in the status bar shows how many files have been indexed. Typical NVMe drives index at 50,000+ files per second — a 1 M-file disk is fully indexed in under a minute. You can search during this time; results populate against whatever has been indexed so far.</li>
+            <li><strong>Wait for the initial index.</strong> Freally crawls your chosen folders in the background. A progress badge in the status bar shows how many files have been indexed. Typical NVMe drives index at 50,000+ files per second — a 1 M-file disk is fully indexed in under a minute. You can search during this time; results populate against whatever has been indexed so far.</li>
           </ol>
-          <div class="tip"><strong>Tip:</strong> The <code>sourcerer-indexd</code> daemon registers as a Windows Service, macOS launchd agent, or systemd user unit so it starts automatically at login — you never need to launch the daemon manually.</div>
+          <div class="tip"><strong>Tip:</strong> The <code>freally-indexd</code> daemon registers as a Windows Service, macOS launchd agent, or systemd user unit so it starts automatically at login — you never need to launch the daemon manually.</div>
         </section>
 
         <!-- Performing a Search -->
@@ -162,11 +162,11 @@
           <h2>Performing a Search</h2>
           <p class="section-intro">The search bar is the entire interface. Type anything — a filename fragment, a word from inside a document, an audio attribute — and results appear within milliseconds.</p>
           <ol>
-            <li><strong>Open Sourcerer.</strong> Click the app in your dock/taskbar, or press your global hotkey from anywhere.</li>
+            <li><strong>Open Freally.</strong> Click the app in your dock/taskbar, or press your global hotkey from anywhere.</li>
             <li><strong>Start typing in the search bar.</strong> Results stream in as you type, grouped by lens: <strong>FILES</strong>, <strong>CONTENT</strong>, <strong>AUDIO</strong>, and <strong>YOU MIGHT MEAN</strong>. Each group shows how long it took (e.g., <em>14 ms</em>).</li>
             <li><strong>Narrow your results</strong> by typing more characters. Each additional character filters the existing results instantly — no need to press Enter.</li>
             <li><strong>Click any result row</strong> to select it, or use the arrow keys to move through results.</li>
-            <li><strong>Open a file</strong> by double-clicking its row, or pressing <code>Enter</code> on a selected row. Sourcerer uses the OS default handler for the file type.</li>
+            <li><strong>Open a file</strong> by double-clicking its row, or pressing <code>Enter</code> on a selected row. Freally uses the OS default handler for the file type.</li>
             <li><strong>Reveal a file</strong> in Finder / Explorer / your file manager by pressing <code>Ctrl+R</code> (Windows/Linux) or <code>⌘R</code> (macOS) with a row selected.</li>
             <li><strong>Clear the search bar</strong> with <code>Escape</code> to return to the empty/bookmarks view.</li>
           </ol>
@@ -176,7 +176,7 @@
         <!-- Search Lenses -->
         <section id="lenses">
           <h2>Search Lenses</h2>
-          <p class="section-intro">Sourcerer fans out across four independent lenses in parallel. Every search runs all four simultaneously unless you narrow to one with a prefix.</p>
+          <p class="section-intro">Freally fans out across four independent lenses in parallel. Every search runs all four simultaneously unless you narrow to one with a prefix.</p>
           <ol>
             <li>
               <strong>Filename lens</strong> — finds files by name, path, glob, or regex. This is the fastest lens (P99 under 16 ms on a 5-million-file disk). Results appear under the <strong>FILES</strong> heading.
@@ -200,7 +200,7 @@
         <!-- Query Syntax -->
         <section id="query-syntax">
           <h2>Query Syntax</h2>
-          <p class="section-intro">Sourcerer supports everything you know from voidtools' <em>Everything</em>, plus additional modifiers for the content, audio, and similarity lenses.</p>
+          <p class="section-intro">Freally supports everything you know from voidtools' <em>Everything</em>, plus additional modifiers for the content, audio, and similarity lenses.</p>
 
           <h3>Basic patterns</h3>
           <ol>
@@ -265,7 +265,7 @@
             <li><strong>Name your bookmark</strong> in the dialog that appears, then click <strong>Save</strong>.</li>
             <li><strong>Recall a bookmark</strong> by clicking the Bookmarks dropdown and selecting it from the list — the saved query populates the search bar and results load immediately.</li>
             <li><strong>Organize bookmarks</strong> by selecting <strong>Organize…</strong> at the bottom of the dropdown. Drag to reorder, click the pencil icon to rename, or click the trash icon to delete.</li>
-            <li><strong>Use a bookmark at startup:</strong> go to <strong>Settings → General → Home → Search</strong> and paste your saved query into the <strong>Custom</strong> field so it runs automatically when Sourcerer opens.</li>
+            <li><strong>Use a bookmark at startup:</strong> go to <strong>Settings → General → Home → Search</strong> and paste your saved query into the <strong>Custom</strong> field so it runs automatically when Freally opens.</li>
           </ol>
           <div class="tip"><strong>Tip:</strong> Bookmarks appear on the empty-state screen (when the search bar is clear) so your most-used searches are always one click away.</div>
         </section>
@@ -273,13 +273,13 @@
         <!-- Working with Results -->
         <section id="results">
           <h2>Working with Results</h2>
-          <p class="section-intro">Every result row is a live file on your disk. Sourcerer gives you direct access to it without opening a file manager.</p>
+          <p class="section-intro">Every result row is a live file on your disk. Freally gives you direct access to it without opening a file manager.</p>
           <ol>
-            <li><strong>Open a file:</strong> double-click a row, or press <code>Enter</code> with it selected. Sourcerer hands it off to the OS default handler.</li>
+            <li><strong>Open a file:</strong> double-click a row, or press <code>Enter</code> with it selected. Freally hands it off to the OS default handler.</li>
             <li><strong>Reveal in Finder / Explorer:</strong> select a row and press <code>Ctrl+R</code> (Windows/Linux) or <code>⌘R</code> (macOS), or right-click and choose <strong>Reveal</strong>.</li>
             <li><strong>Copy the file path:</strong> right-click a row and choose <strong>Copy path</strong>, or press <code>Ctrl+Shift+C</code>. <strong>Copy name</strong> copies just the filename without the path.</li>
-            <li><strong>Drag a file:</strong> click and drag any result row into another app — a text editor, terminal, email client, and so on. Sourcerer uses the OS-native drag protocol so the file drops exactly as if you dragged it from Finder or Explorer.</li>
-            <li><strong>Delete a file:</strong> right-click and choose <strong>Delete</strong>. Sourcerer asks for confirmation, then sends the file to the OS Trash / Recycle Bin.</li>
+            <li><strong>Drag a file:</strong> click and drag any result row into another app — a text editor, terminal, email client, and so on. Freally uses the OS-native drag protocol so the file drops exactly as if you dragged it from Finder or Explorer.</li>
+            <li><strong>Delete a file:</strong> right-click and choose <strong>Delete</strong>. Freally asks for confirmation, then sends the file to the OS Trash / Recycle Bin.</li>
             <li><strong>Sort results:</strong> click any column header (Name, Path, Size, Modified, Type, Extension) to sort ascending; click again to sort descending.</li>
             <li><strong>Resize columns:</strong> drag the divider between column headers to resize them. Column widths are saved per view profile.</li>
             <li><strong>Switch views:</strong> use the toolbar view buttons to switch between <strong>Compact</strong>, <strong>Comfortable</strong>, <strong>Details</strong>, and <strong>Thumbnails</strong>.</li>
@@ -302,14 +302,14 @@
         <!-- Global Hotkey -->
         <section id="hotkey">
           <h2>Global Hotkey</h2>
-          <p class="section-intro">The global hotkey summons Sourcerer from any application — no need to find it in the taskbar or dock.</p>
+          <p class="section-intro">The global hotkey summons Freally from any application — no need to find it in the taskbar or dock.</p>
           <ol>
             <li><strong>Default hotkeys:</strong> <code>Alt+Space</code> on Windows and Linux; the hotkey you chose during the first-run wizard on macOS.</li>
             <li><strong>Change the hotkey:</strong> go to <strong>Settings → General → Keyboard</strong>. Click the current shortcut display, press your desired key combination, and click <strong>Apply</strong>.</li>
-            <li><strong>Using the hotkey:</strong> press the hotkey from any app. Sourcerer appears in the foreground with the search bar focused. Press <code>Escape</code> to hide it and return to your previous app.</li>
+            <li><strong>Using the hotkey:</strong> press the hotkey from any app. Freally appears in the foreground with the search bar focused. Press <code>Escape</code> to hide it and return to your previous app.</li>
             <li><strong>If the hotkey conflicts</strong> with another app, open Settings and choose a different combination. Combinations involving <code>Ctrl</code>, <code>Alt</code>, <code>Shift</code>, and a letter or function key are least likely to conflict.</li>
           </ol>
-          <div class="tip"><strong>Tip:</strong> Sourcerer also responds to the <code>sourcerer://search?q=your+query</code> URL protocol — paste it into a browser or terminal to open Sourcerer pre-loaded with a query.</div>
+          <div class="tip"><strong>Tip:</strong> Freally also responds to the <code>freally://search?q=your+query</code> URL protocol — paste it into a browser or terminal to open Freally pre-loaded with a query.</div>
         </section>
 
         <!-- Settings -->
@@ -331,7 +331,7 @@
             <li><strong>General → Search:</strong> configure DSL behavior — boolean operator precedence, regex auto-detect, wildcard matching rules, and <em>Strict Everything syntax mode</em> for maximum compatibility with Everything-style queries.</li>
             <li><strong>General → Keyboard:</strong> change the global hotkey.</li>
             <li><strong>Indexes → Volumes:</strong> see all detected volumes (NTFS, APFS, ext4, Btrfs, etc.) and enable or disable indexing per volume.</li>
-            <li><strong>Indexes → Folders:</strong> add or remove index roots — the top-level folders Sourcerer crawls.</li>
+            <li><strong>Indexes → Folders:</strong> add or remove index roots — the top-level folders Freally crawls.</li>
             <li><strong>Indexes → Exclude:</strong> exclude specific paths, extensions, or filename patterns from the index (e.g., <code>node_modules</code>, <code>*.tmp</code>).</li>
             <li><strong>Lenses → Content:</strong> configure which file types the content extractor processes and set a maximum file size for extraction.</li>
             <li><strong>Lenses → Audio:</strong> enable or disable EBU R128 LUFS analysis and set the silence-threshold level used when calculating silence ratios.</li>
@@ -344,7 +344,7 @@
         <!-- Language & Locale -->
         <section id="language">
           <h2>Language &amp; Locale</h2>
-          <p class="section-intro">Sourcerer ships in 18 languages. The entire UI — menus, settings, status bar, bookmarks, previews — switches instantly when you change the locale.</p>
+          <p class="section-intro">Freally ships in 18 languages. The entire UI — menus, settings, status bar, bookmarks, previews — switches instantly when you change the locale.</p>
           <ol>
             <li><strong>Open Settings → Locale.</strong></li>
             <li><strong>Choose your language</strong> from the dropdown. Languages are listed in their native names (e.g., <em>Español</em>, <em>Deutsch</em>, <em>日本語</em>).</li>
@@ -357,24 +357,24 @@
         <!-- CLI -->
         <section id="cli">
           <h2>Command-Line Interface</h2>
-          <p class="section-intro">The <code>sourcerer</code> CLI is a thin client over the same query engine as the desktop app — equivalent to Everything's <code>es.exe</code>. It's useful for scripting, piping results, or quick terminal searches.</p>
+          <p class="section-intro">The <code>freally</code> CLI is a thin client over the same query engine as the desktop app — equivalent to Everything's <code>es.exe</code>. It's useful for scripting, piping results, or quick terminal searches.</p>
           <ol>
             <li><strong>Run a search:</strong>
-              <br><code>sourcerer "budget report"</code>
+              <br><code>freally "budget report"</code>
               <br>Prints matching file paths to stdout, one per line.
             </li>
             <li><strong>Use query modifiers:</strong>
-              <br><code>sourcerer "ext:flac lufs:&lt;-14 length:&gt;3:00"</code>
+              <br><code>freally "ext:flac lufs:&lt;-14 length:&gt;3:00"</code>
             </li>
             <li><strong>Restrict to a lens:</strong>
-              <br><code>sourcerer "content:net profit"</code>
+              <br><code>freally "content:net profit"</code>
             </li>
             <li><strong>Pipe results to other tools:</strong>
-              <br><code>sourcerer "ext:log date:&gt;2026-06-01" | xargs grep "ERROR"</code>
+              <br><code>freally "ext:log date:&gt;2026-06-01" | xargs grep "ERROR"</code>
             </li>
-            <li><strong>Open the URL protocol from any app:</strong> navigate to <code>sourcerer://search?q=your+query</code> to open the desktop app focused on that query.</li>
+            <li><strong>Open the URL protocol from any app:</strong> navigate to <code>freally://search?q=your+query</code> to open the desktop app focused on that query.</li>
           </ol>
-          <div class="tip"><strong>Tip:</strong> The CLI connects to the running <code>sourcerer-indexd</code> daemon over the same IPC socket as the desktop app. If the daemon isn't running, start it from Settings → General → UI by enabling <strong>Run in background</strong>.</div>
+          <div class="tip"><strong>Tip:</strong> The CLI connects to the running <code>freally-indexd</code> daemon over the same IPC socket as the desktop app. If the daemon isn't running, start it from Settings → General → UI by enabling <strong>Run in background</strong>.</div>
         </section>
 
         <!-- Tips & FAQ -->
@@ -410,7 +410,7 @@
 
           <h3>How do I keep my data private?</h3>
           <ol>
-            <li>Sourcerer makes <strong>zero outbound network calls</strong> by default. Your index never leaves your machine.</li>
+            <li>Freally makes <strong>zero outbound network calls</strong> by default. Your index never leaves your machine.</li>
             <li>The HTTPS API server is opt-in and disabled by default — enable it only if you specifically need remote access.</li>
             <li>Auto-update is the single, opt-out exception. You can disable it in <strong>Settings → Privacy &amp; Updates</strong>.</li>
           </ol>
@@ -430,9 +430,9 @@
     <footer>
       <p>© 2026 Mike Weaver — All Rights Reserved · local-first · privacy-first · no telemetry</p>
       <p>
-        <a href="https://github.com/MikesRuthless12/Sourcerer">GitHub</a> ·
-        <a href="https://github.com/MikesRuthless12/Sourcerer/releases">All releases</a> ·
-        <a href="https://github.com/MikesRuthless12/Sourcerer/blob/main/LICENSE.md">License</a> ·
+        <a href="https://github.com/MikesRuthless12/Freally">GitHub</a> ·
+        <a href="https://github.com/MikesRuthless12/Freally/releases">All releases</a> ·
+        <a href="https://github.com/MikesRuthless12/Freally/blob/main/LICENSE.md">License</a> ·
         <a href="documentation.html" aria-current="page">Documentation</a>
       </p>
     </footer>

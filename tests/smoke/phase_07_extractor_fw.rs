@@ -1,7 +1,7 @@
 //! Phase 7 smoke — OS-agnostic, runs on every CI matrix entry.
 //!
 //! Mirrors Phase 4 / 5 / 6 smoke shapes: hand-rolled fixtures, the
-//! public `sourcerer-extractors` surface, asserts the invariants the
+//! public `freally-extractors` surface, asserts the invariants the
 //! Build Guide gates Phase 7 on:
 //!
 //!   1. The `Extractor` trait + `Pipeline` dispatch routes
@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use sourcerer_extractors::{
+use freally_extractors::{
     BlobId, BlobStore, ExtractError, ExtractionQueue, ExtractionRequest, ExtractionStats,
     Extractor, ExtractorId, ExtractorMode, Pipeline, PipelineSettings, QueueError, Sandbox,
     SandboxConfig, SandboxError, TextSink,

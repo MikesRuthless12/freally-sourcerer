@@ -69,7 +69,7 @@ jobs:
         with:
           workspaces: |
             .
-            apps/sourcerer-ui/src-tauri
+            apps/freally-ui/src-tauri
 
       - name: Install Linux build deps (ubuntu only)
         if: runner.os == 'Linux'
@@ -92,10 +92,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: apps/sourcerer-ui/pnpm-lock.yaml
+          cache-dependency-path: apps/freally-ui/pnpm-lock.yaml
 
       - name: Install frontend deps
-        working-directory: apps/sourcerer-ui
+        working-directory: apps/freally-ui
         run: pnpm install --frozen-lockfile=false
 
       - name: Build app + upload to draft release (updater-signed)
@@ -108,9 +108,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          projectPath: apps/sourcerer-ui
+          projectPath: apps/freally-ui
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: Sourcerer ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: Freally ${{ github.event.inputs.tag || github.ref_name }}
           releaseDraft: true
           prerelease: false
           # Emit + upload latest.json (the updater manifest the app polls).

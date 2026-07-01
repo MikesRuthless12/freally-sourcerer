@@ -1,0 +1,36 @@
+[package]
+name = "freally-query"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+description = "Freally query DSL parser + executor (Phase 5/9/10)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+parking_lot = "0.12"
+regex = "1"
+unicode-normalization = "0.1"
+serde = { workspace = true }
+freally-index = { path = "../freally-index" }
+freally-journal = { path = "../freally-journal" }
+freally-similarity = { path = "../freally-similarity" }
+freally-audio = { path = "../freally-audio" }
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = { workspace = true }
+freally-journal = { path = "../freally-journal" }
+freally-similarity = { path = "../freally-similarity" }
+freally-audio = { path = "../freally-audio" }
+
+[[bench]]
+name = "filename_lens"
+harness = false

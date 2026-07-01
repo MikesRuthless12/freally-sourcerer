@@ -10,8 +10,8 @@ cd "$ROOT"
 echo "==> cargo build --all"
 cargo build --all
 
-echo "==> pnpm install (apps/sourcerer-ui)"
-cd apps/sourcerer-ui
+echo "==> pnpm install (apps/freally-ui)"
+cd apps/freally-ui
 pnpm install --frozen-lockfile=false
 
 echo "==> pnpm tauri build --debug"

@@ -18,12 +18,12 @@
 use std::io::{Cursor, Write};
 use std::path::Path;
 
-use sourcerer_extractors::Extractor;
-use sourcerer_extractors::extractors::{
+use freally_extractors::Extractor;
+use freally_extractors::extractors::{
     ArchivePeekExtractor, CodeExtractor, DocxExtractor, PdfExtractor, PlainTextExtractor,
     PptxExtractor, StructuredDataExtractor, XlsxExtractor, default_pipeline,
 };
-use sourcerer_extractors::{ExtractorId, Pipeline, TextSink};
+use freally_extractors::{ExtractorId, Pipeline, TextSink};
 use tempfile::tempdir;
 
 fn write_fixture(name: &str, bytes: &[u8]) -> std::path::PathBuf {
@@ -178,7 +178,7 @@ fn docx_extractor_pulls_paragraphs() {
     let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body>
-<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Sourcerer Phase 8</w:t></w:r></w:p>
+<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Freally Phase 8</w:t></w:r></w:p>
 <w:p><w:r><w:t>The quick brown fox.</w:t></w:r></w:p>
 </w:body></w:document>"#;
     let bytes = build_docx(xml);
@@ -186,7 +186,7 @@ fn docx_extractor_pulls_paragraphs() {
     let mut sink = TextSink::new(2048);
     DocxExtractor.extract(&path, &mut sink).unwrap();
     let out = std::str::from_utf8(sink.as_bytes()).unwrap();
-    assert!(out.contains("# Sourcerer Phase 8"));
+    assert!(out.contains("# Freally Phase 8"));
     assert!(out.contains("The quick brown fox."));
 }
 

@@ -6,16 +6,16 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path "$PSScriptRoot/../.."
 Set-Location $Root
 
-Write-Output "[phase 11 smoke] sourcerer-query routing test"
-cargo test -p sourcerer-query --test phase_10_query
+Write-Output "[phase 11 smoke] freally-query routing test"
+cargo test -p freally-query --test phase_10_query
 
-Write-Output "[phase 11 smoke] sourcerer-ui src-tauri compiles"
-Set-Location "$Root/apps/sourcerer-ui/src-tauri"
+Write-Output "[phase 11 smoke] freally-ui src-tauri compiles"
+Set-Location "$Root/apps/freally-ui/src-tauri"
 cargo check --quiet
 if ($LASTEXITCODE -ne 0) { throw "src-tauri cargo check failed" }
 
-Write-Output "[phase 11 smoke] sourcerer-ui pnpm install + check"
-Set-Location "$Root/apps/sourcerer-ui"
+Write-Output "[phase 11 smoke] freally-ui pnpm install + check"
+Set-Location "$Root/apps/freally-ui"
 if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
   Write-Output "[phase 11 smoke] pnpm not available - skipping JS portion (CI-only)"
   exit 0

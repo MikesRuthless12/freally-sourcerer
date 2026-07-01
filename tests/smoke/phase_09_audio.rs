@@ -2,7 +2,7 @@
 //!
 //! Asserts the invariants the Build Guide names for Phase 9:
 //!
-//!   1. `sourcerer-audio::analyze_file` decodes a synthetic WAV
+//!   1. `freally-audio::analyze_file` decodes a synthetic WAV
 //!      fixture and produces an `AudioAttributes` whose integrated
 //!      LUFS lands within the spec's ±1 LU tolerance of the reference
 //!      level (a 1 kHz sine at −23 dBFS reads ≈ −23 LUFS post-K-
@@ -27,12 +27,12 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
-use sourcerer_audio::{
+use freally_audio::{
     AudioAttributes, AudioAttributesProvider, AudioCache, AudioError, analyze_file,
 };
-use sourcerer_index::Index;
-use sourcerer_journal::JournalEvent;
-use sourcerer_query::{
+use freally_index::Index;
+use freally_journal::JournalEvent;
+use freally_query::{
     AudioPredicate, ExecOpts, ModifierKind, QueryError, QueryNode, execute_with_audio, parse,
 };
 use tempfile::tempdir;
@@ -434,7 +434,7 @@ fn null_provider_makes_audio_predicates_match_nothing() {
         .unwrap();
     idx.commit().unwrap();
 
-    let null = sourcerer_audio::NullProvider;
+    let null = freally_audio::NullProvider;
     let q = parse("codec:flac").unwrap();
     let result = execute_with_audio(
         &idx,

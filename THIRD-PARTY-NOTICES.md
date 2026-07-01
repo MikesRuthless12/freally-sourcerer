@@ -5,5 +5,5 @@
 
 Compiled binaries include third-party libraries under their original permissive
 licences (MIT, Apache-2.0, BSD-2/3, ISC, CC0, Unlicense, Unicode-DFS-2016, Zlib,
-MPL-2.0). Sourcerer hard-bans AGPL/SSPL/BUSL/CC-BY-NC/CC-BY-SA via `cargo-deny`.
+MPL-2.0). Freally hard-bans AGPL/SSPL/BUSL/CC-BY-NC/CC-BY-SA via `cargo-deny`.
 The full notice list is regenerated at every release tag.

@@ -1,4 +1,4 @@
-# cargo-deny configuration for Sourcerer.
+# cargo-deny configuration for Freally.
 # Enforces Mike Weaver's license policy: permissive only, AGPL hard-banned.
 
 [graph]

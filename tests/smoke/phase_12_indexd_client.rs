@@ -1,19 +1,19 @@
-//! Phase 12 smoke — `sourcerer-indexd` IndexdService round-trip via in-memory
+//! Phase 12 smoke — `freally-indexd` IndexdService round-trip via in-memory
 //! duplex (sub-second integration test that doesn't touch the OS).
 //!
 //! The test asserts every Phase 12 method actually returns the right
 //! shape, and that `query.run` streams `query:batch` / `query:done`
 //! notifications back to the client.
 //!
-//! Run with `cargo test -p sourcerer-indexd --test phase_12_indexd_client`.
+//! Run with `cargo test -p freally-indexd --test phase_12_indexd_client`.
 
 #![cfg(test)]
 
 use std::sync::Arc;
 
 use serde_json::json;
-use sourcerer_indexd::{DaemonOptions, DaemonState, IndexdService};
-use sourcerer_rpc::ClientHandle;
+use freally_indexd::{DaemonOptions, DaemonState, IndexdService};
+use freally_rpc::ClientHandle;
 
 #[tokio::test]
 async fn query_run_streams_batches_and_done() {
@@ -28,12 +28,12 @@ async fn query_run_streams_batches_and_done() {
     let (a, b) = tokio::io::duplex(64 * 1024);
     let _server =
         tokio::spawn(
-            async move { sourcerer_rpc::server::handle_connection_for_tests(a, svc).await },
+            async move { freally_rpc::server::handle_connection_for_tests(a, svc).await },
         );
     let client = ClientHandle::from_stream(b);
     let mut notif = client.notifications();
 
-    let handle: sourcerer_rpc::QueryRunHandle = client
+    let handle: freally_rpc::QueryRunHandle = client
         .call("query.run", json!({ "source": "demo" }))
         .await
         .unwrap();
@@ -72,10 +72,10 @@ async fn index_state_returns_typed_view() {
     let (a, b) = tokio::io::duplex(64 * 1024);
     let _s =
         tokio::spawn(
-            async move { sourcerer_rpc::server::handle_connection_for_tests(a, svc).await },
+            async move { freally_rpc::server::handle_connection_for_tests(a, svc).await },
         );
     let client = ClientHandle::from_stream(b);
-    let st: sourcerer_rpc::IndexState = client
+    let st: freally_rpc::IndexState = client
         .call("index.state", serde_json::Value::Null)
         .await
         .unwrap();
@@ -97,11 +97,11 @@ async fn extractors_list_and_set_mode_round_trip() {
     let (a, b) = tokio::io::duplex(64 * 1024);
     let _s =
         tokio::spawn(
-            async move { sourcerer_rpc::server::handle_connection_for_tests(a, svc).await },
+            async move { freally_rpc::server::handle_connection_for_tests(a, svc).await },
         );
     let client = ClientHandle::from_stream(b);
 
-    let list: Vec<sourcerer_rpc::ExtractorInfo> = client
+    let list: Vec<freally_rpc::ExtractorInfo> = client
         .call("extractors.list", serde_json::Value::Null)
         .await
         .unwrap();
@@ -129,17 +129,17 @@ async fn excludes_round_trip() {
     let (a, b) = tokio::io::duplex(64 * 1024);
     let _s =
         tokio::spawn(
-            async move { sourcerer_rpc::server::handle_connection_for_tests(a, svc).await },
+            async move { freally_rpc::server::handle_connection_for_tests(a, svc).await },
         );
     let client = ClientHandle::from_stream(b);
 
-    let cur: sourcerer_rpc::ExcludeRules = client
+    let cur: freally_rpc::ExcludeRules = client
         .call("excludes.get", serde_json::Value::Null)
         .await
         .unwrap();
     assert!(cur.list_enabled);
 
-    let new = sourcerer_rpc::ExcludeRules {
+    let new = freally_rpc::ExcludeRules {
         exclude_hidden: true,
         ..cur
     };
@@ -147,7 +147,7 @@ async fn excludes_round_trip() {
         .call("excludes.set", serde_json::to_value(new).unwrap())
         .await
         .unwrap();
-    let after: sourcerer_rpc::ExcludeRules = client
+    let after: freally_rpc::ExcludeRules = client
         .call("excludes.get", serde_json::Value::Null)
         .await
         .unwrap();
@@ -157,7 +157,7 @@ async fn excludes_round_trip() {
 #[tokio::test]
 async fn no_canned_rs_in_tree() {
     // Phase-12 contract: the Phase-11 mock layer is gone. The smoke
-    // test asserts that `apps/sourcerer-ui/src-tauri/src/commands/`
+    // test asserts that `apps/freally-ui/src-tauri/src/commands/`
     // contains no `canned.rs` file.
     let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     // Walk up to the workspace root and check the UI side.
@@ -165,7 +165,7 @@ async fn no_canned_rs_in_tree() {
         .ancestors()
         .find(|p| p.join("Cargo.lock").exists())
         .expect("could not find workspace root from CARGO_MANIFEST_DIR");
-    let canned = workspace.join("apps/sourcerer-ui/src-tauri/src/commands/canned.rs");
+    let canned = workspace.join("apps/freally-ui/src-tauri/src/commands/canned.rs");
     assert!(
         !canned.exists(),
         "Phase 11 mock layer must be removed; found: {}",

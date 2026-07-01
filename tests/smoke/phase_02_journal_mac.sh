@@ -20,8 +20,8 @@ fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-echo "==> cargo build --release --example phase02_smoke_driver -p sourcerer-journal-mac"
-cargo build --release --example phase02_smoke_driver -p sourcerer-journal-mac
+echo "==> cargo build --release --example phase02_smoke_driver -p freally-journal-mac"
+cargo build --release --example phase02_smoke_driver -p freally-journal-mac
 
 DRIVER="$ROOT/target/release/examples/phase02_smoke_driver"
 if [[ ! -x "$DRIVER" ]]; then
@@ -30,7 +30,7 @@ if [[ ! -x "$DRIVER" ]]; then
 fi
 
 stamp="$(date +%Y%m%d-%H%M%S)"
-scratch="${TMPDIR:-/tmp}/sourcerer-phase02-$stamp"
+scratch="${TMPDIR:-/tmp}/freally-phase02-$stamp"
 mkdir -p "$scratch"
 events_file="$scratch.events.jsonl"
 # The smoke driver writes the cursor to a sibling dir
@@ -81,10 +81,10 @@ if (( ground_truth_count < expected_min )); then
     exit 1
 fi
 
-# -- Sourcerer-event-set cross-check ------------------------------------
-# Count distinct workload-touched paths from the Sourcerer event stream.
+# -- Freally-event-set cross-check ------------------------------------
+# Count distinct workload-touched paths from the Freally event stream.
 # The Phase-2 acceptance gate is 99%: at least 99% of (CREATES - DELETES)
-# distinct paths should appear as a Sourcerer event.
+# distinct paths should appear as a Freally event.
 
 if [[ -s "$events_file" ]]; then
     # Use python for line-oriented JSON parsing — preinstalled on macOS.
@@ -113,9 +113,9 @@ else
 fi
 
 threshold=$(( expected_min * 99 / 100 ))
-echo "Sourcerer-event distinct paths: $distinct_paths (>= $threshold required for 99% gate)"
+echo "Freally-event distinct paths: $distinct_paths (>= $threshold required for 99% gate)"
 if (( distinct_paths < threshold )); then
-    echo "FAIL: Sourcerer event coverage $distinct_paths < 99% gate ($threshold)" >&2
+    echo "FAIL: Freally event coverage $distinct_paths < 99% gate ($threshold)" >&2
     exit 1
 fi
 

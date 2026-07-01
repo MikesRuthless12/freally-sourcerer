@@ -1,41 +1,41 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/sourcerer-journal",
-    "crates/sourcerer-journal-win",
-    "crates/sourcerer-journal-mac",
-    "crates/sourcerer-journal-lin",
-    "crates/sourcerer-index",
-    "crates/sourcerer-extractors",
-    "crates/sourcerer-audio",
-    "crates/sourcerer-similarity",
-    "crates/sourcerer-query",
-    "crates/sourcerer-http",
-    "crates/sourcerer-i18n",
-    "crates/sourcerer-cli",
-    "crates/sourcerer-indexd",
-    "crates/sourcerer-rpc",
-    "crates/sourcerer-extractor-host",
-    "crates/sourcerer-fsbench",
+    "crates/freally-journal",
+    "crates/freally-journal-win",
+    "crates/freally-journal-mac",
+    "crates/freally-journal-lin",
+    "crates/freally-index",
+    "crates/freally-extractors",
+    "crates/freally-audio",
+    "crates/freally-similarity",
+    "crates/freally-query",
+    "crates/freally-http",
+    "crates/freally-i18n",
+    "crates/freally-cli",
+    "crates/freally-indexd",
+    "crates/freally-rpc",
+    "crates/freally-extractor-host",
+    "crates/freally-fsbench",
     "xtask",
 ]
 exclude = [
-    "apps/sourcerer-ui/src-tauri",
+    "apps/freally-ui/src-tauri",
 ]
 default-members = [
-    "crates/sourcerer-journal",
-    "crates/sourcerer-index",
-    "crates/sourcerer-extractors",
-    "crates/sourcerer-audio",
-    "crates/sourcerer-similarity",
-    "crates/sourcerer-query",
-    "crates/sourcerer-http",
-    "crates/sourcerer-i18n",
-    "crates/sourcerer-cli",
-    "crates/sourcerer-indexd",
-    "crates/sourcerer-rpc",
-    "crates/sourcerer-extractor-host",
-    "crates/sourcerer-fsbench",
+    "crates/freally-journal",
+    "crates/freally-index",
+    "crates/freally-extractors",
+    "crates/freally-audio",
+    "crates/freally-similarity",
+    "crates/freally-query",
+    "crates/freally-http",
+    "crates/freally-i18n",
+    "crates/freally-cli",
+    "crates/freally-indexd",
+    "crates/freally-rpc",
+    "crates/freally-extractor-host",
+    "crates/freally-fsbench",
     "xtask",
 ]
 
@@ -44,7 +44,7 @@ version = "0.20.0"
 edition = "2024"
 rust-version = "1.85"
 license = "LicenseRef-MikeWeaver-Proprietary-AllRightsReserved"
-repository = "https://github.com/MikesRuthless12/Sourcerer"
+repository = "https://github.com/MikesRuthless12/Freally"
 authors = ["Mike Weaver <mythodikalone@gmail.com>"]
 publish = false
 

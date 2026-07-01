@@ -1,5 +1,5 @@
 //! `xtask gen-fixture` — synthesise a deterministic file-record set
-//! and apply it through `sourcerer-index` so the Phase-5 bench /
+//! and apply it through `freally-index` so the Phase-5 bench /
 //! smoke can run against a real on-disk index.
 //!
 //! Build-Guide spec is "synthetic 5M-file dataset". The default size
@@ -13,8 +13,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use sourcerer_index::Index;
-use sourcerer_journal::JournalEvent;
+use freally_index::Index;
+use freally_journal::JournalEvent;
 
 const ADJECTIVES: &[&str] = &[
     "alpha",
@@ -73,7 +73,7 @@ pub fn run(out_dir: PathBuf, count: usize, seed: u64) -> Result<()> {
         // accidentally pointing at a real index root.
         if out_dir.join("files.db").exists() {
             eprintln!(
-                "WARN: {} already contains a Sourcerer index — overwriting",
+                "WARN: {} already contains a Freally index — overwriting",
                 out_dir.display()
             );
         }

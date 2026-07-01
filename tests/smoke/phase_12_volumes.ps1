@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path "$PSScriptRoot/../.."
 Push-Location $root
 try {
-    cargo test -p sourcerer-indexd --test phase_12_indexd_client --quiet | Out-Host
+    cargo test -p freally-indexd --test phase_12_indexd_client --quiet | Out-Host
 } finally {
     Pop-Location
 }

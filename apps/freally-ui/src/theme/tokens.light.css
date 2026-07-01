@@ -1,0 +1,35 @@
+/* PRD §9 — Freally light theme. */
+
+[data-theme="light"] {
+  --bg-canvas: #fafbfc;
+  --bg-surface: #ffffff;
+  --bg-surface-2: #f2f4f7;
+  --text-primary: #1f2328;
+  --text-secondary: #57606a;
+  --border: #d0d7de;
+  --accent-orange: #d85700;
+  --accent-cyan: #0696a0;
+  --accent-violet: #6e50b8;
+  --success: #1a7f37;
+  --warning: #9a6700;
+  --danger: #cf222e;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: light) {
+  html:not([data-theme]) {
+    --bg-canvas: #fafbfc;
+    --bg-surface: #ffffff;
+    --bg-surface-2: #f2f4f7;
+    --text-primary: #1f2328;
+    --text-secondary: #57606a;
+    --border: #d0d7de;
+    --accent-orange: #d85700;
+    --accent-cyan: #0696a0;
+    --accent-violet: #6e50b8;
+    --success: #1a7f37;
+    --warning: #9a6700;
+    --danger: #cf222e;
+    color-scheme: light;
+  }
+}

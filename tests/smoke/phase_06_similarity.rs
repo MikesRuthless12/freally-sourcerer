@@ -19,10 +19,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use sourcerer_index::Index;
-use sourcerer_journal::JournalEvent;
-use sourcerer_query::{ExecOpts, QueryError, execute, execute_with, parse};
-use sourcerer_similarity::SimilarityIndex;
+use freally_index::Index;
+use freally_journal::JournalEvent;
+use freally_query::{ExecOpts, QueryError, execute, execute_with, parse};
+use freally_similarity::SimilarityIndex;
 use tempfile::tempdir;
 
 fn create(path: &str) -> JournalEvent {
@@ -59,7 +59,7 @@ fn paired_indexes(events: &[JournalEvent]) -> (Arc<Index>, SimilarityIndex) {
     // Walk the canonical store to pull file_id → name pairs and feed
     // the similarity index. Phase 11's daemon will subscribe directly
     // to the JournalEvent stream; for the smoke we replay through
-    // SQLite so the file_id derivation matches sourcerer-index exactly.
+    // SQLite so the file_id derivation matches freally-index exactly.
     idx.store()
         .iter_all(|row| {
             sim.upsert(row.file_id as u64, &row.name_lower).unwrap();
@@ -78,7 +78,7 @@ fn similar_modifier_finds_near_duplicates() {
     // ≈ 0.86, well above the knee (P[match] ≥ 0.99). Heavier edits
     // (multi-char appends, mid-stem typos) sit closer to the knee
     // by design and the spec's 95 % gate over a 5 000-name corpus
-    // is exercised by `crates/sourcerer-similarity/tests/recall.rs`.
+    // is exercised by `crates/freally-similarity/tests/recall.rs`.
     let (idx, sim) = paired_indexes(&[
         create("/synth/projects/quarterly-report-final-summary.pdf"),
         create("/synth/projects/quarterly-report-final-summary-v2.pdf"),

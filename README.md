@@ -1,10 +1,10 @@
-# Sourcerer
+# Freally Sourcerer
 
 > **One search. Every source. Every OS.**
 >
 > One search bar that conjures any file from any source on any OS — instant filename, full-text, audio attributes, and fuzzy-name matches, all from the same realtime journal-fed index.
 
-[![ci](https://github.com/MikesRuthless12/Sourcerer/actions/workflows/ci.yml/badge.svg)](https://github.com/MikesRuthless12/Sourcerer/actions/workflows/ci.yml)
+[![ci](https://github.com/MikesRuthless12/Freally/actions/workflows/ci.yml/badge.svg)](https://github.com/MikesRuthless12/Freally/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-All%20Rights%20Reserved-d33)](LICENSE.md)
 [![version](https://img.shields.io/badge/version-0.19.84-blue)](#status)
 [![platforms](https://img.shields.io/badge/platforms-Win%20%7C%20macOS%20%7C%20Linux-success)](#)
@@ -12,44 +12,44 @@
 
 ---
 
-**Sourcerer is the next *Everything*** — but for Windows, macOS, *and* Linux, with full-text content search, audio-attribute search, and fuzzy-name matching all riding on the same realtime journal-fed index. It's what voidtools' *Everything* would be if it had been written for the world that exists today.
+**Freally is the next *Everything*** — but for Windows, macOS, *and* Linux, with full-text content search, audio-attribute search, and fuzzy-name matching all riding on the same realtime journal-fed index. It's what voidtools' *Everything* would be if it had been written for the world that exists today.
 
 ---
 
-## What Sourcerer does
+## What Freally does
 
 Every operating system ships a search box, and they're all variously broken. Spotlight indexes content but not technical attributes. Windows Search is slow and uneven. Linux ships nothing in particular. *Everything* (voidtools) solved instant filename search on Windows fifteen years ago and has remained Windows-locked ever since.
 
-Sourcerer is the cross-platform answer. A single Rust core subscribes to the OS filesystem journal — **NTFS USN on Windows, FSEvents on macOS, inotify+fanotify on Linux** — and maintains a unified on-disk index. Four query lenses read from the same index:
+Freally is the cross-platform answer. A single Rust core subscribes to the OS filesystem journal — **NTFS USN on Windows, FSEvents on macOS, inotify+fanotify on Linux** — and maintains a unified on-disk index. Four query lenses read from the same index:
 
 1. **Filename lens** — instant filename / glob / regex search on multi-million-file disks. Sub-16 ms results.
 2. **Content lens** — full-text search across documents, code, archives (peeks inside without extracting), JSON / CSV / YAML.
 3. **Audio lens** — query by length, LUFS, codec, sample rate, channels, silence ratio, peak alignment. The first general-purpose audio-attribute searcher.
 4. **Similarity lens** — find near-duplicate filenames via bigram MinHash. *"I named it something like…"* actually works.
 
-You type, and Sourcerer streams matches across all four lenses in parallel.
+You type, and Freally streams matches across all four lenses in parallel.
 
 ### The magic moment
 
-Open Sourcerer on a fresh install. It crawls in the background. A few minutes later, the index is hot. You type **one character** in the search bar — and within 16 ms the result panel fills with filename matches, content snippets from PDFs and code, audio files matching by attribute, and fuzzy-name suggestions for things you might have meant.
+Open Freally on a fresh install. It crawls in the background. A few minutes later, the index is hot. You type **one character** in the search bar — and within 16 ms the result panel fills with filename matches, content snippets from PDFs and code, audio files matching by attribute, and fuzzy-name suggestions for things you might have meant.
 
 A second character narrows it instantly. *That* is the moment.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ Sourcerer                                                       ⚙  ⤴    │
+│ Freally                                                       ⚙  ⤴    │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ 🔍  proj_                                                                │
 ├──────────────────────────────────────────────────────────────────────────┤
 │  📄  FILES (2,471)                          ⏱ 14 ms                     │
 │  ─ /Documents/projects/                                                  │
-│  ─ /Documents/projects/sourcerer/README.md                               │
+│  ─ /Documents/projects/freally/README.md                               │
 │  ─ /Documents/notes/projects-launch-plan.md                              │
 │  …                                                                       │
 │                                                                          │
 │  📝  CONTENT (38)                           ⏱ 22 ms                     │
 │  ─ /notes/2026-05-06-brainstorm.md          "…the project lead…"         │
-│  ─ /Inbox/exports/sourcerer-roadmap.pdf     "…project pricing model…"    │
+│  ─ /Inbox/exports/freally-roadmap.pdf     "…project pricing model…"    │
 │  …                                                                       │
 │                                                                          │
 │  🎵  AUDIO (3)                              ⏱ 8 ms                      │
@@ -66,23 +66,23 @@ A second character narrows it instantly. *That* is the moment.
 
 ## Why "the next *Everything*"
 
-*Everything* by voidtools is a cult-favorite Windows utility for instant filename search. Mac and Linux users have envied it for fifteen years. Multiple half-attempts have shipped — `mdfind`, `fsearch`, `recoll`, Albert — and none has captured both the speed *and* the cross-platform reach. Sourcerer's framing is direct: **the next *Everything*, but cross-platform, and with content / audio / fuzzy lenses on top.**
+*Everything* by voidtools is a cult-favorite Windows utility for instant filename search. Mac and Linux users have envied it for fifteen years. Multiple half-attempts have shipped — `mdfind`, `fsearch`, `recoll`, Albert — and none has captured both the speed *and* the cross-platform reach. Freally's framing is direct: **the next *Everything*, but cross-platform, and with content / audio / fuzzy lenses on top.**
 
-The "Sourcerer" name plays on three threads simultaneously:
+The "Freally" name plays on three threads simultaneously:
 
 - **Sorcerer** — wizardry, summoning. You wave a wand (your keyboard) and files appear.
-- **Source** — *source* of data. Sourcerer fans out across every source on disk.
+- **Source** — *source* of data. Freally fans out across every source on disk.
 - **Source code** — directly relevant to the developer audience that loves *Everything*.
 
 ---
 
 ## Feature parity with *Everything* — and then some
 
-Sourcerer ships **every** feature voidtools' *Everything* offers, on **all three** operating systems, plus the lenses *Everything* lacks. The bar is parity-or-better on day one of v0.19.84, not over time.
+Freally ships **every** feature voidtools' *Everything* offers, on **all three** operating systems, plus the lenses *Everything* lacks. The bar is parity-or-better on day one of v0.19.84, not over time.
 
 ### Filename search parity (matches *Everything* 1:1)
 
-| Capability | *Everything* (Win) | **Sourcerer (Win + macOS + Linux)** |
+| Capability | *Everything* (Win) | **Freally (Win + macOS + Linux)** |
 |---|---|---|
 | Real-time journal-fed index | ✅ NTFS USN | ✅ NTFS USN + macOS FSEvents + Linux inotify+fanotify |
 | Sub-second results on multi-million-file disks | ✅ | ✅ — sub-16 ms gate |
@@ -106,13 +106,13 @@ Sourcerer ships **every** feature voidtools' *Everything* offers, on **all three
 | Service mode (background daemon) | ✅ (Win Service) | ✅ — Win Service / launchd agent / systemd user unit |
 | HTTP server for browser search | ✅ | ✅ |
 | ETP/FTP server for remote search | ✅ | ✅ — modern variant: HTTPS API with token auth |
-| CLI | ✅ (`es.exe`) | ✅ — `sourcerer` CLI on every OS |
-| URL protocol handler (`everything://`) | ✅ | ✅ — `sourcerer://` |
+| CLI | ✅ (`es.exe`) | ✅ — `freally` CLI on every OS |
+| URL protocol handler (`everything://`) | ✅ | ✅ — `freally://` |
 | Database file format | ✅ | ✅ — open-spec, documented |
 | Volume / path / extension excludes | ✅ | ✅ |
 | Network folder indexing | ✅ (limited) | ✅ — first-class on all three OSes |
 
-### Sourcerer's additions (the *"and then some"*)
+### Freally's additions (the *"and then some"*)
 
 | Lens | Capability |
 |---|---|
@@ -124,13 +124,13 @@ Sourcerer ships **every** feature voidtools' *Everything* offers, on **all three
 | **Light + dark themes** | System (default) / Light / Dark, live-switching, both pre-built into the token set. |
 | **Full settings dialog** | Modeled on *Everything*'s Options panel — left-tree nav, right detail pane, OK / Cancel / Apply — with cross-OS volume detection (NTFS / ReFS / APFS / HFS+ / ext4 / Btrfs / ZFS / XFS / F2FS), per-volume journal settings, lens controls, network panel, theme picker. |
 
-The combination is the moat. *Everything* solves filename search for one OS. Sourcerer solves filename + content + audio + fuzzy across three.
+The combination is the moat. *Everything* solves filename search for one OS. Freally solves filename + content + audio + fuzzy across three.
 
 ---
 
 ## Brand mark — the icon
 
-The *Everything* icon is an instantly-recognizable cyan magnifying-glass on a dark square. Sourcerer's icon is intentionally a **sibling** of that mark — same magnifying-glass silhouette, same centered composition — but in **soft baby blue (`#89CFF0`)** instead of *Everything*'s deeper cyan. That's the entire delta: same icon family, lighter / friendlier shade, signals *"this is the Everything family, and it's for every operating system."*
+The *Everything* icon is an instantly-recognizable cyan magnifying-glass on a dark square. Freally's icon is intentionally a **sibling** of that mark — same magnifying-glass silhouette, same centered composition — but in **soft baby blue (`#89CFF0`)** instead of *Everything*'s deeper cyan. That's the entire delta: same icon family, lighter / friendlier shade, signals *"this is the Everything family, and it's for every operating system."*
 
 | Spec | Value |
 |---|---|
@@ -140,21 +140,21 @@ The *Everything* icon is an instantly-recognizable cyan magnifying-glass on a da
 | Detail | Subtle white reflection arc on the upper-left of the lens (no other embellishments) |
 | Delivery | `.icns` (macOS), `.ico` (Windows), Hicolor PNG-set (Linux), SVG master |
 
-The icon is *not* a parody of *Everything* — it is a respectful sibling. Launch communications credit voidtools generously and explicitly position Sourcerer as *"the next Everything, for every OS,"* not as a replacement or competitor.
+The icon is *not* a parody of *Everything* — it is a respectful sibling. Launch communications credit voidtools generously and explicitly position Freally as *"the next Everything, for every OS,"* not as a replacement or competitor.
 
 ---
 
 ## Architecture in one breath
 
 ```
-┌─ OS Journal Subscribers ─┐    ┌─ Sourcerer Core (Rust, OS-agnostic) ─────┐
+┌─ OS Journal Subscribers ─┐    ┌─ Freally Core (Rust, OS-agnostic) ─────┐
 │  Windows: NTFS USN       │    │  Event normalizer                        │
 │  macOS:   FSEvents       │ ─▶ │  Indexer (Tantivy + custom name index)   │ ─▶  IPC / HTTPS / CLI / Tauri UI
 │  Linux:   inotify/fanot. │    │  Extractor pipeline · Query engine       │
 └──────────────────────────┘    └──────────────────────────────────────────┘
 ```
 
-A single `sourcerer-indexd` daemon owns the on-disk index, subscribes to the OS journal, and runs the extractor pipeline. The Tauri 2 + Svelte 5 UI, the `sourcerer` CLI, and the optional HTTPS API server are thin clients over the same query engine.
+A single `freally-indexd` daemon owns the on-disk index, subscribes to the OS journal, and runs the extractor pipeline. The Tauri 2 + Svelte 5 UI, the `freally` CLI, and the optional HTTPS API server are thin clients over the same query engine.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full crate boundary map.
 
@@ -162,7 +162,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full crate boundary m
 
 ## Status
 
-Sourcerer is in active phased development. The first public release will be tagged **v0.19.84**.
+Freally is in active phased development. The first public release will be tagged **v0.19.84**.
 
 - [x] Phase 0 — Cross-platform scaffold
 - [x] Phase 1 — NTFS USN journal subscriber (Windows)
@@ -174,9 +174,9 @@ Sourcerer is in active phased development. The first public release will be tagg
 - [x] Phase 7 — Format extractor framework
 - [x] Phase 8 — Document extractors (plain-text + Markdown, PDF, Office docx/xlsx/pptx, source code in 32 languages, archive peek, JSON/CSV/YAML)
 - [x] Phase 9 — Audio extractor (symphonia decode + EBU R128 LUFS / true peak / silence / dynamic range; `lufs:` / `codec:` / `length:` / `rate:` / `silence:` / `dr:` query modifiers)
-- [x] Phase 10 — Query language + parser (hardened recursive-descent parser; `--strict-everything` mode; `name:` / `audio:` / `content:` / `similar:` lens prefixes; AND-children selectivity reorder + lens-routing optimizer; `parse_to_report` IPC with per-token spans + multi-error reporting; 300+ voidtools regression queries + 200+ Sourcerer-DSL queries)
-- [x] Phase 11 — Search UI / the magic moment (Tauri 2 + Svelte 5 desktop app: search bar with live tokenization + parse-error pill; lens-grouped results with drag-resize columns + saved profiles; quick-filter palette; bookmarks dropdown + organize dialog; first-run wizard; light/dark/system theme system; PRD §8.28 menu bar — full Everything-equivalent — both as macOS native menu and in-window menu on Win/Linux; PRD §8.29 status bar with all 7 segments + theme pip; preview pane + thumbnail column; global hotkey; `sourcerer://` URL protocol; mock IPC layer that Phase 12 swaps for real `sourcerer-indexd` RPC)
-- [x] Phase 12 — Settings + real daemon IPC + custom-extractor framework + 18-locale i18n (`sourcerer-rpc` length-prefixed JSON-RPC over UDS / named pipe with peer-uid / SDDL-DACL auth; `sourcerer-indexd` library + binary refactor with `IndexdService` dispatching every PRD §8.30 method; `apps/sourcerer-ui/src-tauri` rewired as RPC client — `commands/canned.rs` deleted; 26-panel Settings dialog wires every (E) and (+) control through `SettingsDialogModel`; `crates/sourcerer-extractor-host` wasmtime sandbox + crash-counter trust state; `sourcerer` CLI as second client of the same transport; full i18n pass — 18 locales translated into native languages, English-first combobox, live RTL flip for Arabic)
+- [x] Phase 10 — Query language + parser (hardened recursive-descent parser; `--strict-everything` mode; `name:` / `audio:` / `content:` / `similar:` lens prefixes; AND-children selectivity reorder + lens-routing optimizer; `parse_to_report` IPC with per-token spans + multi-error reporting; 300+ voidtools regression queries + 200+ Freally-DSL queries)
+- [x] Phase 11 — Search UI / the magic moment (Tauri 2 + Svelte 5 desktop app: search bar with live tokenization + parse-error pill; lens-grouped results with drag-resize columns + saved profiles; quick-filter palette; bookmarks dropdown + organize dialog; first-run wizard; light/dark/system theme system; PRD §8.28 menu bar — full Everything-equivalent — both as macOS native menu and in-window menu on Win/Linux; PRD §8.29 status bar with all 7 segments + theme pip; preview pane + thumbnail column; global hotkey; `freally://` URL protocol; mock IPC layer that Phase 12 swaps for real `freally-indexd` RPC)
+- [x] Phase 12 — Settings + real daemon IPC + custom-extractor framework + 18-locale i18n (`freally-rpc` length-prefixed JSON-RPC over UDS / named pipe with peer-uid / SDDL-DACL auth; `freally-indexd` library + binary refactor with `IndexdService` dispatching every PRD §8.30 method; `apps/freally-ui/src-tauri` rewired as RPC client — `commands/canned.rs` deleted; 26-panel Settings dialog wires every (E) and (+) control through `SettingsDialogModel`; `crates/freally-extractor-host` wasmtime sandbox + crash-counter trust state; `freally` CLI as second client of the same transport; full i18n pass — 18 locales translated into native languages, English-first combobox, live RTL flip for Arabic)
 - [ ] Phase 13 — Performance + cross-platform packaging + auto-update
 - [ ] Phase 14 — v0.19.84 launch
 
@@ -186,7 +186,7 @@ See [`docs/CHANGELOG.md`](docs/CHANGELOG.md) for per-phase notes.
 
 ## Building from source
 
-> Sourcerer's source is licensed for viewing only. See [`LICENSE.md`](LICENSE.md) before building or running. No redistribution rights are granted.
+> Freally's source is licensed for viewing only. See [`LICENSE.md`](LICENSE.md) before building or running. No redistribution rights are granted.
 
 **Prerequisites**
 
@@ -208,7 +208,7 @@ cargo run -p xtask -- i18n-lint
 **Build the desktop app (debug)**
 
 ```bash
-cd apps/sourcerer-ui
+cd apps/freally-ui
 pnpm install
 pnpm tauri build --debug
 ```
@@ -219,7 +219,7 @@ CI runs the same flow on `windows-latest`, `macos-14`, and `ubuntu-22.04` for ev
 
 ## Privacy
 
-Zero outbound network calls by default. Sourcerer never sends your filesystem layout — the index never leaves your machine. The HTTPS API server is opt-in. Auto-update is the single, opt-out exception.
+Zero outbound network calls by default. Freally never sends your filesystem layout — the index never leaves your machine. The HTTPS API server is opt-in. Auto-update is the single, opt-out exception.
 
 See [`docs/SECURITY.md`](docs/SECURITY.md) for the full threat model and dependency policy.
 
@@ -227,7 +227,7 @@ See [`docs/SECURITY.md`](docs/SECURITY.md) for the full threat model and depende
 
 ## Languages
 
-Sourcerer ships in 18 languages on v0.19.84. The entire UI — menu bar, status bar, settings dialog (every panel), first-run wizard, preview pane, bookmarks — switches live when the locale is changed in **Settings → Locale**. Arabic automatically flips the layout to right-to-left.
+Freally ships in 18 languages on v0.19.84. The entire UI — menu bar, status bar, settings dialog (every panel), first-run wizard, preview pane, bookmarks — switches live when the locale is changed in **Settings → Locale**. Arabic automatically flips the layout to right-to-left.
 
 | Locale | Language | Native name |
 |---|---|---|
@@ -250,13 +250,13 @@ Sourcerer ships in 18 languages on v0.19.84. The entire UI — menu bar, status 
 | `ko` | Korean | 한국어 |
 | `zh-CN` | Chinese (Simplified) | 简体中文 |
 
-All 18 locale files live at `locales/<code>/sourcerer.ftl` and stay in lockstep on key set — a CI test (`tests/unit/i18n.test.ts`) fails the build if any locale drifts. Community translations for additional locales are welcome via PR; see [`docs/I18N_TODO.md`](docs/I18N_TODO.md).
+All 18 locale files live at `locales/<code>/freally.ftl` and stay in lockstep on key set — a CI test (`tests/unit/i18n.test.ts`) fails the build if any locale drifts. Community translations for additional locales are welcome via PR; see [`docs/I18N_TODO.md`](docs/I18N_TODO.md).
 
 ---
 
 ## License
 
-**All Rights Reserved — Mike Weaver.** Sourcerer is proprietary software. You may not copy, distribute, modify, or re-host this work without prior written permission. See [`LICENSE.md`](LICENSE.md) for the full notice. Contributions are not actively solicited; any submission is governed by the assignment clause in `LICENSE.md`.
+**All Rights Reserved — Mike Weaver.** Freally is proprietary software. You may not copy, distribute, modify, or re-host this work without prior written permission. See [`LICENSE.md`](LICENSE.md) for the full notice. Contributions are not actively solicited; any submission is governed by the assignment clause in `LICENSE.md`.
 
 Compiled binaries include third-party libraries under their original permissive licences (MIT / Apache-2.0 / BSD / ISC / CC0 / Unlicense / Unicode / Zlib / MPL-2.0). AGPL, GPL, SSPL, BUSL, CC-BY-NC, and CC-BY-SA dependencies are hard-banned by the project's `cargo-deny` policy. See [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
 
@@ -275,4 +275,4 @@ Compiled binaries include third-party libraries under their original permissive 
 
 ---
 
-*Sourcerer is © 2026 Mike Weaver. "Sourcerer" and the Sourcerer magnifying-glass mark are trade-marks of Mike Weaver. *Everything* is a trade-mark of voidtools, used here only as a comparator.*
+*Freally is © 2026 Mike Weaver. "Freally" and the Freally magnifying-glass mark are trade-marks of Mike Weaver. *Everything* is a trade-mark of voidtools, used here only as a comparator.*

@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish.workspace = true
-description = "Sourcerer build helpers — i18n-lint, third-party-notices, icon-build, release."
+description = "Freally build helpers — i18n-lint, third-party-notices, icon-build, release."
 
 [[bin]]
 name = "xtask"
@@ -23,5 +23,5 @@ tiny-skia = "0.11"
 usvg = "0.45"
 ico = "0.4"
 icns = "0.3"
-sourcerer-index = { path = "../crates/sourcerer-index" }
-sourcerer-journal = { path = "../crates/sourcerer-journal" }
+freally-index = { path = "../crates/freally-index" }
+freally-journal = { path = "../crates/freally-journal" }

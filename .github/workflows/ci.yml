@@ -59,7 +59,7 @@ jobs:
         with:
           workspaces: |
             .
-            apps/sourcerer-ui/src-tauri
+            apps/freally-ui/src-tauri
 
       - name: Install Linux build deps (ubuntu only)
         if: runner.os == 'Linux'
@@ -82,7 +82,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: apps/sourcerer-ui/pnpm-lock.yaml
+          cache-dependency-path: apps/freally-ui/pnpm-lock.yaml
 
       - name: rustfmt
         run: cargo fmt --all -- --check
@@ -105,20 +105,20 @@ jobs:
         # (with elapsed-time + files/s throughput) are echoed loudly so
         # the benchmark numbers show up clearly in the job log.
         #
-        # Skips on Windows: Sourcerer's production Windows bootstrap is
-        # the MFT-direct-read in `sourcerer-journal-win`, not a userland
+        # Skips on Windows: Freally's production Windows bootstrap is
+        # the MFT-direct-read in `freally-journal-win`, not a userland
         # FindFirstFileExW walk. On Windows the fsbench binary falls
         # back to walkdir so the comparison would be tautological;
-        # MFT verification lives in the sourcerer-journal-win test
+        # MFT verification lives in the freally-journal-win test
         # suite instead.
         if: runner.os == 'macOS' || runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
-          echo "::group::build sourcerer-fsbench --release"
-          cargo build -p sourcerer-fsbench --release
+          echo "::group::build freally-fsbench --release"
+          cargo build -p freally-fsbench --release
           echo "::endgroup::"
-          bin=./target/release/sourcerer-fsbench
+          bin=./target/release/freally-fsbench
           tmpdir=$(mktemp -d)
           trap 'rm -rf "$tmpdir"' EXIT
           count=1500000
@@ -180,19 +180,19 @@ jobs:
           arguments: --all-features
 
       - name: Install pnpm deps
-        working-directory: apps/sourcerer-ui
+        working-directory: apps/freally-ui
         run: pnpm install --frozen-lockfile=false
 
       - name: pnpm svelte-check (type errors + a11y warnings)
-        working-directory: apps/sourcerer-ui
+        working-directory: apps/freally-ui
         run: pnpm run check
 
       - name: pnpm vitest (unit tests, includes i18n lockstep + reactivity)
-        working-directory: apps/sourcerer-ui
+        working-directory: apps/freally-ui
         run: pnpm run test:unit
 
       - name: tauri build (debug, current OS only)
-        working-directory: apps/sourcerer-ui
+        working-directory: apps/freally-ui
         # ci only verifies the app + frontend COMPILE; --no-bundle skips the
         # heavy bundling (deb/rpm/appimage) + the signed updater artifact,
         # which exhausted the ubuntu runner's disk (os error 28). Full
