@@ -17,7 +17,7 @@
 <policyconfig>
 
   <vendor>Mike Weaver</vendor>
-  <vendor_url>https://github.com/MikesRuthless12/Freally</vendor_url>
+  <vendor_url>https://github.com/MikesRuthless12/freally-sourcerer</vendor_url>
 
   <action id="io.mikeweaver.freally.elevate">
     <description>Enable Freally fanotify upgrade</description>

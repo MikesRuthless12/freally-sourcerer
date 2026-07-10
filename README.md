@@ -4,7 +4,7 @@
 >
 > One search bar that conjures any file from any source on any OS — instant filename, full-text, audio attributes, and fuzzy-name matches, all from the same realtime journal-fed index.
 
-[![ci](https://github.com/MikesRuthless12/Freally/actions/workflows/ci.yml/badge.svg)](https://github.com/MikesRuthless12/Freally/actions/workflows/ci.yml)
+[![ci](https://github.com/MikesRuthless12/freally-sourcerer/actions/workflows/ci.yml/badge.svg)](https://github.com/MikesRuthless12/freally-sourcerer/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-All%20Rights%20Reserved-d33)](LICENSE.md)
 [![version](https://img.shields.io/badge/version-0.19.84-blue)](#status)
 [![platforms](https://img.shields.io/badge/platforms-Win%20%7C%20macOS%20%7C%20Linux-success)](#)
