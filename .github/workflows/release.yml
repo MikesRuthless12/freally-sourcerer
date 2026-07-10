@@ -98,6 +98,60 @@ jobs:
         working-directory: apps/freally-ui
         run: pnpm install --frozen-lockfile=false
 
+      # The release notes the in-app updater shows. Pulled from the changelog
+      # section for this exact tag, and the build FAILS if there is no such
+      # section — a silently-empty `notes` field means every user sees a blank
+      # "an update is available" dialog, which looks broken and is easy to miss
+      # because nothing errors.
+      #
+      # The version is matched as a literal prefix, never as a regex: `0.20.1`
+      # inside `## \[0.20.1\]` collapses to a character class where `.` is a
+      # wildcard, so the pattern matches nothing and the notes come out empty.
+      #
+      # `awk` trims the leading/trailing blank lines itself rather than piping
+      # through `tac`, which does not exist on the macOS runners.
+      - name: Extract release notes from the changelog
+        id: notes
+        shell: bash
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          NOTES="$(awk -v ver="$VERSION" '
+            BEGIN { needle = "## [" ver "]"; inside = 0; n = 0 }
+            index($0, needle) == 1 { inside = 1; next }
+            inside && substr($0, 1, 3) == "## " { exit }
+            inside { lines[n++] = $0 }
+            END {
+              s = 0;     while (s < n  && lines[s] ~ /^[[:space:]]*$/) s++
+              e = n - 1; while (e >= s && lines[e] ~ /^[[:space:]]*$/) e--
+              # Sections are closed by a `---` rule before the next heading.
+              # Left in place it renders as a stray divider at the bottom of
+              # every release note and every update dialog.
+              while (e >= s && lines[e] ~ /^[[:space:]]*---[[:space:]]*$/) {
+                e--
+                while (e >= s && lines[e] ~ /^[[:space:]]*$/) e--
+              }
+              for (i = s; i <= e; i++) print lines[i]
+            }
+          ' docs/CHANGELOG.md)"
+
+          if [ -z "$NOTES" ]; then
+            echo "::error::docs/CHANGELOG.md has no '## [$VERSION]' section; refusing to ship empty release notes"
+            exit 1
+          fi
+
+          # latest.json is fetched on every launch — keep the manifest small.
+          NOTES="${NOTES:0:8000}"
+          echo "extracted ${#NOTES} characters of release notes for $VERSION"
+
+          {
+            echo "body<<__FREALLY_NOTES__"
+            printf '%s\n' "$NOTES"
+            echo "__FREALLY_NOTES__"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build app + upload to draft release (updater-signed)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -111,10 +165,19 @@ jobs:
           projectPath: apps/freally-ui
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: Freally ${{ github.event.inputs.tag || github.ref_name }}
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
           # Emit + upload latest.json (the updater manifest the app polls).
           includeUpdaterJson: true
+          # We bundle BOTH `wix` (.msi) and `nsis` (setup.exe). tauri-action
+          # defaults this to false, which puts the **MSI** behind the
+          # `windows-x86_64` key that the updater actually reads. The site hands
+          # people `x64-setup.exe`, so a typical install is NSIS — and an MSI run
+          # over an NSIS install has a different product code, so it installs a
+          # *second* copy beside the first instead of upgrading it. The running
+          # executable is never replaced. Ship the installer our users have.
+          updaterJsonPreferNsis: true
           # Per-leg build args — the macOS Intel leg passes
           # `--target x86_64-apple-darwin` to cross-compile on the arm64 runner;
           # tauri-action names its bundles per-arch and merges each platform into
