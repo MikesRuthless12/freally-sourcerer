@@ -546,15 +546,15 @@ function registerHandlers() {
 
   // ---- Help ----
   const helpUrls: Record<string, string> = {
-    "help.help": "https://github.com/MikesRuthless12/Freally/wiki",
-    "help.search_syntax": "https://github.com/MikesRuthless12/Freally/wiki/search-syntax",
-    "help.regex_syntax": "https://github.com/MikesRuthless12/Freally/wiki/regex-syntax",
-    "help.audio_modifier_reference": "https://github.com/MikesRuthless12/Freally/wiki/audio-modifiers",
+    "help.help": "https://github.com/MikesRuthless12/freally-sourcerer/wiki",
+    "help.search_syntax": "https://github.com/MikesRuthless12/freally-sourcerer/wiki/search-syntax",
+    "help.regex_syntax": "https://github.com/MikesRuthless12/freally-sourcerer/wiki/regex-syntax",
+    "help.audio_modifier_reference": "https://github.com/MikesRuthless12/freally-sourcerer/wiki/audio-modifiers",
     "help.similarity_modifier_reference":
-      "https://github.com/MikesRuthless12/Freally/wiki/similarity",
-    "help.command_line_options": "https://github.com/MikesRuthless12/Freally/wiki/cli",
-    "help.website": "https://github.com/MikesRuthless12/Freally",
-    "help.check_for_updates": "https://github.com/MikesRuthless12/Freally/releases",
+      "https://github.com/MikesRuthless12/freally-sourcerer/wiki/similarity",
+    "help.command_line_options": "https://github.com/MikesRuthless12/freally-sourcerer/wiki/cli",
+    "help.website": "https://github.com/MikesRuthless12/freally-sourcerer",
+    "help.check_for_updates": "https://github.com/MikesRuthless12/freally-sourcerer/releases",
     "help.sponsor": "https://github.com/sponsors/MikesRuthless12"
   };
   for (const [id, url] of Object.entries(helpUrls)) {

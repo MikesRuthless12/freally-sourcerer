@@ -168,7 +168,7 @@ fn render_unit(binary: &Path, logs_dir: &Path) -> String {
     format!(
         "[Unit]\n\
          Description=Freally indexer daemon (Phase 3 user agent)\n\
-         Documentation=https://github.com/MikesRuthless12/Freally\n\
+         Documentation=https://github.com/MikesRuthless12/freally-sourcerer\n\
          After=default.target\n\
          \n\
          [Service]\n\
