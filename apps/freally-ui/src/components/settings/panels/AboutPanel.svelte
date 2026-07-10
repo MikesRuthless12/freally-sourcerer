@@ -3,7 +3,7 @@
   import { t } from "../../../lib/i18n/t";
 
   const VERSION = "0.19.84";
-  const VENDOR_URL = "https://github.com/MikesRuthless12/Freally";
+  const VENDOR_URL = "https://github.com/MikesRuthless12/freally-sourcerer";
   const VOIDTOOLS_URL = "https://www.voidtools.com/";
 
   let osVer = $state<string | null>(null);
