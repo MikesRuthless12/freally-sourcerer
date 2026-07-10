@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "freally-audio"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "ebur128",
  "parking_lot",
@@ -1153,7 +1153,7 @@ dependencies = [
 
 [[package]]
 name = "freally-cli"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1167,7 +1167,7 @@ dependencies = [
 
 [[package]]
 name = "freally-extractor-host"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1182,7 +1182,7 @@ dependencies = [
 
 [[package]]
 name = "freally-extractors"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "blake3",
  "calamine",
@@ -1241,7 +1241,7 @@ dependencies = [
 
 [[package]]
 name = "freally-fsbench"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1252,21 +1252,21 @@ dependencies = [
 
 [[package]]
 name = "freally-http"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "freally-i18n"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "freally-index"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "blake3",
  "freally-journal",
@@ -1283,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "freally-indexd"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1313,7 +1313,7 @@ dependencies = [
 
 [[package]]
 name = "freally-journal"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "freally-journal-lin",
  "freally-journal-mac",
@@ -1324,7 +1324,7 @@ dependencies = [
 
 [[package]]
 name = "freally-journal-lin"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "futures",
  "libc",
@@ -1337,7 +1337,7 @@ dependencies = [
 
 [[package]]
 name = "freally-journal-mac"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "core-foundation",
  "core-foundation-sys",
@@ -1353,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "freally-journal-win"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "futures",
  "serde",
@@ -1366,7 +1366,7 @@ dependencies = [
 
 [[package]]
 name = "freally-query"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "freally-audio",
  "freally-index",
@@ -1384,7 +1384,7 @@ dependencies = [
 
 [[package]]
 name = "freally-rpc"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "futures",
@@ -1400,7 +1400,7 @@ dependencies = [
 
 [[package]]
 name = "freally-similarity"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "blake3",
  "freally-journal",
@@ -4636,7 +4636,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "clap",

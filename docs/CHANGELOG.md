@@ -536,6 +536,46 @@ makes the desktop app pleasant to run repeatedly during development.
 
 ---
 
+## [0.20.1] — 2026-07-10
+
+A patch release with no new features. It exists because v0.20.0 cannot fix itself:
+the updater endpoint is compiled into the shipped binary, so every install is
+checking a repository that does not exist and will never be offered an update.
+This is the build that repairs that, and it carries the security upgrades v0.20.0
+predates.
+
+### Security
+
+- **[all platforms]** `quick-xml` 0.39.4 → 0.41.0, closing **RUSTSEC-2026-0194**
+  (quadratic run time when checking a start tag for duplicate attribute names)
+  and **RUSTSEC-2026-0195** (unbounded namespace-declaration allocation in
+  `NsReader`, a memory-exhaustion denial of service). Both are reachable: the
+  docx and pptx extractors in `freally-extractors` feed untrusted Office XML
+  straight into `quick_xml::Reader`. A hostile document could stall or exhaust
+  the extractor host. Licence unchanged (MIT).
+- **[all platforms]** `calamine` 0.34.0 → 0.36.0 — the first release that accepts
+  `quick-xml ^0.41`, and so a requirement of the above rather than a change in
+  its own right. Licence unchanged (MIT). Its transitive `zip` moves 7 → 8; the
+  workspace's own `zip` stays pinned at 5.
+- **[all platforms]** `crossbeam-epoch` 0.9.18 → 0.9.20, closing
+  **RUSTSEC-2026-0204** (invalid pointer dereference in the `fmt::Pointer` impl
+  for `Atomic` and `Shared` when the underlying pointer is invalid). Transitive
+  and semver-compatible. Licence unchanged (MIT OR Apache-2.0).
+
+  All three were fixed by upgrading. No advisory was added to `deny.toml`'s
+  ignore list.
+
+### Fixed
+
+- **[all platforms]** The auto-updater now points at the repository this project
+  actually lives in. `tauri.conf.json` named `MikesRuthless12/Freally`, which does
+  not exist, so `latest.json` resolved to a 404 and **auto-update has never worked
+  in any shipped build**. Because the endpoint is baked into the binary, v0.19.84
+  and v0.20.0 keep polling the dead URL; only installs of this release or later can
+  find an update.
+
+---
+
 ## How to update this file
 
 Every phase must add at least one user-perspective entry under `[Unreleased]` before being marked complete. Use sections **Added / Changed / Fixed / Deprecated / Removed / Security**. Cite new crates and licences. Mark API breaks `**BREAKING:**` first.
