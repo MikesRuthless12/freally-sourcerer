@@ -32,7 +32,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/MikesRuthless12/Freally/releases/latest/download/latest.json"
+        "https://github.com/MikesRuthless12/freally-sourcerer/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlGMjkxQzkzNkNGQTI4QjcKUldTM0tQcHNreHdwbjY1REg4SzFrelUzVldLVVo0K0FvVjRlVXZFQ1pabXZKSlp1bk84R0xHYlQK",
       "windows": {
