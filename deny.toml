@@ -13,9 +13,11 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "warn"
 # RUSTSEC-2026-0192: ttf-parser unmaintained (transitive, no safe upgrade
-# available per the advisory). Informational only — not a vulnerability.
-# Re-audit each release; drop when the upstream text/font dep moves off it.
-ignore = ["RUSTSEC-2026-0192"]
+# available per the advisory). RUSTSEC-2026-0206: rustybuzz unmaintained
+# (transitive text-shaping dep, same font/text stack). Informational only —
+# neither is a vulnerability. Re-audit each release; drop when the upstream
+# text/font dep moves off them.
+ignore = ["RUSTSEC-2026-0192", "RUSTSEC-2026-0206"]
 
 [licenses]
 confidence-threshold = 0.93
