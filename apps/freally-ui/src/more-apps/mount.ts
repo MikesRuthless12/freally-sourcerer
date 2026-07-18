@@ -12,6 +12,16 @@ import { settingsStore } from "../lib/stores/settings.svelte";
 
 const HOST: PanelHost = {
   openExternal: async (url: string) => {
+    // Defense-in-depth: only ever hand http(s) URLs to the OS opener. The panel
+    // already gates on this, but the host must not delegate that trust solely
+    // across the (version-bumped) submodule boundary.
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
     const opener = await import("@tauri-apps/plugin-opener");
     await opener.openUrl(url);
   }
