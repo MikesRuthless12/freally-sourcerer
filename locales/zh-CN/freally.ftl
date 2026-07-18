@@ -784,3 +784,7 @@ opt-log-warn = 警告
 opt-log-info-default = 信息（默认）
 opt-log-debug = 调试
 opt-log-trace = 跟踪
+
+# More Freally apps (Central inside panel) — host chrome
+menu-help-more-apps = 更多 Freally 应用…
+moreapps-title = 更多 Freally 应用
