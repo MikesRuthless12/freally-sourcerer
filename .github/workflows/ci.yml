@@ -23,6 +23,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # vendor/freally-central (the "More Freally apps" panel) is a submodule.
+          submodules: recursive
 
       - name: Disable Defender real-time scan for workspace (Windows only)
         # Windows-hosted runners ship Defender with real-time

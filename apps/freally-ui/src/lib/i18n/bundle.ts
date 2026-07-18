@@ -24,6 +24,22 @@ for (const [path, source] of Object.entries(LOCALE_FILES)) {
   if (m) FTL_SOURCES.set(m[1], source);
 }
 
+// The vendored "Central inside" panel (More Freally apps) ships its own 18
+// fcp-*-prefixed catalogs — one .ftl per locale, same 18 codes as ours. They
+// are layered into each bundle below so the panel localizes through THIS app's
+// t(); the fcp- prefix means they can never collide with freally.ftl keys, and
+// they live in separate files so they stay outside the freally.ftl lockstep.
+const PANEL_LOCALE_FILES = import.meta.glob<string>(
+  "../../../../../vendor/freally-central/ui/src/panel/locales/*.ftl",
+  { query: "?raw", import: "default", eager: true }
+);
+
+const FCP_SOURCES = new Map<string, string>();
+for (const [path, source] of Object.entries(PANEL_LOCALE_FILES)) {
+  const m = path.match(/locales\/([^/]+)\.ftl$/);
+  if (m) FCP_SOURCES.set(m[1], source);
+}
+
 const cache = new Map<string, FluentBundle>();
 
 export function bundleFor(locale: string): FluentBundle {
@@ -42,6 +58,14 @@ export function bundleFor(locale: string): FluentBundle {
   if (locale !== "en") {
     const en = FTL_SOURCES.get("en");
     if (en) bundle.addResource(new FluentResource(en), { allowOverrides: false });
+  }
+  // Same layering for the panel's fcp-* catalogs: this locale first, English
+  // underneath. Disjoint keyspace from freally.ftl, so no overrides collide.
+  const fcp = FCP_SOURCES.get(locale);
+  if (fcp) bundle.addResource(new FluentResource(fcp));
+  if (locale !== "en") {
+    const fcpEn = FCP_SOURCES.get("en");
+    if (fcpEn) bundle.addResource(new FluentResource(fcpEn), { allowOverrides: false });
   }
   cache.set(locale, bundle);
   return bundle;

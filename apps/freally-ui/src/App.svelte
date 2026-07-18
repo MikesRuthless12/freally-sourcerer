@@ -9,6 +9,7 @@
   import FirstRunWizard from "./components/wizard/FirstRunWizard.svelte";
   import OrganizeBookmarksDialog from "./components/bookmarks/OrganizeBookmarksDialog.svelte";
   import AboutDialog from "./components/dialogs/AboutDialog.svelte";
+  import MoreFreallyAppsDialog from "./components/dialogs/MoreFreallyAppsDialog.svelte";
   import ConnectEndpointDialog from "./components/dialogs/ConnectEndpointDialog.svelte";
   import SettingsDialog from "./components/settings/SettingsDialog.svelte";
   import { bootstrap } from "./lib/bootstrap";
@@ -71,6 +72,10 @@
 />
 <ConnectEndpointDialog
   open={dialogsStore.active === "connect_endpoint"}
+  onClose={() => dialogsStore.close()}
+/>
+<MoreFreallyAppsDialog
+  open={dialogsStore.active === "more_freally_apps"}
   onClose={() => dialogsStore.close()}
 />
 
