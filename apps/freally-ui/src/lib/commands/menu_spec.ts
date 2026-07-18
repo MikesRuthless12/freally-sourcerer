@@ -281,7 +281,9 @@ export const MENU_BAR: MenuRoot[] = [
       { kind: "item", id: "help.check_for_updates", label: "Check for Updates…", l10n: "menu-help-check-updates" },
       { kind: "item", id: "help.sponsor", label: "Sponsor / Donate", l10n: "menu-help-sponsor" },
       { kind: "separator" },
-      { kind: "item", id: "help.about", label: "About Freally…", l10n: "menu-help-about", accelerator: "Ctrl+F1" }
+      { kind: "item", id: "help.about", label: "About Freally…", l10n: "menu-help-about", accelerator: "Ctrl+F1" },
+      { kind: "separator" },
+      { kind: "item", id: "help.more_freally_apps", label: "More Freally apps…", l10n: "menu-help-more-apps" }
     ]
   }
 ];

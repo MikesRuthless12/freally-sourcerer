@@ -567,6 +567,9 @@ function registerHandlers() {
     });
   }
   registry.register("help.about", async () => dialogsStore.open("about"));
+  registry.register("help.more_freally_apps", async () =>
+    dialogsStore.open("more_freally_apps")
+  );
 
   // Sanity: every CommandId must have a handler. Cheap startup check.
   for (const id of COMMAND_IDS) {

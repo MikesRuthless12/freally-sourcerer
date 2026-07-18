@@ -784,3 +784,7 @@ opt-log-warn = Advertencia
 opt-log-info-default = Información (predeterminado)
 opt-log-debug = Depuración
 opt-log-trace = Traza
+
+# More Freally apps (Central inside panel) — host chrome
+menu-help-more-apps = Más apps de Freally…
+moreapps-title = Más apps de Freally

@@ -9,7 +9,8 @@ export type ModalId =
   | "new_bookmark"
   | "settings"
   | "connect_endpoint"
-  | "custom_extractor_manager";
+  | "custom_extractor_manager"
+  | "more_freally_apps";
 
 class DialogsStore {
   active = $state<ModalId>(null);
