@@ -56,7 +56,7 @@ jobs:
 
       - name: Add cross-compile target to the pinned toolchain (macOS Intel)
         if: matrix.rust-target != ''
-        # The build obeys rust-toolchain.toml (channel 1.94.0), NOT the `stable`
+        # The build obeys rust-toolchain.toml (channel 1.97.1), NOT the `stable`
         # toolchain dtolnay installs — so adding the target to `stable` leaves
         # the build with "target x86_64-apple-darwin is not installed". Read the
         # pinned channel from the toml (sed works on macOS/BSD) and install THAT

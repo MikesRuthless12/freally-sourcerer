@@ -863,7 +863,8 @@ fn execute_similar(
         opts.candidate_cap
     };
     let sim_opts = SimilarityOpts {
-        candidate_cap: cap.min(usize::MAX),
+        // `cap` is already `usize::MAX` when uncapped, so no clamp needed.
+        candidate_cap: cap,
         ..SimilarityOpts::default()
     };
     let hits = sim.candidates(&needle.to_lowercase(), &sim_opts);

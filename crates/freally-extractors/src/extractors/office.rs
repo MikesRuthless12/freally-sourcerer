@@ -358,11 +358,11 @@ fn parse_pptx_slide(xml: &[u8], sink: &TextSink) -> Result<Vec<String>, ExtractE
             },
             Ok(Event::End(e)) => match e.name() {
                 QName(b"a:t") => in_text = false,
-                QName(b"a:p") => {
-                    if in_paragraph {
-                        runs.push(std::mem::take(&mut current));
-                        in_paragraph = false;
-                    }
+                // A stray `</a:p>` with no matching open tag falls through
+                // to the catch-all, same as the previous inner `if` did.
+                QName(b"a:p") if in_paragraph => {
+                    runs.push(std::mem::take(&mut current));
+                    in_paragraph = false;
                 }
                 _ => {}
             },

@@ -166,8 +166,8 @@ jobs:
         # agnostic, so one Linux run covers the workspace.
         #
         # The action's container ships rustup 1.85.0, but this repo's
-        # `rust-toolchain.toml` pins 1.94.0. rustup reads that file as an
-        # override and aborts with `override toolchain '1.94.0-...' is not
+        # `rust-toolchain.toml` pins 1.97.1. rustup reads that file as an
+        # override and aborts with `override toolchain '1.97.1-...' is not
         # installed` *before* cargo-deny runs. cargo-deny only parses
         # Cargo.lock + deny.toml (it never compiles the workspace), so the
         # container's own toolchain is sufficient. Setting RUSTUP_TOOLCHAIN
