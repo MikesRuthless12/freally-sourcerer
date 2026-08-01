@@ -165,11 +165,75 @@ pub enum ModifierKind {
     /// queries through an [`AudioAttributesProvider`](freally_audio::AudioAttributesProvider)
     /// and filters rows by the comparator.
     Audio(AudioPredicate),
+    /// SRC-M08 `empty:` — emptiness scoped to files, folders, or the
+    /// roots of empty subtrees. Resolved against
+    /// [`DirStats`](freally_index::DirStats), never the filesystem.
+    Empty(EmptyKind),
+    /// SRC-M08 `child-count:>0` — direct children of a directory.
+    ChildCount { op: SizeOp, count: u64 },
+    /// SRC-M08 `descendant-count:<10` — descendants at any depth.
+    DescendantCount { op: SizeOp, count: u64 },
+    /// SRC-M07 `dupe:` / `name-dupe:` / `size-dupe:`. Set-shaped: a row
+    /// only matches because *other* rows share its key, so the executor
+    /// resolves it as a post-pass over the hydrated result set rather
+    /// than per-row.
+    Dupe(DupeKey),
     /// Future-lens reservations (Phase 10+). Parsed for forward
     /// compatibility but the executor errors with
     /// `QueryError::UnsupportedModifier` until each owning phase
     /// ships.
     Reserved { name: String, value: String },
+}
+
+/// What `empty:` is asking about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmptyKind {
+    /// `empty:` — a zero-byte file *or* a childless folder.
+    Any,
+    /// `empty:file` / `empty:files` — zero-byte non-directories.
+    File,
+    /// `empty:folder` / `empty:folders` / `empty:dir` — directories
+    /// with no direct children.
+    Folder,
+    /// `empty:roots` — the top of each subtree that holds no files at
+    /// any depth, so a nested chain of empty folders reports once
+    /// instead of once per link.
+    Roots,
+}
+
+impl EmptyKind {
+    /// The value as it appears in source (`empty:folder` → `"folder"`).
+    /// `Any` has no value — `empty:` is written bare.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EmptyKind::Any => "",
+            EmptyKind::File => "file",
+            EmptyKind::Folder => "folder",
+            EmptyKind::Roots => "roots",
+        }
+    }
+}
+
+/// Which key a `dupe:`-family predicate groups rows by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DupeKey {
+    /// `dupe:` / `dupe:name-size` — same filename *and* same byte size.
+    NameSize,
+    /// `name-dupe:` / `dupe:name` — same filename.
+    Name,
+    /// `size-dupe:` / `dupe:size` — same byte size.
+    Size,
+}
+
+impl DupeKey {
+    /// Canonical source spelling, for diagnostics and group labels.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DupeKey::NameSize => "dupe",
+            DupeKey::Name => "name-dupe",
+            DupeKey::Size => "size-dupe",
+        }
+    }
 }
 
 /// One audio-modifier predicate. Each variant carries the comparator

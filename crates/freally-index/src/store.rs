@@ -303,6 +303,25 @@ impl Store {
         Ok(out)
     }
 
+    /// Stream `(path, attrs)` for every live row. `DirStats` builds the
+    /// whole index's directory shape from this, and hydrating a full
+    /// [`FileRow`] per row (as [`Store::iter_all`] does) would allocate
+    /// eight fields it never reads.
+    pub fn iter_path_attrs<F>(&self, mut f: F) -> Result<(), IndexError>
+    where
+        F: FnMut(&str, u64),
+    {
+        let conn = self.inner.lock();
+        let mut stmt = conn.prepare("SELECT path, attrs FROM files")?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let path: String = r.get(0)?;
+            let attrs: i64 = r.get(1)?;
+            f(&path, attrs.max(0) as u64);
+        }
+        Ok(())
+    }
+
     /// Scan all rows — used by recovery to rebuild the in-memory name
     /// index after a crash.
     pub fn iter_all<F>(&self, mut f: F) -> Result<(), IndexError>

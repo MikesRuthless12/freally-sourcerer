@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ColumnId, QueryHit } from "../../lib/ipc/types";
   import { selectionStore } from "../../lib/stores/selection.svelte";
+  import { contextMenuStore } from "../../lib/stores/context_menu.svelte";
   import { columnsStore } from "../../lib/stores/columns.svelte";
   import { settingsStore } from "../../lib/stores/settings.svelte";
   import { iconStore } from "../../lib/stores/icon_store.svelte";
@@ -63,6 +64,18 @@
     await files.open(hit.path);
   }
 
+  function onContextMenu(ev: MouseEvent) {
+    ev.preventDefault();
+    // Right-clicking outside the current selection retargets it, the
+    // way every file manager behaves — otherwise the verbs would act on
+    // rows the user can't see they picked.
+    if (!selectionStore.has(hit.file_id)) {
+      selectionStore.clear();
+      selectionStore.toggle(hit.file_id);
+    }
+    contextMenuStore.openAt(ev, hit);
+  }
+
   async function onKey(ev: KeyboardEvent) {
     if (ev.key === "Enter") {
       if (ev.metaKey || ev.ctrlKey) await files.reveal(hit.path);
@@ -85,6 +98,7 @@
   style="height: {heightVar};"
   onclick={onClick}
   ondblclick={onDoubleClick}
+  oncontextmenu={onContextMenu}
   onkeydown={onKey}
 >
   {#each cols as col (col.id)}

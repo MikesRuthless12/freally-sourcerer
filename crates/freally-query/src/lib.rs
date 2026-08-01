@@ -38,12 +38,14 @@ pub mod quick_filters;
 pub mod report;
 
 pub use ast::{
-    AttribFlag, AudioPredicate, DateBound, LensKind, ModifierKind, ModifierPredicate, Query,
-    QueryNode, RelativeDate, SizeOp, SizeUnit, TextPattern,
+    AttribFlag, AudioPredicate, DateBound, DupeKey, EmptyKind, LensKind, ModifierKind,
+    ModifierPredicate, Query, QueryNode, RelativeDate, SizeOp, SizeUnit, TextPattern,
 };
 pub use cache::PlanCache;
 pub use error::{ParseError, QueryError};
-pub use exec::{ExecPlan, ExecStats, Hit, ResultSet, execute, execute_with, execute_with_audio};
+pub use exec::{
+    DupeGroup, ExecPlan, ExecStats, Hit, ResultSet, execute, execute_with, execute_with_audio,
+};
 pub use optimizer::{is_audio_only_route, is_similarity_route, optimize, selectivity_rank};
 pub use opts::{ExecOpts, MatchMode, SortField, SortOrder, SortSpec};
 pub use parser::{ParseOpts, parse, parse_with};

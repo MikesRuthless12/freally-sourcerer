@@ -788,3 +788,65 @@ opt-log-trace = Trace
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = その他の Freally アプリ…
 moreapps-title = その他の Freally アプリ
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+# Machine-translated draft — pending the pre-v1.0 reviewer pass.
+dupe-group-summary = { $count } 件のコピー · { $bytes }
+status-file-list = ファイルリスト: { $name }
+status-file-list-truncated = 先頭 5,000 件を表示しています
+refine-label = 結果内
+refine-input-label = 現在の結果を絞り込む
+refine-placeholder = 入力して絞り込み、Enter で追加
+refine-count = { $total } 件中 { $shown } 件
+refine-remove-chip = 絞り込み { $term } を削除
+refine-clear = クリア
+refine-close = 絞り込みバーを閉じる
+menu-search-within-results = 結果内を検索
+ctx-menu-label = 結果の操作
+ctx-open = 開く
+ctx-reveal = ファイルマネージャーで表示
+ctx-view-hits = 一致箇所を文脈で表示
+ctx-open-with = アプリケーションから開く
+ctx-open-with-none = 登録されたアプリケーションがありません
+ctx-loading = 読み込み中…
+ctx-copy-contents = 内容をコピー
+ctx-copy-as-file = ファイルとしてコピー
+ctx-copy-path-list = パス一覧をコピー
+ctx-quote-lines = 1 行に 1 件
+ctx-quote-quoted = 引用符付き
+ctx-quote-space = スペース区切り
+ctx-quote-escaped = シェル用にエスケープ
+ctx-terminal-here = ここでターミナルを開く
+verb-failed = { $verb } に失敗しました: { $error }
+hitviewer-title = { $name } の一致箇所
+hitviewer-no-matches = 一致なし
+hitviewer-match-position = { $total } 件中 { $current } 件目
+hitviewer-prev = 前へ
+hitviewer-next = 次へ
+hitviewer-loading = 抽出中…
+hitviewer-extractor = { $id } により抽出
+hitviewer-truncated = 表示のため文書を切り詰めました
+hitviewer-keys = F3 次へ · Shift+F3 前へ · Esc 閉じる
+close = 閉じる
+toast-dismiss = 閉じる
+toast-file-list-opened = { $name } を開きました — { $count } 件
+toast-file-list-open-failed = ファイルリストを開けませんでした: { $error }
+toast-export-done = { $written } 件の結果を { $format } として書き出しました
+toast-export-lossy = { $total } 件中 { $written } 件の結果を { $format } として書き出しました
+toast-export-failed = 書き出しに失敗しました: { $error }
+toast-copied-paths = { $count } 件のパスをコピーしました
+toast-copied-contents = { $name } の内容をコピーしました
+toast-copied-files = { $count } 件のファイルをコピーしました
+settings-node-custom-commands = カスタムコマンド
+settings-custom-commands-hint = ここで追加したコマンドは結果の右クリックメニューに表示されます。引数では { "{" }path{ "}" }、{ "{" }dir{ "}" }、{ "{" }name{ "}" }、{ "{" }stem{ "}" }、{ "{" }ext{ "}" } を使えます。
+settings-custom-commands-empty = カスタムコマンドはまだありません。
+settings-custom-commands-unnamed = 名称未設定のコマンド
+settings-custom-commands-name = 名前
+settings-custom-commands-program = プログラム
+settings-custom-commands-args = 引数
+settings-custom-commands-extensions = 対象の拡張子
+settings-custom-commands-add = コマンドを追加

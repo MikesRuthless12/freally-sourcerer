@@ -21,14 +21,16 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use freally_audio::{AudioAttributes, AudioAttributesProvider};
-use freally_index::{FileRow, Index};
+use freally_index::{DirStats, FileRow, Index};
 use freally_similarity::{SimilarityIndex, SimilarityOpts};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::ast::{
-    AudioPredicate, DateBound, LensKind, ModifierKind, Query, QueryNode, SizeOp, TextPattern,
+    AudioPredicate, DateBound, DupeKey, EmptyKind, LensKind, ModifierKind, Query, QueryNode,
+    SizeOp, TextPattern,
 };
 use crate::error::QueryError;
 use crate::opts::{ExecOpts, MatchMode, SortField, SortOrder, SortSpec};
@@ -60,12 +62,40 @@ pub struct Hit {
     pub row: FileRow,
 }
 
+/// What a duplicate cluster has in common. Carries the *values*, not a
+/// rendered string: the header row is localised and byte-formatted by
+/// the UI (every other number in the app is), and the executor has no
+/// business owning presentation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DupeGroupKey {
+    /// Shared file name, when the query grouped by name.
+    pub name: Option<String>,
+    /// Shared byte size, when the query grouped by size.
+    pub size: Option<u64>,
+}
+
+/// One cluster of duplicates (SRC-M07). Members are contiguous in
+/// [`ResultSet::rows`], so the UI can render a header row followed by
+/// `len` result rows without re-grouping client-side.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DupeGroup {
+    /// What the members share.
+    pub key: DupeGroupKey,
+    /// Index of the group's first row in [`ResultSet::rows`].
+    pub start: usize,
+    /// How many rows belong to this group.
+    pub len: usize,
+}
+
 #[derive(Debug)]
 pub struct ResultSet {
     rows: Vec<FileRow>,
     cursor: usize,
     pub plan: ExecPlan,
     pub stats: ExecStats,
+    /// Duplicate clusters, when the query used the `dupe:` family.
+    /// Empty for every other query.
+    pub dupe_groups: Vec<DupeGroup>,
 }
 
 impl ResultSet {
@@ -141,6 +171,12 @@ fn needs_hydration(node: &QueryNode) -> bool {
             // Audio predicates need the FileRow's path + mtime_ns to
             // hit the AudioAttributesProvider.
             ModifierKind::Audio(_) => true,
+            // SRC-M07/M08 need the row's path (to key into `DirStats`),
+            // size, and attrs — none of which the name index carries.
+            ModifierKind::Empty(_)
+            | ModifierKind::ChildCount { .. }
+            | ModifierKind::DescendantCount { .. }
+            | ModifierKind::Dupe(_) => true,
             ModifierKind::Reserved { .. } => true,
         },
         // Quick filter shortcuts to `ext:` so it doesn't need full
@@ -254,6 +290,26 @@ pub fn execute_with_audio(
         // is rejected loudly so the UI can surface the limitation.
         return Err(QueryError::UnsupportedSimilarPosition);
     }
+    // SRC-M07 carries the same positional rule for the same reason: the
+    // dupe family is resolved as a whole-set post-pass, so a `dupe:`
+    // buried under OR / NOT would silently mean something other than
+    // what it reads like.
+    let dupe_keys = collect_dupe_keys(q.root());
+    // Count, don't just detect: `dupe:name !size-dupe:` collects one
+    // top-level key, so an `is_empty()` guard would wave the buried one
+    // through — and `strip_dupe_nodes` would then rewrite it to `True`,
+    // silently returning zero hits with no error.
+    if count_dupe_nodes(q.root()) != dupe_keys.len() {
+        return Err(QueryError::UnsupportedDupePosition);
+    }
+    // With the keys harvested, the `dupe:` nodes have said everything
+    // they have to say; strip them so the per-row evaluator never sees
+    // a predicate it cannot answer.
+    let per_row_root = if dupe_keys.is_empty() {
+        q.root().clone()
+    } else {
+        strip_dupe_nodes(q.root())
+    };
     let plan = plan(q, &opts);
     // `match_path` widens the search target from the lowercased
     // filename to the full path. The name index only has filenames, so
@@ -273,13 +329,17 @@ pub fn execute_with_audio(
         ..ExecStats::default()
     };
 
-    let cap = if opts.candidate_cap == 0 {
+    // The dupe family decides membership from the whole set: a file
+    // whose only partner falls past the cap is not truncated, it is
+    // reclassified as a singleton and dropped. Truncating the *output*
+    // (via `opts.limit`) is fine; truncating the input is not.
+    let cap = if opts.candidate_cap == 0 || !dupe_keys.is_empty() {
         usize::MAX
     } else {
         opts.candidate_cap
     };
 
-    let evaluator = NameEvaluator::new(q.root(), &opts);
+    let evaluator = NameEvaluator::new(&per_row_root, &opts);
 
     // Phase 10 lens routing: an audio-only / similarity-only query
     // has no name-side predicate to filter by, so the per-row name
@@ -322,6 +382,7 @@ pub fn execute_with_audio(
     let needs_full = plan.needs_hydration || opts.match_mode.match_path;
     let i64_ids: Vec<i64> = survivors_ids.iter().map(|&u| u as i64).collect();
     let mut rows: Vec<FileRow> = idx.store().get_many(&i64_ids)?;
+    let dirs = dir_stats_for(idx, q.root())?;
     if needs_full {
         // Phase 9: collect audio rows that survive the non-audio
         // predicates first, then loop one more time to apply audio
@@ -329,13 +390,32 @@ pub fn execute_with_audio(
         // (filename-only queries) free of audio-cache lookups, and
         // means audio-only queries pay one cache lookup per surviving
         // row rather than per-candidate.
-        rows = filter_with_audio(rows, q.root(), &opts.match_mode, audio, needs_audio)?;
+        rows = filter_with_audio(
+            rows,
+            &per_row_root,
+            &opts.match_mode,
+            audio,
+            needs_audio,
+            &dirs,
+        )?;
     }
 
-    sort_rows(&mut rows, opts.sort);
+    // SRC-M07: the dupe family is a set predicate, so it resolves after
+    // every per-row predicate has narrowed the candidates. Grouping
+    // supplies its own ordering (members contiguous under their
+    // cluster), which is why it replaces `sort_rows` rather than
+    // running before it.
+    let dupe_groups = if dupe_keys.is_empty() {
+        sort_rows(&mut rows, opts.sort);
+        Vec::new()
+    } else {
+        group_duplicates(&mut rows, &dupe_keys, opts.sort)
+    };
+
     if opts.limit > 0 && rows.len() > opts.limit {
         rows.truncate(opts.limit);
     }
+    let dupe_groups = clamp_groups(dupe_groups, rows.len());
     stats.final_hits = rows.len();
 
     Ok(ResultSet {
@@ -343,7 +423,206 @@ pub fn execute_with_audio(
         cursor: 0,
         plan,
         stats,
+        dupe_groups,
     })
+}
+
+/// Does any modifier in the tree satisfy `pred`? One walk for every
+/// "is this kind of predicate present" question the executor asks.
+fn any_modifier(node: &QueryNode, pred: &dyn Fn(&ModifierKind) -> bool) -> bool {
+    match node {
+        QueryNode::Modifier(m) => pred(&m.kind),
+        QueryNode::Not(inner) => any_modifier(inner, pred),
+        QueryNode::And(parts) | QueryNode::Or(parts) => parts.iter().any(|p| any_modifier(p, pred)),
+        QueryNode::Text(_) | QueryNode::QuickFilter(_) | QueryNode::True => false,
+        QueryNode::Lens { inner, .. } => any_modifier(inner, pred),
+    }
+}
+
+/// The index-wide directory shape — derived (and memoized on the index)
+/// only when the parsed query asks an emptiness question. Every other
+/// query gets the empty shape, whose `counts()` reports zeroes and which
+/// nothing will consult.
+fn dir_stats_for(idx: &Index, root: &QueryNode) -> Result<Arc<DirStats>, QueryError> {
+    if !needs_dir_stats(root) {
+        return Ok(Arc::new(DirStats::default()));
+    }
+    Ok(idx.dir_stats()?)
+}
+
+fn needs_dir_stats(node: &QueryNode) -> bool {
+    any_modifier(node, &|k| {
+        matches!(
+            k,
+            ModifierKind::Empty(_)
+                | ModifierKind::ChildCount { .. }
+                | ModifierKind::DescendantCount { .. }
+        )
+    })
+}
+
+/// Collect the `dupe:` keys that sit at the root or as direct children
+/// of a top-level AND — the only positions [`validate_supported`]
+/// allows. Multiple keys compose (`dupe:name size-dupe:` keeps rows
+/// that share both).
+fn collect_dupe_keys(node: &QueryNode) -> Vec<DupeKey> {
+    let mut out = Vec::new();
+    let mut push = |k: DupeKey| {
+        if !out.contains(&k) {
+            out.push(k);
+        }
+    };
+    match node {
+        QueryNode::Modifier(m) => {
+            if let ModifierKind::Dupe(k) = &m.kind {
+                push(*k);
+            }
+        }
+        QueryNode::And(parts) => {
+            for p in parts {
+                if let QueryNode::Modifier(m) = p
+                    && let ModifierKind::Dupe(k) = &m.kind
+                {
+                    push(*k);
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// How many `dupe:` nodes the tree holds, anywhere. Compared against
+/// the count [`collect_dupe_keys`] could reach so a node in an
+/// unsupported position is rejected rather than quietly stripped.
+fn count_dupe_nodes(node: &QueryNode) -> usize {
+    match node {
+        QueryNode::Modifier(m) => usize::from(matches!(m.kind, ModifierKind::Dupe(_))),
+        QueryNode::Not(inner) => count_dupe_nodes(inner),
+        QueryNode::And(parts) | QueryNode::Or(parts) => parts.iter().map(count_dupe_nodes).sum(),
+        QueryNode::Text(_) | QueryNode::QuickFilter(_) | QueryNode::True => 0,
+        QueryNode::Lens { inner, .. } => count_dupe_nodes(inner),
+    }
+}
+
+/// Replace every `dupe:` node with [`QueryNode::True`].
+///
+/// The dupe family is resolved as a whole-set post-pass, so the per-row
+/// evaluator must not see it — and "not per-row" is better expressed by
+/// the AST node that already means identity than by a `=> true` arm
+/// buried in `eval_modifier`. With this rewrite, `eval_modifier` can
+/// fail loud on a `Dupe` the way it already does for `Similar` and
+/// `Reserved`.
+fn strip_dupe_nodes(node: &QueryNode) -> QueryNode {
+    match node {
+        QueryNode::Modifier(m) if matches!(m.kind, ModifierKind::Dupe(_)) => QueryNode::True,
+        QueryNode::Not(inner) => QueryNode::Not(Box::new(strip_dupe_nodes(inner))),
+        QueryNode::And(parts) => QueryNode::And(parts.iter().map(strip_dupe_nodes).collect()),
+        QueryNode::Or(parts) => QueryNode::Or(parts.iter().map(strip_dupe_nodes).collect()),
+        QueryNode::Lens { kind, inner } => QueryNode::Lens {
+            kind: *kind,
+            inner: Box::new(strip_dupe_nodes(inner)),
+        },
+        other => other.clone(),
+    }
+}
+
+/// Keep only rows that share their key with at least one other row, and
+/// reorder them so each cluster is contiguous. Directories are dropped:
+/// two folders with the same name and a meaningless `size` are not
+/// duplicate *files*, and reporting them would bury the real hits.
+fn group_duplicates(rows: &mut Vec<FileRow>, keys: &[DupeKey], sort: SortSpec) -> Vec<DupeGroup> {
+    let shape = DupeShape::of(keys);
+    let mut buckets: HashMap<String, Vec<FileRow>> = HashMap::new();
+    for row in rows.drain(..) {
+        if is_directory(&row) {
+            continue;
+        }
+        buckets.entry(shape.key_of(&row)).or_default().push(row);
+    }
+
+    // Singletons aren't duplicates. Ordering the survivors by key is
+    // what makes the output stable for a given input — insertion order
+    // would depend on the candidate stream.
+    let mut order: Vec<String> = buckets
+        .iter()
+        .filter(|(_, members)| members.len() > 1)
+        .map(|(k, _)| k.clone())
+        .collect();
+    order.sort();
+
+    let mut groups = Vec::with_capacity(order.len());
+    for key in order {
+        let mut members = buckets.remove(&key).expect("key came from `buckets`");
+        sort_rows(&mut members, sort);
+        groups.push(DupeGroup {
+            key: shape.describe(&members[0]),
+            start: rows.len(),
+            len: members.len(),
+        });
+        rows.append(&mut members);
+    }
+    groups
+}
+
+/// Which components a `dupe:` query groups by, resolved once per query
+/// rather than re-walking `keys` for every row.
+#[derive(Debug, Clone, Copy)]
+struct DupeShape {
+    by_name: bool,
+    by_size: bool,
+}
+
+impl DupeShape {
+    fn of(keys: &[DupeKey]) -> Self {
+        Self {
+            by_name: keys
+                .iter()
+                .any(|k| matches!(k, DupeKey::Name | DupeKey::NameSize)),
+            by_size: keys
+                .iter()
+                .any(|k| matches!(k, DupeKey::Size | DupeKey::NameSize)),
+        }
+    }
+
+    /// Rows land in the same cluster when every requested component
+    /// matches. `\u{0}` separates the components so a name ending in
+    /// digits can't collide with a name plus a size.
+    fn key_of(self, row: &FileRow) -> String {
+        use std::fmt::Write as _;
+        let mut key = String::with_capacity(row.name_lower.len() + 24);
+        if self.by_name {
+            key.push_str(&row.name_lower);
+        }
+        key.push('\u{0}');
+        if self.by_size {
+            let _ = write!(key, "{}", row.size);
+        }
+        key
+    }
+
+    fn describe(self, sample: &FileRow) -> DupeGroupKey {
+        DupeGroupKey {
+            name: self.by_name.then(|| sample.name.clone()),
+            size: self.by_size.then_some(sample.size),
+        }
+    }
+}
+
+/// Drop or shorten groups that fall past `len` after the `limit`
+/// truncation, so every `DupeGroup` still describes a real slice of the
+/// row vector.
+fn clamp_groups(groups: Vec<DupeGroup>, len: usize) -> Vec<DupeGroup> {
+    groups
+        .into_iter()
+        .filter_map(|mut g| {
+            if g.start >= len {
+                return None;
+            }
+            g.len = g.len.min(len - g.start);
+            Some(g)
+        })
+        .collect()
 }
 
 fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
@@ -399,6 +678,7 @@ fn filter_with_audio(
     mm: &MatchMode,
     audio: Option<&dyn AudioAttributesProvider>,
     needs_audio: bool,
+    dirs: &DirStats,
 ) -> Result<Vec<FileRow>, QueryError> {
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
@@ -416,17 +696,57 @@ fn filter_with_audio(
         } else {
             None
         };
-        if eval_full(root, &r, mm, path_lower.as_deref(), attrs.as_ref()) {
+        let ctx = EvalCtx {
+            mm,
+            path_lower: path_lower.as_deref(),
+            audio: attrs.as_ref(),
+            dirs,
+        };
+        if eval_full(root, &r, &ctx) {
             out.push(r);
         }
     }
     Ok(out)
 }
 
+/// Everything a per-row predicate needs beyond the row itself. All four
+/// fields are invariant across one row's whole evaluation, so they
+/// travel as one borrowed struct rather than as four positional
+/// arguments threaded through two recursive evaluators.
+struct EvalCtx<'a> {
+    mm: &'a MatchMode,
+    /// The row's lowercased full path, when `match_path` widened the
+    /// text target. `None` means "match against the name".
+    path_lower: Option<&'a str>,
+    audio: Option<&'a AudioAttributes>,
+    dirs: &'a DirStats,
+}
+
+/// Can this subtree be decided from the name buffer alone?
+///
+/// `eval_name` answers "true" for anything it cannot decide, so the
+/// full post-hydration pass gets to see the row. Under `NOT` that
+/// convention inverts into "false" — a definite reject — and the row
+/// never reaches the pass that could actually answer. So a negation
+/// over an undecidable subtree has to let the row through instead.
+fn name_decidable(node: &QueryNode) -> bool {
+    match node {
+        QueryNode::Modifier(m) => matches!(m.kind, ModifierKind::Child(_) | ModifierKind::Ext(_)),
+        QueryNode::Text(_) | QueryNode::QuickFilter(_) | QueryNode::True => true,
+        QueryNode::Not(inner) => name_decidable(inner),
+        QueryNode::And(parts) | QueryNode::Or(parts) => parts.iter().all(name_decidable),
+        QueryNode::Lens { inner, .. } => name_decidable(inner),
+    }
+}
+
 fn eval_name(node: &QueryNode, name_lower: &[u8], mm: &MatchMode) -> bool {
     match node {
         QueryNode::True => true,
         QueryNode::Text(p) => match_text(p, name_lower, mm),
+        // A negation we cannot decide here must not reject the row —
+        // `!size:>1mb`, `!empty:folder`, `NOT lufs:<-14` all need the
+        // hydrated pass to answer.
+        QueryNode::Not(inner) if !name_decidable(inner) => true,
         QueryNode::Not(inner) => !eval_name(inner, name_lower, mm),
         QueryNode::And(parts) => parts.iter().all(|p| eval_name(p, name_lower, mm)),
         QueryNode::Or(parts) => parts.iter().any(|p| eval_name(p, name_lower, mm)),
@@ -446,40 +766,50 @@ fn eval_name(node: &QueryNode, name_lower: &[u8], mm: &MatchMode) -> bool {
     }
 }
 
-fn eval_full(
-    node: &QueryNode,
-    row: &FileRow,
-    mm: &MatchMode,
-    path_lower: Option<&str>,
-    audio: Option<&AudioAttributes>,
-) -> bool {
+fn eval_full(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
     match node {
         QueryNode::True => true,
         QueryNode::Text(p) => {
-            let target = match path_lower {
-                Some(pl) => pl,
-                None => row.name_lower.as_str(),
-            };
-            match_text(p, target.as_bytes(), mm)
+            let target = ctx.path_lower.unwrap_or(row.name_lower.as_str());
+            match_text(p, target.as_bytes(), ctx.mm)
         }
-        QueryNode::Not(inner) => !eval_full(inner, row, mm, path_lower, audio),
-        QueryNode::And(parts) => parts
-            .iter()
-            .all(|p| eval_full(p, row, mm, path_lower, audio)),
-        QueryNode::Or(parts) => parts
-            .iter()
-            .any(|p| eval_full(p, row, mm, path_lower, audio)),
-        QueryNode::Modifier(m) => eval_modifier(&m.kind, row, audio),
-        QueryNode::QuickFilter(qf) => row
-            .ext
-            .as_deref()
-            .map(|e| qf.extensions().iter().any(|x| x.eq_ignore_ascii_case(e)))
-            .unwrap_or(false),
-        QueryNode::Lens { inner, .. } => eval_full(inner, row, mm, path_lower, audio),
+        QueryNode::Not(inner) => !eval_full(inner, row, ctx),
+        QueryNode::And(parts) => parts.iter().all(|p| eval_full(p, row, ctx)),
+        QueryNode::Or(parts) => parts.iter().any(|p| eval_full(p, row, ctx)),
+        QueryNode::Modifier(m) => eval_modifier(&m.kind, row, ctx),
+        QueryNode::QuickFilter(qf) => row_has_quick_filter_ext(row, *qf),
+        QueryNode::Lens { inner, .. } => eval_full(inner, row, ctx),
     }
 }
 
-fn eval_modifier(kind: &ModifierKind, row: &FileRow, audio: Option<&AudioAttributes>) -> bool {
+fn row_has_quick_filter_ext(row: &FileRow, qf: crate::quick_filters::QuickFilter) -> bool {
+    row.ext
+        .as_deref()
+        .map(|e| qf.extensions().iter().any(|x| x.eq_ignore_ascii_case(e)))
+        .unwrap_or(false)
+}
+
+/// Is this row a directory? Reads the portable `attrs` projection the
+/// journal subscribers write on every OS.
+fn is_directory(row: &FileRow) -> bool {
+    row.attrs & freally_index::ATTR_DIRECTORY != 0
+}
+
+/// SRC-M08 `empty:` resolution. Every arm reads index data only — the
+/// filesystem is never touched.
+fn eval_empty(kind: EmptyKind, row: &FileRow, dirs: &DirStats) -> bool {
+    let is_dir = is_directory(row);
+    let empty_file = !is_dir && row.size == 0;
+    let empty_folder = || is_dir && dirs.counts(&row.path).children == 0;
+    match kind {
+        EmptyKind::File => empty_file,
+        EmptyKind::Folder => empty_folder(),
+        EmptyKind::Roots => is_dir && dirs.is_empty_subtree_root(&row.path),
+        EmptyKind::Any => empty_file || empty_folder(),
+    }
+}
+
+fn eval_modifier(kind: &ModifierKind, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
     match kind {
         ModifierKind::Size { op, bytes } => cmp_op(*op, row.size, *bytes),
         ModifierKind::Date(b) => eval_date(b, row.mtime_ns),
@@ -516,7 +846,7 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow, audio: Option<&AudioAttribu
             );
             false
         }
-        ModifierKind::Audio(pred) => match audio {
+        ModifierKind::Audio(pred) => match ctx.audio {
             Some(attrs) => eval_audio_predicate(pred, attrs),
             // No cached audio attributes — either the row's path
             // isn't audio, or the cache miss returned None
@@ -524,6 +854,28 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow, audio: Option<&AudioAttribu
             // doesn't match this row.
             None => false,
         },
+        ModifierKind::Empty(kind) => eval_empty(*kind, row, ctx.dirs),
+        // A file has no children, so `child-count:0` must not sweep
+        // every file in the index into the results — the question is
+        // only meaningful for folders.
+        ModifierKind::ChildCount { op, count } => {
+            is_directory(row) && cmp_op(*op, ctx.dirs.counts(&row.path).children, *count)
+        }
+        ModifierKind::DescendantCount { op, count } => {
+            is_directory(row) && cmp_op(*op, ctx.dirs.counts(&row.path).descendants, *count)
+        }
+        ModifierKind::Dupe(_) => {
+            // `execute_with_audio` strips the dupe family out of the AST
+            // (`strip_dupe_nodes`) before per-row evaluation, because
+            // whether a row is a duplicate depends on other rows.
+            // Reaching this arm means a caller built a Query by hand and
+            // skipped that — fail loud, like Similar and Reserved.
+            debug_assert!(
+                false,
+                "dupe: modifier reached eval_modifier — caller skipped execute_with"
+            );
+            false
+        }
         ModifierKind::Reserved { name, .. } => {
             // `validate_supported` runs at the top of `execute()` and
             // turns Reserved modifiers into `QueryError::Unsupported-
@@ -885,6 +1237,7 @@ fn execute_similar(
     let mut rows: Vec<FileRow> = idx.store().get_many(&ordered_ids)?;
     stats.name_survivors = rows.len();
 
+    let dirs = dir_stats_for(idx, q.root())?;
     let needs_audio = has_audio_anywhere(q.root());
     let mut filtered = Vec::with_capacity(rows.len());
     for r in rows.drain(..) {
@@ -899,13 +1252,13 @@ fn execute_similar(
         } else {
             None
         };
-        if similarity_row_matches(
-            q.root(),
-            &r,
-            &opts.match_mode,
-            path_lower.as_deref(),
-            attrs.as_ref(),
-        ) {
+        let ctx = EvalCtx {
+            mm: &opts.match_mode,
+            path_lower: path_lower.as_deref(),
+            audio: attrs.as_ref(),
+            dirs: &dirs,
+        };
+        if similarity_row_matches(q.root(), &r, &ctx) {
             filtered.push(r);
         }
     }
@@ -947,6 +1300,10 @@ fn execute_similar(
             needs_hydration: true,
         },
         stats,
+        // `similar:` and `dupe:` are both root-position-only, so a
+        // query can never take the similarity path *and* group
+        // duplicates.
+        dupe_groups: Vec::new(),
     })
 }
 
@@ -960,38 +1317,21 @@ fn execute_similar(
 /// `similar:foo ext:pdf size:>1mb` or
 /// `similar:bassdrop codec:flac length:>3:00` still filters
 /// correctly.
-fn similarity_row_matches(
-    node: &QueryNode,
-    row: &FileRow,
-    mm: &MatchMode,
-    path_lower: Option<&str>,
-    audio: Option<&AudioAttributes>,
-) -> bool {
+fn similarity_row_matches(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
     match node {
         QueryNode::True => true,
         QueryNode::Text(p) => {
-            let target = match path_lower {
-                Some(pl) => pl,
-                None => row.name_lower.as_str(),
-            };
-            match_text(p, target.as_bytes(), mm)
+            let target = ctx.path_lower.unwrap_or(row.name_lower.as_str());
+            match_text(p, target.as_bytes(), ctx.mm)
         }
-        QueryNode::Not(inner) => !similarity_row_matches(inner, row, mm, path_lower, audio),
-        QueryNode::And(parts) => parts
-            .iter()
-            .all(|p| similarity_row_matches(p, row, mm, path_lower, audio)),
-        QueryNode::Or(parts) => parts
-            .iter()
-            .any(|p| similarity_row_matches(p, row, mm, path_lower, audio)),
+        QueryNode::Not(inner) => !similarity_row_matches(inner, row, ctx),
+        QueryNode::And(parts) => parts.iter().all(|p| similarity_row_matches(p, row, ctx)),
+        QueryNode::Or(parts) => parts.iter().any(|p| similarity_row_matches(p, row, ctx)),
         QueryNode::Modifier(m) => match &m.kind {
             ModifierKind::Similar(_) => true,
-            _ => eval_modifier(&m.kind, row, audio),
+            _ => eval_modifier(&m.kind, row, ctx),
         },
-        QueryNode::QuickFilter(qf) => row
-            .ext
-            .as_deref()
-            .map(|e| qf.extensions().iter().any(|x| x.eq_ignore_ascii_case(e)))
-            .unwrap_or(false),
+        QueryNode::QuickFilter(qf) => row_has_quick_filter_ext(row, *qf),
         // A `similar:(...)` lens whose inner was already handled by
         // the LSH path (the only way we reach `similarity_row_matches`
         // is via `execute_similar`) is short-circuited to `true` —
@@ -1001,6 +1341,6 @@ fn similarity_row_matches(
             kind: LensKind::Similar,
             ..
         } => true,
-        QueryNode::Lens { inner, .. } => similarity_row_matches(inner, row, mm, path_lower, audio),
+        QueryNode::Lens { inner, .. } => similarity_row_matches(inner, row, ctx),
     }
 }

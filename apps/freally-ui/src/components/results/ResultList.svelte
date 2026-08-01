@@ -38,10 +38,12 @@
       </div>
     {:else}
       {#each order as lens (lens)}
+        {@const view = resultsStore.viewForLens(lens)}
         <LensSection
           {lens}
           title={lensTitles[lens]}
-          hits={resultsStore.hitsForLens(lens)}
+          hits={view.hits}
+          groups={view.groups}
           timingMs={timingFor(lens)}
         />
       {/each}

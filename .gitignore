@@ -19,6 +19,7 @@ yarn-error.log*
 # Build outputs
 apps/freally-ui/dist/
 apps/freally-ui/.svelte-kit/
+apps/freally-ui/e2e/.output/
 
 # IDEs
 .idea/

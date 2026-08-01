@@ -788,3 +788,64 @@ opt-log-trace = Trace
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = More Freally apps…
 moreapps-title = More Freally apps
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+dupe-group-summary = { $count } copies · { $bytes }
+status-file-list = File list: { $name }
+status-file-list-truncated = Showing the first 5,000 entries
+refine-label = Within results
+refine-input-label = Narrow the current results
+refine-placeholder = Type to narrow, Enter to add
+refine-count = { $shown } of { $total }
+refine-remove-chip = Remove refinement { $term }
+refine-clear = Clear
+refine-close = Close refinement bar
+menu-search-within-results = Search Within Results
+ctx-menu-label = Result actions
+ctx-open = Open
+ctx-reveal = Reveal in file manager
+ctx-view-hits = View hits in context
+ctx-open-with = Open with
+ctx-open-with-none = No registered applications
+ctx-loading = Loading…
+ctx-copy-contents = Copy contents
+ctx-copy-as-file = Copy as file
+ctx-copy-path-list = Copy path list
+ctx-quote-lines = One per line
+ctx-quote-quoted = Quoted
+ctx-quote-space = Space separated
+ctx-quote-escaped = Shell escaped
+ctx-terminal-here = Open terminal here
+verb-failed = { $verb } failed: { $error }
+hitviewer-title = Hits in { $name }
+hitviewer-no-matches = No matches
+hitviewer-match-position = Match { $current } of { $total }
+hitviewer-prev = Previous
+hitviewer-next = Next
+hitviewer-loading = Extracting…
+hitviewer-extractor = Extracted by { $id }
+hitviewer-truncated = Document truncated for display
+hitviewer-keys = F3 next · Shift+F3 previous · Esc close
+close = Close
+toast-dismiss = Dismiss
+toast-file-list-opened = Opened { $name } — { $count } entries
+toast-file-list-open-failed = Could not open the file list: { $error }
+toast-export-done = Exported { $written } results as { $format }
+toast-export-lossy = Exported { $written } of { $total } results as { $format }
+toast-export-failed = Export failed: { $error }
+toast-copied-paths = Copied { $count } paths
+toast-copied-contents = Copied the contents of { $name }
+toast-copied-files = Copied { $count } files
+settings-node-custom-commands = Custom Commands
+settings-custom-commands-hint = Commands you add here appear on the result right-click menu. Use { "{" }path{ "}" }, { "{" }dir{ "}" }, { "{" }name{ "}" }, { "{" }stem{ "}" } and { "{" }ext{ "}" } in the arguments.
+settings-custom-commands-empty = No custom commands yet.
+settings-custom-commands-unnamed = Unnamed command
+settings-custom-commands-name = Name
+settings-custom-commands-program = Program
+settings-custom-commands-args = Arguments
+settings-custom-commands-extensions = Only for extensions
+settings-custom-commands-add = Add command

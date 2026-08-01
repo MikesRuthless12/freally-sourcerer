@@ -20,6 +20,7 @@
         { id: "general.results", labelKey: "settings-node-results", keywords: ["columns", "sort", "icons"] },
         { id: "general.view", labelKey: "settings-node-view", keywords: ["preview", "size", "tooltips"] },
         { id: "general.context_menu", labelKey: "settings-node-context-menu", keywords: ["shell", "explorer", "finder"] },
+        { id: "general.custom_commands", labelKey: "settings-node-custom-commands", keywords: ["action", "verb", "terminal", "open with", "script"] },
         { id: "general.fonts_colors", labelKey: "settings-node-fonts-colors", keywords: ["font", "color", "accent"] },
         { id: "general.keyboard", labelKey: "settings-node-keyboard", keywords: ["hotkey", "shortcut", "chord"] }
       ]

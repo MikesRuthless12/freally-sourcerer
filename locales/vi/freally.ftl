@@ -788,3 +788,65 @@ opt-log-trace = Trace
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = Ứng dụng Freally khác…
 moreapps-title = Ứng dụng Freally khác
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+# Machine-translated draft — pending the pre-v1.0 reviewer pass.
+dupe-group-summary = { $count } bản sao · { $bytes }
+status-file-list = Danh sách tệp: { $name }
+status-file-list-truncated = Đang hiển thị 5.000 mục đầu tiên
+refine-label = Trong kết quả
+refine-input-label = Thu hẹp kết quả hiện tại
+refine-placeholder = Nhập để thu hẹp, Enter để thêm
+refine-count = { $shown } trên { $total }
+refine-remove-chip = Bỏ bộ lọc { $term }
+refine-clear = Xóa
+refine-close = Đóng thanh thu hẹp
+menu-search-within-results = Tìm trong kết quả
+ctx-menu-label = Hành động với kết quả
+ctx-open = Mở
+ctx-reveal = Hiện trong trình quản lý tệp
+ctx-view-hits = Xem kết quả khớp trong ngữ cảnh
+ctx-open-with = Mở bằng
+ctx-open-with-none = Không có ứng dụng nào được đăng ký
+ctx-loading = Đang tải…
+ctx-copy-contents = Sao chép nội dung
+ctx-copy-as-file = Sao chép dưới dạng tệp
+ctx-copy-path-list = Sao chép danh sách đường dẫn
+ctx-quote-lines = Mỗi dòng một đường dẫn
+ctx-quote-quoted = Trong dấu ngoặc kép
+ctx-quote-space = Cách nhau bằng dấu cách
+ctx-quote-escaped = Thoát ký tự cho shell
+ctx-terminal-here = Mở terminal tại đây
+verb-failed = { $verb } thất bại: { $error }
+hitviewer-title = Kết quả khớp trong { $name }
+hitviewer-no-matches = Không có kết quả khớp
+hitviewer-match-position = Khớp { $current } trên { $total }
+hitviewer-prev = Trước
+hitviewer-next = Tiếp
+hitviewer-loading = Đang trích xuất…
+hitviewer-extractor = Trích xuất bởi { $id }
+hitviewer-truncated = Tài liệu đã được cắt bớt để hiển thị
+hitviewer-keys = F3 tiếp · Shift+F3 trước · Esc đóng
+close = Đóng
+toast-dismiss = Bỏ qua
+toast-file-list-opened = Đã mở { $name } — { $count } mục
+toast-file-list-open-failed = Không mở được danh sách tệp: { $error }
+toast-export-done = Đã xuất { $written } kết quả dưới dạng { $format }
+toast-export-lossy = Đã xuất { $written } trên { $total } kết quả dưới dạng { $format }
+toast-export-failed = Xuất thất bại: { $error }
+toast-copied-paths = Đã sao chép { $count } đường dẫn
+toast-copied-contents = Đã sao chép nội dung của { $name }
+toast-copied-files = Đã sao chép { $count } tệp
+settings-node-custom-commands = Lệnh tùy chỉnh
+settings-custom-commands-hint = Các lệnh bạn thêm ở đây sẽ xuất hiện trong menu chuột phải của kết quả. Dùng { "{" }path{ "}" }, { "{" }dir{ "}" }, { "{" }name{ "}" }, { "{" }stem{ "}" } và { "{" }ext{ "}" } trong đối số.
+settings-custom-commands-empty = Chưa có lệnh tùy chỉnh nào.
+settings-custom-commands-unnamed = Lệnh chưa đặt tên
+settings-custom-commands-name = Tên
+settings-custom-commands-program = Chương trình
+settings-custom-commands-args = Đối số
+settings-custom-commands-extensions = Chỉ cho các phần mở rộng
+settings-custom-commands-add = Thêm lệnh

@@ -21,8 +21,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use regex::Regex;
 
 use crate::ast::{
-    AttribFlag, AudioPredicate, DateBound, LensKind, ModifierKind, ModifierPredicate, Query,
-    QueryNode, RelativeDate, SizeOp, SizeUnit, TextPattern,
+    AttribFlag, AudioPredicate, DateBound, DupeKey, EmptyKind, LensKind, ModifierKind,
+    ModifierPredicate, Query, QueryNode, RelativeDate, SizeOp, SizeUnit, TextPattern,
 };
 use crate::error::ParseError;
 use crate::quick_filters::QuickFilter;
@@ -440,7 +440,8 @@ fn classify_word(lex: &str, pos: usize, opts: ParseOpts) -> Result<QueryNode, Pa
     if let Some(colon_idx) = lex.find(':') {
         let key = &lex[..colon_idx];
         let val = &lex[colon_idx + 1..];
-        if !key.is_empty() && key.chars().all(|c| c.is_ascii_alphabetic() || c == '_') {
+        let plain_key = !key.is_empty() && key.chars().all(|c| c.is_ascii_alphabetic() || c == '_');
+        if plain_key || is_hyphenated_modifier(key) {
             // "regex" is a textual escape into a regex term, not a modifier.
             if key.eq_ignore_ascii_case("regex") {
                 let compiled = Regex::new(val).map_err(|e| ParseError::InvalidRegex {
@@ -500,6 +501,20 @@ fn wildcard_to_regex(pat: &str) -> Result<Regex, ParseError> {
         pattern: pat.to_string(),
         message: e.to_string(),
     })
+}
+
+/// Modifier keys that contain a `-`. The general key charset is
+/// `[A-Za-z_]+` on purpose: widening it to `-` wholesale would turn a
+/// literal term like `re-name:v2` into an `UnknownModifier` parse error,
+/// which Standing Rule #8 forbids. These specific keys opt in instead,
+/// so everything else with a hyphen still classifies as text.
+const HYPHENATED_MODIFIERS: &[&str] =
+    &["child-count", "descendant-count", "name-dupe", "size-dupe"];
+
+pub(crate) fn is_hyphenated_modifier(key: &str) -> bool {
+    HYPHENATED_MODIFIERS
+        .iter()
+        .any(|k| key.eq_ignore_ascii_case(k))
 }
 
 fn parse_modifier(
@@ -565,10 +580,33 @@ fn parse_modifier(
         "rate" | "samplerate" => ModifierKind::Audio(parse_audio_rate(value, key)?),
         "silence" => ModifierKind::Audio(parse_audio_silence(value, key)?),
         "dr" => ModifierKind::Audio(parse_audio_dr(value, key)?),
+        // SRC-M08 emptiness family. `empty:` is Everything-compatible,
+        // so it stays legal under `strict_everything`.
+        "empty" => ModifierKind::Empty(parse_empty_kind(value, key)?),
+        "child-count" | "childcount" => {
+            let (op, count) = parse_count(value, key)?;
+            ModifierKind::ChildCount { op, count }
+        }
+        "descendant-count" | "descendantcount" => {
+            let (op, count) = parse_count(value, key)?;
+            ModifierKind::DescendantCount { op, count }
+        }
+        // SRC-M07 duplicate family — promoted out of `Reserved`.
+        "dupe" => ModifierKind::Dupe(parse_dupe_key(value, key)?),
+        // These name their key in the modifier itself, so a value would
+        // be a second, contradictory answer. `name-dupe:size` is a
+        // plausible slip for `dupe:size`; silently meaning "name" would
+        // be worse than saying so.
+        "name-dupe" | "namedupe" => {
+            ModifierKind::Dupe(reject_dupe_value(value, key, DupeKey::Name)?)
+        }
+        "size-dupe" | "sizedupe" => {
+            ModifierKind::Dupe(reject_dupe_value(value, key, DupeKey::Size)?)
+        }
         // Reserved for future lenses (Phase 8 content; Phase 10+
         // strict-Everything additions) AND voidtools-Everything
         // muscle-memory tokens that don't have a semantic mapping yet
-        // (`wfn:` / `wholefilename:` / `case:` / `count:` / `dupe:` /
+        // (`wfn:` / `wholefilename:` / `case:` / `count:` /
         // `nodiacritics:`). Standing Rule #8: every query that
         // *parses* today must keep parsing through Phase 14 — so we
         // accept them here and let `validate_supported` route the
@@ -576,7 +614,7 @@ fn parse_modifier(
         // `QueryError::UnsupportedModifier` rather than silent
         // mismatch. Phase 11 surfaces these as a UI hint.
         "content" | "channels" | "type" | "lang" | "wfn" | "wholefilename" | "case" | "count"
-        | "dupe" | "nodiacritics" => ModifierKind::Reserved {
+        | "nodiacritics" => ModifierKind::Reserved {
             name: key_lower,
             value: value.to_string(),
         },
@@ -588,6 +626,78 @@ fn parse_modifier(
         }
     };
     Ok(ModifierPredicate { kind })
+}
+
+/// `empty:` / `empty:file` / `empty:folder` / `empty:roots`.
+fn parse_empty_kind(value: &str, key: &str) -> Result<EmptyKind, ParseError> {
+    match value.to_ascii_lowercase().as_str() {
+        "" => Ok(EmptyKind::Any),
+        "file" | "files" => Ok(EmptyKind::File),
+        "folder" | "folders" | "dir" | "dirs" => Ok(EmptyKind::Folder),
+        "root" | "roots" => Ok(EmptyKind::Roots),
+        _ => Err(ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "expected one of: file, folder, roots (or bare `empty:`)".into(),
+        }),
+    }
+}
+
+/// `name-dupe:` / `size-dupe:` take no value — the key is in the name.
+fn reject_dupe_value(value: &str, key: &str, implied: DupeKey) -> Result<DupeKey, ParseError> {
+    if value.is_empty() {
+        return Ok(implied);
+    }
+    Err(ParseError::InvalidModifierValue {
+        name: key.to_string(),
+        value: value.to_string(),
+        reason: format!("`{key}:` takes no value — did you mean `dupe:{value}`?"),
+    })
+}
+
+/// `dupe:` value form. Bare `dupe:` is name+size, matching Everything's
+/// Find Duplicates default.
+fn parse_dupe_key(value: &str, key: &str) -> Result<DupeKey, ParseError> {
+    match value.to_ascii_lowercase().as_str() {
+        "" | "name-size" | "namesize" => Ok(DupeKey::NameSize),
+        "name" => Ok(DupeKey::Name),
+        "size" => Ok(DupeKey::Size),
+        _ => Err(ParseError::InvalidModifierValue {
+            name: key.to_string(),
+            value: value.to_string(),
+            reason: "expected one of: name, size, name-size (or bare `dupe:`)".into(),
+        }),
+    }
+}
+
+/// `child-count:` / `descendant-count:` — a comparator plus a plain
+/// count. No size suffixes: `child-count:5k` means nothing.
+fn parse_count(value: &str, key: &str) -> Result<(SizeOp, u64), ParseError> {
+    let (op, rest) = split_comparator(value);
+    let n: u64 = rest.parse().map_err(|_| ParseError::InvalidModifierValue {
+        name: key.to_string(),
+        value: value.to_string(),
+        reason: "expected a whole number, optionally prefixed with >, >=, <, <= or =".into(),
+    })?;
+    Ok((op, n))
+}
+
+/// Peel a leading comparator off a modifier value. Absent comparator
+/// means equality, matching `size:42`.
+fn split_comparator(value: &str) -> (SizeOp, &str) {
+    if let Some(rest) = value.strip_prefix(">=") {
+        (SizeOp::Ge, rest)
+    } else if let Some(rest) = value.strip_prefix("<=") {
+        (SizeOp::Le, rest)
+    } else if let Some(rest) = value.strip_prefix('>') {
+        (SizeOp::Gt, rest)
+    } else if let Some(rest) = value.strip_prefix('<') {
+        (SizeOp::Lt, rest)
+    } else if let Some(rest) = value.strip_prefix('=') {
+        (SizeOp::Eq, rest)
+    } else {
+        (SizeOp::Eq, value)
+    }
 }
 
 fn parse_size(value: &str, key: &str) -> Result<ModifierKind, ParseError> {
@@ -1355,17 +1465,21 @@ mod tests {
     #[test]
     fn voidtools_reserved_toggles_parse() {
         // Standing Rule #8: every query that parses today must keep
-        // parsing through Phase 14. The `wfn:` / `case:` / `count:` /
-        // `dupe:` family is Everything muscle-memory; we accept-and-
-        // reserve so users typing them get a typed
+        // parsing through Phase 14. The `wfn:` / `case:` / `count:`
+        // family is Everything muscle-memory; we accept-and-reserve so
+        // users typing them get a typed
         // `QueryError::UnsupportedModifier` at execute time, not a
         // parse error.
+        //
+        // `dupe:` left this list in Build 1 (SRC-M07) the same way the
+        // audio modifiers left it in Phase 9: now that it has an
+        // executor, its values are validated at parse time — see
+        // `dupe_family_parses_every_key`.
         for q in [
             "wfn:foo",
             "wholefilename:foo",
             "case:foo",
             "count:1",
-            "dupe:foo",
             "type:audio",
         ] {
             let parsed = parse(q).unwrap_or_else(|e| panic!("`{q}` failed: {e}"));
@@ -1375,6 +1489,96 @@ mod tests {
                     k => panic!("`{q}` not Reserved: {k:?}"),
                 },
                 n => panic!("`{q}` unexpected: {n:?}"),
+            }
+        }
+    }
+
+    // ---- Build 1 (SRC-M07 / SRC-M08) modifier parsing ---------------
+
+    fn modifier_of(q: &str) -> ModifierKind {
+        match pp(q).root() {
+            QueryNode::Modifier(m) => m.kind.clone(),
+            n => panic!("`{q}` unexpected: {n:?}"),
+        }
+    }
+
+    #[test]
+    fn dupe_family_parses_every_key() {
+        for (src, want) in [
+            ("dupe:", DupeKey::NameSize),
+            ("dupe:name-size", DupeKey::NameSize),
+            ("dupe:name", DupeKey::Name),
+            ("dupe:size", DupeKey::Size),
+            ("name-dupe:", DupeKey::Name),
+            ("size-dupe:", DupeKey::Size),
+        ] {
+            match modifier_of(src) {
+                ModifierKind::Dupe(k) => assert_eq!(k, want, "`{src}`"),
+                k => panic!("`{src}` not Dupe: {k:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn dupe_rejects_an_unknown_key() {
+        match parse("dupe:foo") {
+            Err(ParseError::InvalidModifierValue { name, .. }) => assert_eq!(name, "dupe"),
+            other => panic!("expected InvalidModifierValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_parses_every_scope() {
+        for (src, want) in [
+            ("empty:", EmptyKind::Any),
+            ("empty:file", EmptyKind::File),
+            ("empty:files", EmptyKind::File),
+            ("empty:folder", EmptyKind::Folder),
+            ("empty:dirs", EmptyKind::Folder),
+            ("empty:roots", EmptyKind::Roots),
+        ] {
+            match modifier_of(src) {
+                ModifierKind::Empty(k) => assert_eq!(k, want, "`{src}`"),
+                k => panic!("`{src}` not Empty: {k:?}"),
+            }
+        }
+        assert!(matches!(
+            parse("empty:sometimes"),
+            Err(ParseError::InvalidModifierValue { .. })
+        ));
+    }
+
+    #[test]
+    fn count_modifiers_take_comparators() {
+        for (src, want_op, want_n) in [
+            ("child-count:0", SizeOp::Eq, 0u64),
+            ("child-count:>3", SizeOp::Gt, 3),
+            ("childcount:>=3", SizeOp::Ge, 3),
+            ("descendant-count:<10", SizeOp::Lt, 10),
+            ("descendantcount:<=10", SizeOp::Le, 10),
+        ] {
+            match modifier_of(src) {
+                ModifierKind::ChildCount { op, count }
+                | ModifierKind::DescendantCount { op, count } => {
+                    assert_eq!((op, count), (want_op, want_n), "`{src}`");
+                }
+                k => panic!("`{src}` not a count modifier: {k:?}"),
+            }
+        }
+        assert!(matches!(
+            parse("child-count:many"),
+            Err(ParseError::InvalidModifierValue { .. })
+        ));
+    }
+
+    #[test]
+    fn hyphenated_terms_that_are_not_modifiers_stay_literal() {
+        // Standing Rule #8 guard for the widened key charset: only the
+        // four names in `HYPHENATED_MODIFIERS` may take a `-`.
+        for q in ["re-name:v2", "x-y:1"] {
+            match pp(q).root() {
+                QueryNode::Text(_) => {}
+                n => panic!("`{q}` should be Text, got {n:?}"),
             }
         }
     }

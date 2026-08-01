@@ -76,6 +76,7 @@ const FALLBACK: SettingsState = {
   default_https_endpoint: { url: "", token_fingerprint: "" },
   default_lens_visibility: { filename: true, content: true, audio: true, similarity: true },
   default_lens_result_limits: { filename: 200, content: 50, audio: 20, similarity: 10 },
+  custom_commands: [],
   // §8.4
   fast_ascii_search: true,
   match_path_when_term_contains_separator: true,
@@ -305,6 +306,7 @@ const PANEL_KEYS: Record<PanelId, (keyof SettingsState)[]> = {
     "preview_pane"
   ],
   "general.context_menu": ["context_menu"],
+  "general.custom_commands": ["custom_commands"],
   "general.fonts_colors": ["fonts_and_colors"],
   "general.keyboard": ["keyboard", "hotkey"],
   history: [],

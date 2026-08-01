@@ -259,7 +259,7 @@ async fn run_query_streaming(
             return timings;
         }
         let lens_started = std::time::Instant::now();
-        let hits = match (lens, &parsed) {
+        let (hits, groups) = match (lens, &parsed) {
             (LensId::Filename, Ok(query)) => {
                 filename_lens_hits(
                     handle,
@@ -273,7 +273,7 @@ async fn run_query_streaming(
             // executor wiring; for Phase 12 we surface an empty batch
             // that the UI's lens-grouped renderer treats as "no hits"
             // rather than as an error. Phase 13 lights up these paths.
-            _ => Vec::new(),
+            _ => (Vec::new(), Vec::new()),
         };
         let elapsed_ms = lens_started.elapsed().as_secs_f32() * 1000.0;
         match lens {
@@ -287,6 +287,7 @@ async fn run_query_streaming(
             lens,
             hits,
             done: true,
+            groups,
         };
         if let Err(e) = sink
             .send(freally_rpc::Notification::new(
@@ -323,18 +324,33 @@ async fn filename_lens_hits(
     state: &DaemonState,
     query: &freally_query::Query,
     limit: u32,
-) -> Vec<freally_rpc::QueryHit> {
+) -> (Vec<freally_rpc::QueryHit>, Vec<freally_rpc::HitGroup>) {
     let _ = handle;
     let opts = freally_query::ExecOpts {
         limit: limit as usize,
         ..Default::default()
     };
     let result = freally_query::execute(state.index.as_ref(), query, opts);
-    let rows = match result {
-        Ok(rs) => rs.collect(),
-        Err(_) => return Vec::new(),
+    let (rows, groups) = match result {
+        Ok(rs) => {
+            // SRC-M07: read the clusters before `collect()` consumes
+            // the set — group offsets index into these same rows.
+            let groups: Vec<freally_rpc::HitGroup> = rs
+                .dupe_groups
+                .iter()
+                .map(|g| freally_rpc::HitGroup {
+                    name: g.key.name.clone(),
+                    size: g.key.size,
+                    start: g.start as u32,
+                    len: g.len as u32,
+                })
+                .collect();
+            (rs.collect(), groups)
+        }
+        Err(_) => return (Vec::new(), Vec::new()),
     };
-    rows.into_iter()
+    let hits = rows
+        .into_iter()
         .map(|row| freally_rpc::QueryHit {
             file_id: row.file_id.to_string(),
             lens: LensId::Filename,
@@ -356,7 +372,8 @@ async fn filename_lens_hits(
             // can render folder icons (0x10 = FILE_ATTRIBUTE_DIRECTORY).
             attrs: row.attrs as u32,
         })
-        .collect()
+        .collect();
+    (hits, groups)
 }
 
 // ---------- index ----------

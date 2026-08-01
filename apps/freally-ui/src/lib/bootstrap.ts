@@ -24,8 +24,13 @@ import { searchOptsStore, type SearchOptKey } from "./stores/search_opts.svelte"
 import { typeFilterStore, type TypeFilterId } from "./stores/type_filter.svelte";
 import { applyFontsAndColors } from "./stores/fonts_apply.svelte";
 import { settingsDialog } from "./stores/settings_dialog.svelte";
+import { fileListStore } from "./stores/file_list.svelte";
+import { refineStore } from "./stores/refine.svelte";
+import { toastStore } from "./stores/toast.svelte";
 import * as files from "./ipc/files";
+import * as fileLists from "./ipc/file_lists";
 import * as indexIpc from "./ipc/index_api";
+import { t } from "./i18n/t";
 
 let booted = false;
 let keyboardBound = false;
@@ -224,12 +229,24 @@ function registerHandlers() {
     dialogsStore.open("settings");
   });
   registry.register("file.open_file_list", async () => {
-    dialogsStore.open("settings");
+    // SRC-M03: load an `.efu` (or NDJSON / JSON / TXT) list and search
+    // it in place of the live index — that is how a catalogue of an
+    // unplugged drive stays searchable. The backend opens the dialog
+    // and reads the file; no path passes through this layer.
+    try {
+      const count = await fileListStore.load();
+      if (count === null) return; // dialog dismissed
+      await resultsStore.run(queryStore.source);
+      toastStore.show(t("toast-file-list-opened", { name: fileListStore.label, count }));
+    } catch (e) {
+      console.warn("[cmd] file.open_file_list:", e);
+      toastStore.error(t("toast-file-list-open-failed", { error: String(e) }));
+    }
   });
   registry.register("file.close_file_list", async () => {
-    // No file list active in Phase 11 — clear the result set.
-    await queryStore.setSource("");
-    await resultsStore.run("");
+    if (!fileListStore.active) return;
+    fileListStore.close();
+    await resultsStore.run(queryStore.source);
   });
   registry.register("file.close", async () => {
     try {
@@ -239,29 +256,30 @@ function registerHandlers() {
     }
   });
   registry.register("file.export_results", async () => {
-    // Phase 11: serialize the current result set to a JSON file via the
-    // dialog plugin's save_dialog. The user-chosen path is whitelisted on
-    // the Rust side (the OS dialog is the trust boundary). Phase 12 lands
-    // the full export pipeline (CSV / Freally Bundle).
+    // SRC-M03: the format follows the extension the user picks in the
+    // save dialog — `.efu` for Everything interop, `.csv` for a
+    // spreadsheet, `.m3u8` for a player, `.ndjson` for a script. The
+    // backend runs that dialog and writes to the path it read from it;
+    // a destination routed through this layer would be one the backend
+    // has to take our word for.
     try {
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-      const path = await save({
-        defaultPath: "freally-results.json",
-        filters: [{ name: "JSON", extensions: ["json"] }]
-      });
-      if (!path) return;
-      // Whitelist the user-chosen path so subsequent file-ops on it pass
-      // the known-paths gate.
-      await invoke("files_whitelist_user_chosen", { path });
-      const payload = {
-        source: queryStore.source,
-        timings: resultsStore.timings,
-        batches: resultsStore.batches
-      };
-      await writeTextFile(path, JSON.stringify(payload, null, 2));
+      // `visibleHits`, not every batch: exporting rows the user has
+      // refined off the screen would be a surprise.
+      const hits = resultsStore.visibleHits;
+      const summary = await fileLists.exportList(hits);
+      if (!summary.saved) return;
+      toastStore.show(
+        summary.lossy
+          ? t("toast-export-lossy", {
+              written: summary.written,
+              total: hits.length,
+              format: summary.format
+            })
+          : t("toast-export-done", { written: summary.written, format: summary.format })
+      );
     } catch (e) {
       console.warn("[cmd] file.export_results:", e);
+      toastStore.error(t("toast-export-failed", { error: String(e) }));
     }
   });
   registry.register("file.export_index_bundle", async () => {
@@ -305,12 +323,14 @@ function registerHandlers() {
     }
   });
   registry.register("edit.select_all", async () => {
-    const ids = resultsStore.batches.flatMap((b) => b.hits.map((h) => h.file_id));
-    selectionStore.selectAll(ids);
+    // Select what is on screen, which after a refinement is not the
+    // same as every hit the daemon returned.
+    selectionStore.selectAll(resultsStore.visibleHits.map((h) => h.file_id));
   });
   registry.register("edit.invert_selection", async () => {
-    const all = resultsStore.batches.flatMap((b) => b.hits.map((h) => h.file_id));
-    const next = all.filter((id) => !selectionStore.has(id));
+    const next = resultsStore.visibleHits
+      .map((h) => h.file_id)
+      .filter((id) => !selectionStore.has(id));
     selectionStore.selectAll(next);
   });
 
@@ -475,6 +495,12 @@ function registerHandlers() {
     registry.register(id as CommandId, async () => searchOptsStore.toggle(key));
   }
   registry.register("search.advanced", async () => dialogsStore.open("settings"));
+  registry.register("search.within_results", async () => {
+    // SRC-M02: open the refine bar and let it take focus. Pressing the
+    // shortcut again while it is open re-focuses rather than closing —
+    // the chips are the state, the bar is just where you type.
+    refineStore.show();
+  });
   registry.register("search.add_to_filters", async () => {
     if (queryStore.source.trim()) {
       await bookmarksStore.add(`Filter: ${queryStore.source.slice(0, 60)}`, queryStore.source);

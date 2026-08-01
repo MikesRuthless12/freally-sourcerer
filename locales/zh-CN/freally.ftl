@@ -788,3 +788,65 @@ opt-log-trace = 跟踪
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = 更多 Freally 应用…
 moreapps-title = 更多 Freally 应用
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+# Machine-translated draft — pending the pre-v1.0 reviewer pass.
+dupe-group-summary = { $count } 个副本 · { $bytes }
+status-file-list = 文件列表：{ $name }
+status-file-list-truncated = 仅显示前 5000 条
+refine-label = 在结果中
+refine-input-label = 缩小当前结果
+refine-placeholder = 输入以缩小范围，回车添加
+refine-count = { $total } 中的 { $shown }
+refine-remove-chip = 移除筛选 { $term }
+refine-clear = 清除
+refine-close = 关闭筛选栏
+menu-search-within-results = 在结果中搜索
+ctx-menu-label = 结果操作
+ctx-open = 打开
+ctx-reveal = 在文件管理器中显示
+ctx-view-hits = 查看上下文中的匹配
+ctx-open-with = 打开方式
+ctx-open-with-none = 没有已注册的应用
+ctx-loading = 加载中…
+ctx-copy-contents = 复制内容
+ctx-copy-as-file = 作为文件复制
+ctx-copy-path-list = 复制路径列表
+ctx-quote-lines = 每行一个
+ctx-quote-quoted = 带引号
+ctx-quote-space = 空格分隔
+ctx-quote-escaped = Shell 转义
+ctx-terminal-here = 在此打开终端
+verb-failed = { $verb } 失败：{ $error }
+hitviewer-title = { $name } 中的匹配
+hitviewer-no-matches = 没有匹配
+hitviewer-match-position = 第 { $current } / { $total } 个匹配
+hitviewer-prev = 上一个
+hitviewer-next = 下一个
+hitviewer-loading = 正在提取…
+hitviewer-extractor = 由 { $id } 提取
+hitviewer-truncated = 文档已截断以便显示
+hitviewer-keys = F3 下一个 · Shift+F3 上一个 · Esc 关闭
+close = 关闭
+toast-dismiss = 关闭
+toast-file-list-opened = 已打开 { $name } — { $count } 条
+toast-file-list-open-failed = 无法打开文件列表：{ $error }
+toast-export-done = 已将 { $written } 条结果导出为 { $format }
+toast-export-lossy = 已将 { $total } 条结果中的 { $written } 条导出为 { $format }
+toast-export-failed = 导出失败：{ $error }
+toast-copied-paths = 已复制 { $count } 个路径
+toast-copied-contents = 已复制 { $name } 的内容
+toast-copied-files = 已复制 { $count } 个文件
+settings-node-custom-commands = 自定义命令
+settings-custom-commands-hint = 在这里添加的命令会出现在结果的右键菜单中。参数中可使用 { "{" }path{ "}" }、{ "{" }dir{ "}" }、{ "{" }name{ "}" }、{ "{" }stem{ "}" } 和 { "{" }ext{ "}" }。
+settings-custom-commands-empty = 还没有自定义命令。
+settings-custom-commands-unnamed = 未命名命令
+settings-custom-commands-name = 名称
+settings-custom-commands-program = 程序
+settings-custom-commands-args = 参数
+settings-custom-commands-extensions = 仅用于扩展名
+settings-custom-commands-add = 添加命令

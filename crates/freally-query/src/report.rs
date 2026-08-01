@@ -181,6 +181,10 @@ pub enum ModifierDetail {
     AudioRate { op: String, hz: u32 },
     AudioSilence { op: String, ratio: f32 },
     AudioDynamicRange { op: String, lu: f32 },
+    Empty { scope: String },
+    ChildCount { op: String, count: u64 },
+    DescendantCount { op: String, count: u64 },
+    Dupe { key: String },
     Reserved { value: String },
 }
 
@@ -336,7 +340,10 @@ fn classify_word_kind(lex: &str, next: Option<&crate::parser::Token>) -> TokenKi
     if let Some(colon) = lex.find(':') {
         let key = &lex[..colon];
         let val = &lex[colon + 1..];
-        if !key.is_empty() && key.chars().all(|c| c.is_ascii_alphabetic() || c == '_') {
+        if !key.is_empty()
+            && (key.chars().all(|c| c.is_ascii_alphabetic() || c == '_')
+                || crate::parser::is_hyphenated_modifier(key))
+        {
             // `regex:<pattern>` is a regex term, not a modifier.
             if key.eq_ignore_ascii_case("regex") {
                 return TokenKind::Regex;
@@ -496,6 +503,10 @@ fn modifier_name(kind: &ModifierKind) -> &'static str {
             AudioPredicate::Silence { .. } => "silence",
             AudioPredicate::DynamicRange { .. } => "dr",
         },
+        ModifierKind::Empty(_) => "empty",
+        ModifierKind::ChildCount { .. } => "child-count",
+        ModifierKind::DescendantCount { .. } => "descendant-count",
+        ModifierKind::Dupe(k) => k.as_str(),
         ModifierKind::Reserved { .. } => "reserved",
     }
 }
@@ -590,6 +601,20 @@ impl From<&ModifierKind> for ModifierDetail {
                     op: op_str(*op).to_string(),
                     lu: *lu,
                 },
+            },
+            ModifierKind::Empty(kind) => ModifierDetail::Empty {
+                scope: kind.as_str().to_string(),
+            },
+            ModifierKind::ChildCount { op, count } => ModifierDetail::ChildCount {
+                op: op_str(*op).to_string(),
+                count: *count,
+            },
+            ModifierKind::DescendantCount { op, count } => ModifierDetail::DescendantCount {
+                op: op_str(*op).to_string(),
+                count: *count,
+            },
+            ModifierKind::Dupe(k) => ModifierDetail::Dupe {
+                key: k.as_str().to_string(),
             },
             ModifierKind::Reserved { value, .. } => ModifierDetail::Reserved {
                 value: value.clone(),

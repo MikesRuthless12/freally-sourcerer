@@ -32,6 +32,7 @@
 pub mod client;
 pub mod dto;
 pub mod error;
+pub mod filelist;
 pub mod frame;
 pub mod jsonrpc;
 pub mod path;
@@ -42,6 +43,10 @@ pub mod transport;
 pub use client::{Client, ClientHandle, NotificationStream};
 pub use dto::*;
 pub use error::{RpcError, RpcResult};
+pub use filelist::{
+    EFU_HEADER, FileListEntry, FileListError, FileListFormat, export as export_file_list,
+    import as import_file_list,
+};
 pub use frame::{FrameError, FrameReader, FrameWriter, MAX_FRAME_BYTES};
 pub use jsonrpc::{
     ErrorObject, JSONRPC_VERSION, Notification, Request, RequestId, Response, ResponseEnvelope,

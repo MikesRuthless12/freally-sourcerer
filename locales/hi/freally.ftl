@@ -788,3 +788,65 @@ opt-log-trace = ट्रेस
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = और Freally ऐप्स…
 moreapps-title = और Freally ऐप्स
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+# Machine-translated draft — pending the pre-v1.0 reviewer pass.
+dupe-group-summary = { $count } प्रतियाँ · { $bytes }
+status-file-list = फ़ाइल सूची: { $name }
+status-file-list-truncated = पहली 5,000 प्रविष्टियाँ दिखाई जा रही हैं
+refine-label = परिणामों में
+refine-input-label = मौजूदा परिणाम सीमित करें
+refine-placeholder = सीमित करने के लिए लिखें, जोड़ने के लिए Enter
+refine-count = { $total } में से { $shown }
+refine-remove-chip = { $term } फ़िल्टर हटाएँ
+refine-clear = साफ़ करें
+refine-close = परिष्करण पट्टी बंद करें
+menu-search-within-results = परिणामों में खोजें
+ctx-menu-label = परिणाम क्रियाएँ
+ctx-open = खोलें
+ctx-reveal = फ़ाइल प्रबंधक में दिखाएँ
+ctx-view-hits = मिलान संदर्भ सहित देखें
+ctx-open-with = इससे खोलें
+ctx-open-with-none = कोई पंजीकृत अनुप्रयोग नहीं
+ctx-loading = लोड हो रहा है…
+ctx-copy-contents = सामग्री कॉपी करें
+ctx-copy-as-file = फ़ाइल के रूप में कॉपी करें
+ctx-copy-path-list = पथ सूची कॉपी करें
+ctx-quote-lines = प्रति पंक्ति एक
+ctx-quote-quoted = उद्धरण चिह्नों में
+ctx-quote-space = स्पेस से अलग
+ctx-quote-escaped = शेल के लिए एस्केप
+ctx-terminal-here = यहाँ टर्मिनल खोलें
+verb-failed = { $verb } विफल: { $error }
+hitviewer-title = { $name } में मिलान
+hitviewer-no-matches = कोई मिलान नहीं
+hitviewer-match-position = { $total } में से मिलान { $current }
+hitviewer-prev = पिछला
+hitviewer-next = अगला
+hitviewer-loading = निकाला जा रहा है…
+hitviewer-extractor = { $id } द्वारा निकाला गया
+hitviewer-truncated = प्रदर्शन हेतु दस्तावेज़ छोटा किया गया
+hitviewer-keys = F3 अगला · Shift+F3 पिछला · Esc बंद
+close = बंद करें
+toast-dismiss = हटाएँ
+toast-file-list-opened = { $name } खोला गया — { $count } प्रविष्टियाँ
+toast-file-list-open-failed = फ़ाइल सूची नहीं खुल सकी: { $error }
+toast-export-done = { $written } परिणाम { $format } के रूप में निर्यात किए गए
+toast-export-lossy = { $total } में से { $written } परिणाम { $format } के रूप में निर्यात किए गए
+toast-export-failed = निर्यात विफल: { $error }
+toast-copied-paths = { $count } पथ कॉपी किए गए
+toast-copied-contents = { $name } की सामग्री कॉपी की गई
+toast-copied-files = { $count } फ़ाइलें कॉपी की गईं
+settings-node-custom-commands = कस्टम कमांड
+settings-custom-commands-hint = यहाँ जोड़े गए कमांड परिणाम के राइट-क्लिक मेनू में दिखते हैं। तर्कों में { "{" }path{ "}" }, { "{" }dir{ "}" }, { "{" }name{ "}" }, { "{" }stem{ "}" } और { "{" }ext{ "}" } का उपयोग करें।
+settings-custom-commands-empty = अभी कोई कस्टम कमांड नहीं है।
+settings-custom-commands-unnamed = बिना नाम का कमांड
+settings-custom-commands-name = नाम
+settings-custom-commands-program = प्रोग्राम
+settings-custom-commands-args = तर्क
+settings-custom-commands-extensions = केवल इन एक्सटेंशन के लिए
+settings-custom-commands-add = कमांड जोड़ें

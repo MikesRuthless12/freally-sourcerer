@@ -80,6 +80,7 @@ export const COMMAND_IDS = [
   "search.match_diacritics",
   "search.enable_regex",
   "search.advanced",
+  "search.within_results",
   "search.add_to_filters",
   "search.organize_filters",
   "search.filter.everything",
