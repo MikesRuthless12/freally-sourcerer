@@ -578,11 +578,10 @@ registered for a result's type: `SHAssocEnumHandlers` on Windows
 shared MIME database on Linux, and declared bundle document types plus
 `/usr/bin/open -a` on macOS.
 
-**SRC-M05 — advanced copy verbs.** Copy a text file's *contents*
-(bounded at 4 MB); copy the files themselves as OS clipboard file
-objects (`CF_HDROP` on Windows, `NSPasteboard` file URLs on macOS,
-`x-special/gnome-copied-files` plus `text/uri-list` on Linux); and copy
-a multi-selection as a path list in four quoting styles.
+**SRC-M05 — advanced copy verbs.** Copy a text file's *contents*;
+copy the files themselves as OS clipboard file objects (`CF_HDROP`,
+`NSPasteboard` file URLs, `x-special/gnome-copied-files`); and copy a
+multi-selection as a path list in four quoting styles.
 
 *Documented per-OS exception:* Linux has no in-process clipboard that
 survives the writing process exiting, so file-object copy requires
@@ -628,14 +627,13 @@ lockstep; `tests/unit/build_01.test.ts` covers the frontend stores.
 ### Fixed
 
 - **[all platforms]** `KnownPaths` had no writer. Phase 12 moved query
-  hits out of `query_run`'s response and into daemon notifications, and
-  nothing took over registering them — so the registry sat empty and
-  every gated file-op rejected every result row. `daemon.rs` now
-  registers hit paths as the `query:batch` notification passes through.
-- **[all platforms]** `finalize_bootstrap` writes the whole store but
-  did not advance `applied_events`, so a `DirStats` derived during the
-  initial scan stayed cached against the finished index — making
-  `empty:folder` match every directory until the next journal batch.
+  hits into daemon notifications and nothing took over registering
+  them, so every gated file-op rejected every result row. `daemon.rs`
+  registers them as `query:batch` passes through.
+- **[all platforms]** `finalize_bootstrap` did not advance
+  `applied_events`, so a `DirStats` derived mid-scan stayed cached
+  against the finished index — making `empty:folder` match every
+  directory until the next journal batch.
 - **[all platforms]** A `dupe:` in an unsupported position was silently
   stripped whenever another sat at top level (`dupe:name !size-dupe:`
   returned zero hits with no error). The position guard now counts
@@ -644,9 +642,9 @@ lockstep; `tests/unit/build_01.test.ts` covers the frontend stores.
   scanned tree was file-free: every row synthesises a counts entry for
   its parent, so the scan root's own parent looked indexed.
 - **[all platforms]** Negating a predicate the name index cannot decide
-  (`!empty:file`, `!size:>1mb`, `NOT lufs:<-14`) returned zero rows —
-  the name-stage "let it through" convention inverts to a definite
-  reject under `NOT`. Pre-existing; Build 1 made it prominent.
+  (`!empty:file`, `!size:>1mb`) returned zero rows — the name stage's
+  "let it through" convention inverts to a reject under `NOT`.
+  Pre-existing; Build 1 made it prominent.
 - **[all platforms]** The hit viewer located matches in a lowercased
   *copy* of each line while the UI sliced the original, shifting every
   highlight on a line containing `İ`. Offsets now index the original
@@ -657,6 +655,11 @@ lockstep; `tests/unit/build_01.test.ts` covers the frontend stores.
 - **[Windows]** The COM guard called `CoUninitialize` even when
   `CoInitializeEx` returned `RPC_E_CHANGED_MODE` — tearing COM down
   under whoever did initialize that thread.
+- **[CI]** `vendor/freally-central` (the More Freally apps panel) was a
+  submodule pointing at a repository that no longer exists, so every
+  run on every OS failed at *checkout*. The panel is vendored as plain
+  source and both workflows set `submodules: false`, so the repository
+  builds from a clone with nothing else required.
 
 ### Security
 
