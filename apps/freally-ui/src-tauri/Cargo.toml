@@ -1,6 +1,6 @@
 [package]
 name = "freally-ui"
-version = "0.20.1"
+version = "0.21.0"
 edition = "2024"
 rust-version = "1.85"
 license = "LicenseRef-MikeWeaver-Proprietary-AllRightsReserved"
@@ -38,7 +38,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 trash = "5"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
+thiserror = "2"
 parking_lot = "0.12"
+freally-extractors = { path = "../../../crates/freally-extractors" }
 freally-query = { path = "../../../crates/freally-query" }
 freally-rpc = { path = "../../../crates/freally-rpc" }
 base64 = "0.22"
@@ -49,7 +51,11 @@ windows = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Storage_FileSystem",
+    # SRC-M04 / SRC-M05: SHAssocEnumHandlers + OleSetClipboard.
+    "Win32_System_Com",
+    "Win32_System_Ole",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

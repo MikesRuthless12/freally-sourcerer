@@ -536,6 +536,154 @@ makes the desktop app pleasant to run repeatedly during development.
 
 ---
 
+## [0.21.0] — Build 1 · Must-Have stable gate, slice 1 of 3 (2026-07-31)
+
+The first of the three Must-Have builds: SRC-M01 … SRC-M08.
+Cross-platform unless a per-OS note says otherwise. Full feature
+documentation is in `docs/documentation.html`.
+
+### Added
+
+**SRC-M01 — hit-in-context content viewer.** A full-document view for
+any file the extractor pipeline can read: every match highlighted,
+numbered lines, a match-count badge, `F3` / `Shift+F3` between matches,
+and jump-to-first-hit on open. Reached from the new result right-click
+menu. Highlighted terms are the query's literal and quoted atoms plus
+any active refinement chips. Bounded at 20,000 lines, and says so.
+
+**SRC-M02 — search within results.** `Ctrl+Shift+F` opens a
+second-stage box that narrows the set already on screen instead of
+re-running the query. Each term becomes a removable chip, so
+overshooting costs one click rather than a retype. A term containing a
+path separator matches the full path, otherwise the file name. Export
+and Select All read the refined set, so they never act on rows a chip
+scrolled away. *(Organize Filters moves to `Ctrl+Shift+O`.)*
+
+**SRC-M03 — Everything-interop import/export.** `File → Export
+Results…` picks its format from the extension chosen in the save
+dialog: `.efu`, `.csv`, `.txt`, `.m3u` / `.m3u8`, `.ndjson`, `.json`.
+`.efu` is byte-compatible with voidtools' Everything — the literal
+`Filename,Size,Date Modified,Date Created,Attributes` header, CRLF rows,
+RFC-4180 quoting, and Windows FILETIME ticks converted at the boundary,
+so a list written on Linux or macOS loads into Everything on Windows
+unchanged. Playlist exports carry audio only and say how many of how
+many rows were written. `File → Open File List…` loads a list and
+searches it *in place of* the live index — the answer to "which drive
+was that file on?" for an unplugged volume. Matching over a loaded list
+is name-or-path substring, not the DSL.
+
+**SRC-M04 — Open with…** Per-OS enumeration of the applications
+registered for a result's type: `SHAssocEnumHandlers` on Windows
+(Explorer's own source), `.desktop` `MimeType=` matching against the
+shared MIME database on Linux, and declared bundle document types plus
+`/usr/bin/open -a` on macOS.
+
+**SRC-M05 — advanced copy verbs.** Copy a text file's *contents*;
+copy the files themselves as OS clipboard file objects (`CF_HDROP`,
+`NSPasteboard` file URLs, `x-special/gnome-copied-files`); and copy a
+multi-selection as a path list in four quoting styles.
+
+*Documented per-OS exception:* Linux has no in-process clipboard that
+survives the writing process exiting, so file-object copy requires
+`wl-clipboard` or `xclip`, and says so when neither is installed.
+
+**SRC-M06 — terminal-here and custom commands.** "Open terminal here"
+launches the platform's terminal in the result's folder. User-defined
+commands live in **Settings → General → Custom Commands** with
+`{path}` / `{dir}` / `{name}` / `{stem}` / `{ext}` placeholders and
+optional per-extension scoping. Every expansion becomes one `argv` slot.
+
+**SRC-M07 — the `dupe:` family goes live.** `dupe:` (same name *and*
+size), `name-dupe:` / `dupe:name`, and `size-dupe:` / `dupe:size` now
+execute instead of parsing into `ModifierKind::Reserved`. Detection runs
+straight off the index — no hashing, which is SRC-N22's job. Matching
+rows cluster under a group header. Directories never enter a group. Like
+`similar:`, the family is root-position-only.
+
+*Standing Rule #8 note:* `dupe:foo` used to parse then fail at execute
+time. It now fails at *parse* time with `InvalidModifierValue` — the
+same promotion the audio modifiers got in Phase 9. No query that ever
+returned results changed behaviour.
+
+**SRC-M08 — emptiness modifiers.** `empty:` (bare, or scoped with
+`empty:file` / `empty:folder` / `empty:roots`), `child-count:` and
+`descendant-count:`, answered from index data with no filesystem walk.
+`empty:roots` reports the *top* of each folder chain holding no files at
+any depth; the count modifiers only ever match directories. New
+`freally_index::DirStats` derives the index's directory shape in one
+pass over `files.db`, memoized against the applied-event counter.
+
+**Supporting UI.** A result right-click menu, a main-window toast
+surface, and the refinement bar — all keyboard-reachable.
+
+**Tests.** `tests/smoke/build_01_dsl.rs` and `build_01_interop.rs` gate
+the two modifier families and the `.efu` wire format; unit tests cover
+`DirStats`, the codecs, quoting, placeholder expansion, `.desktop`
+parsing, hit location, the provenance gate, and the cross-crate table
+lockstep; `tests/unit/build_01.test.ts` covers the frontend stores.
+
+**i18n.** 55 new keys across all 18 locales; `xtask i18n-lint` green.
+
+### Fixed
+
+- **[all platforms]** `KnownPaths` had no writer. Phase 12 moved query
+  hits into daemon notifications and nothing took over registering
+  them, so every gated file-op rejected every result row. `daemon.rs`
+  registers them as `query:batch` passes through.
+- **[all platforms]** `finalize_bootstrap` did not advance
+  `applied_events`, so a `DirStats` derived mid-scan stayed cached
+  against the finished index — making `empty:folder` match every
+  directory until the next journal batch.
+- **[all platforms]** A `dupe:` in an unsupported position was silently
+  stripped whenever another sat at top level (`dupe:name !size-dupe:`
+  returned zero hits with no error). The position guard now counts
+  nodes rather than checking for absence.
+- **[all platforms]** `empty:roots` reported nothing when the whole
+  scanned tree was file-free: every row synthesises a counts entry for
+  its parent, so the scan root's own parent looked indexed.
+- **[all platforms]** Negating a predicate the name index cannot decide
+  (`!empty:file`, `!size:>1mb`) returned zero rows — the name stage's
+  "let it through" convention inverts to a reject under `NOT`.
+  Pre-existing; Build 1 made it prominent.
+- **[all platforms]** The hit viewer located matches in a lowercased
+  *copy* of each line while the UI sliced the original, shifting every
+  highlight on a line containing `İ`. Offsets now index the original
+  text, and needle and haystack fold identically.
+- **[Linux]** A failed `wl-copy` (running under X11) reported success,
+  so "copy as file" claimed to work, left the clipboard untouched, and
+  never fell through to `xclip`.
+- **[Windows]** The COM guard called `CoUninitialize` even when
+  `CoInitializeEx` returned `RPC_E_CHANGED_MODE` — tearing COM down
+  under whoever did initialize that thread.
+- **[CI]** `vendor/freally-central` (the More Freally apps panel) was a
+  submodule pointing at a repository that no longer exists, so every
+  run on every OS failed at *checkout*. The panel is vendored as plain
+  source and both workflows set `submodules: false`, so the repository
+  builds from a clone with nothing else required.
+
+### Security
+
+- **[all platforms]** `wasmtime` 44.0.1 → 47.0.3 in the custom-extractor
+  host, closing **RUSTSEC-2026-0222** (type indices can be mixed up
+  between engines). Reachable only through a user-installed WASM
+  extractor, but `cargo-deny` gates the build on it either way.
+- **[all platforms]** File-list export and import now open their OS
+  dialogs **in Rust** and act on the path they read back. Routing the
+  destination through the webview meant `file_list_export` — Build 1's
+  first *write*-side command — would overwrite any path the frontend
+  named, and the registry entry it checked against was one the frontend
+  could mint. `KnownPaths` also gained a `Provenance` dimension so a
+  frontend-reachable grant can never confer write permission.
+- **[all platforms]** `run_custom_command` takes a command **id** and
+  resolves it against the backend's persisted settings. Accepting the
+  `program` field over IPC made it an arbitrary-process-execution
+  primitive: passing arguments through `Command::arg` is no protection
+  when the caller also chooses the executable.
+
+See `docs/SECURITY.md` for the full threat-model delta.
+
+---
+
 ## [0.20.1] — 2026-07-10
 
 A patch release with no new features. It exists because v0.20.0 cannot fix itself:

@@ -12,9 +12,24 @@
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as ipcQuery from "../ipc/query";
-import type { LensId, LensTimings, QueryBatch, QueryDone, QueryHit } from "../ipc/types";
+import type {
+  HitGroup,
+  LensId,
+  LensTimings,
+  QueryBatch,
+  QueryDone,
+  QueryHit
+} from "../ipc/types";
+import { fileListStore } from "./file_list.svelte";
+import { refineStore } from "./refine.svelte";
+import { selectionStore } from "./selection.svelte";
 import { settingsStore } from "./settings.svelte";
 import { typeFilterStore } from "./type_filter.svelte";
+
+/** Lens render order, mirrored from `ResultList`. Held here too so
+ *  `visibleHits` walks the lenses in the order they appear on screen —
+ *  an export should come out in reading order. */
+const LENS_ORDER: LensId[] = ["filename", "content", "audio", "similarity"];
 
 interface RunningQuery {
   handle: string;
@@ -30,9 +45,24 @@ class ResultsStore {
   private seq = 0;
   private batchUnlisten: UnlistenFn | null = null;
   private doneUnlisten: UnlistenFn | null = null;
+  private listenersPending = false;
 
   async ensureListeners() {
+    // Claim the slot before awaiting: two `run()` calls can interleave
+    // (each awaits `cancelRunning()` first), and both would otherwise
+    // see `null`, both register, and the second assignment would leak
+    // the first unlisten handle — leaving every batch processed twice.
+    if (this.listenersPending) return;
     if (this.batchUnlisten && this.doneUnlisten) return;
+    this.listenersPending = true;
+    try {
+      await this.registerListeners();
+    } finally {
+      this.listenersPending = false;
+    }
+  }
+
+  private async registerListeners() {
     if (!this.batchUnlisten) {
       this.batchUnlisten = await listen<QueryBatch>("query:batch", (e) => {
         const batch = e.payload;
@@ -61,17 +91,23 @@ class ResultsStore {
 
   async run(source: string) {
     const my = ++this.seq;
+    // SRC-M03: an imported file list catalogues a volume the daemon
+    // has never indexed, so it answers its own queries. Cancel any
+    // in-flight daemon work first — a stale batch arriving afterwards
+    // would overwrite the list's results.
+    if (fileListStore.active) {
+      await this.cancelRunning();
+      if (my !== this.seq) return;
+      const hits = fileListStore.search(source);
+      this.batches = [{ handle: "file-list", lens: "filename", hits, done: true }];
+      selectionStore.clear();
+      this.timings = null;
+      this.lastQueryMs = 0;
+      return;
+    }
     // Cancel + drop the previous in-flight handle so the daemon doesn't
     // grow per-keystroke memory.
-    if (this.running) {
-      const prior = this.running.handle;
-      this.running = null;
-      try {
-        await ipcQuery.cancel(prior);
-      } catch (e) {
-        console.warn("[results] cancel-prior failed:", e);
-      }
-    }
+    await this.cancelRunning();
     // Compose the actual query sent to the daemon based on the
     // multi-select type-filter set + the user's typed source:
     //   - No types selected → user explicitly disabled everything; show 0.
@@ -117,8 +153,13 @@ class ResultsStore {
       return;
     }
     // Empty the batches as soon as a new query starts so the UI doesn't
-    // flash stale results between keystrokes.
+    // flash stale results between keystrokes. The selection goes with
+    // them: ids from the old result set would keep inflating the
+    // status bar's "N selected" against a set that no longer holds
+    // them, while the byte total and the copy verbs — which do filter
+    // against the current batches — reported something different.
     this.batches = [];
+    selectionStore.clear();
     this.timings = null;
     this.running = { handle, source, startedAt: t0 };
   }
@@ -130,13 +171,72 @@ class ResultsStore {
     this.running = null;
   }
 
-  get total(): number {
-    return this.batches.reduce((n, b) => n + b.hits.length, 0);
+  /** Drop the in-flight handle, tolerating a daemon that has already
+   *  forgotten it. Clears `running` before awaiting so a late batch
+   *  for the old handle is discarded by the listener's guard. */
+  private async cancelRunning() {
+    const prior = this.running?.handle;
+    if (!prior) return;
+    this.running = null;
+    try {
+      await ipcQuery.cancel(prior);
+    } catch (e) {
+      console.warn("[results] cancel-prior failed:", e);
+    }
   }
 
-  hitsForLens(lens: LensId): QueryHit[] {
-    const b = this.batches.find((x) => x.lens === lens);
-    return b ? b.hits : [];
+  /** Every hit currently on screen, across all lenses. The single
+   *  answer to "what is the user looking at" — export, select-all, and
+   *  the status-bar count all read it, so they cannot disagree.
+   *
+   *  Goes through `viewForLens`, which is the same function the lens
+   *  sections render from: that is what makes "visible" mean visible
+   *  rather than "returned by the daemon". Reading the batches directly
+   *  would count hits in a lens the user has switched off, and
+   *  duplicate-cluster members that grouping dropped. */
+  get visibleHits(): QueryHit[] {
+    return LENS_ORDER.flatMap((lens) =>
+      settingsStore.state.lens_visibility[lens] === false ? [] : this.viewForLens(lens).hits
+    );
+  }
+
+  get total(): number {
+    return this.visibleHits.length;
+  }
+
+  /** Hits the daemon returned, before refinement — but still only for
+   *  lenses that are on screen. The refine bar shows both so
+   *  "1,204 → 12" reads as a narrowing, not a new search. */
+  get totalUnrefined(): number {
+    return this.batches.reduce(
+      (n, b) => n + (settingsStore.state.lens_visibility[b.lens] === false ? 0 : b.hits.length),
+      0
+    );
+  }
+
+  /** What a lens section should render: hits narrowed by the active
+   *  refinement chips, with any duplicate clusters re-offset to match.
+   *  Groups are rebuilt rather than passed through because their
+   *  `start`/`len` index into the *unrefined* rows — reusing them
+   *  after a filter would slice the wrong rows. A cluster that loses
+   *  all but one member stops being a duplicate group and is dropped. */
+  viewForLens(lens: LensId): { hits: QueryHit[]; groups: HitGroup[] } {
+    const batch = this.batches.find((b) => b.lens === lens);
+    const hits = batch?.hits ?? [];
+    const groups = batch?.groups ?? [];
+    if (!refineStore.active) return { hits, groups };
+    if (groups.length === 0) {
+      return { hits: refineStore.apply(hits), groups: [] };
+    }
+    const outHits: QueryHit[] = [];
+    const outGroups: HitGroup[] = [];
+    for (const g of groups) {
+      const kept = refineStore.apply(hits.slice(g.start, g.start + g.len));
+      if (kept.length < 2) continue;
+      outGroups.push({ ...g, start: outHits.length, len: kept.length });
+      outHits.push(...kept);
+    }
+    return { hits: outHits, groups: outGroups };
   }
 }
 

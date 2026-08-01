@@ -9,6 +9,7 @@
   import ResultsPanel from "./panels/ResultsPanel.svelte";
   import ViewPanel from "./panels/ViewPanel.svelte";
   import ContextMenuPanel from "./panels/ContextMenuPanel.svelte";
+  import CustomCommandsPanel from "./panels/CustomCommandsPanel.svelte";
   import FontsAndColorsPanel from "./panels/FontsAndColorsPanel.svelte";
   import KeyboardPanel from "./panels/KeyboardPanel.svelte";
   import HistoryPanel from "./panels/HistoryPanel.svelte";
@@ -81,6 +82,8 @@
             <ViewPanel />
           {:else if settingsDialog.selected === "general.context_menu"}
             <ContextMenuPanel />
+          {:else if settingsDialog.selected === "general.custom_commands"}
+            <CustomCommandsPanel />
           {:else if settingsDialog.selected === "general.fonts_colors"}
             <FontsAndColorsPanel />
           {:else if settingsDialog.selected === "general.keyboard"}

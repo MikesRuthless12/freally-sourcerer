@@ -13,9 +13,11 @@
 //! sub-millisecond keystroke-rate cost we don't need.
 
 pub mod bookmarks;
+pub mod content_view;
 pub mod custom_extractors;
 pub mod excludes;
 pub mod extractors;
+pub mod file_lists;
 pub mod files;
 pub mod folders;
 pub mod history;
@@ -25,4 +27,5 @@ pub mod known_paths;
 pub mod network;
 pub mod query;
 pub mod settings;
+pub mod shell_verbs;
 pub mod volumes;

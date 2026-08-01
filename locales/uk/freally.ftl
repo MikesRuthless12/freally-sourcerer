@@ -788,3 +788,65 @@ opt-log-trace = Trace
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = Інші застосунки Freally…
 moreapps-title = Інші застосунки Freally
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+# Machine-translated draft — pending the pre-v1.0 reviewer pass.
+dupe-group-summary = { $count } копій · { $bytes }
+status-file-list = Список файлів: { $name }
+status-file-list-truncated = Показано перші 5000 записів
+refine-label = У результатах
+refine-input-label = Звузити поточні результати
+refine-placeholder = Введіть, щоб звузити, Enter — додати
+refine-count = { $shown } з { $total }
+refine-remove-chip = Прибрати уточнення { $term }
+refine-clear = Очистити
+refine-close = Закрити панель уточнення
+menu-search-within-results = Шукати в результатах
+ctx-menu-label = Дії з результатом
+ctx-open = Відкрити
+ctx-reveal = Показати у файловому менеджері
+ctx-view-hits = Показати збіги в контексті
+ctx-open-with = Відкрити за допомогою
+ctx-open-with-none = Немає зареєстрованих програм
+ctx-loading = Завантаження…
+ctx-copy-contents = Копіювати вміст
+ctx-copy-as-file = Копіювати як файл
+ctx-copy-path-list = Копіювати список шляхів
+ctx-quote-lines = По одному в рядку
+ctx-quote-quoted = У лапках
+ctx-quote-space = Через пробіл
+ctx-quote-escaped = З екрануванням для оболонки
+ctx-terminal-here = Відкрити термінал тут
+verb-failed = Помилка { $verb }: { $error }
+hitviewer-title = Збіги у { $name }
+hitviewer-no-matches = Збігів немає
+hitviewer-match-position = Збіг { $current } з { $total }
+hitviewer-prev = Назад
+hitviewer-next = Далі
+hitviewer-loading = Видобування…
+hitviewer-extractor = Видобуто засобом { $id }
+hitviewer-truncated = Документ скорочено для показу
+hitviewer-keys = F3 далі · Shift+F3 назад · Esc закрити
+close = Закрити
+toast-dismiss = Сховати
+toast-file-list-opened = Відкрито { $name } — записів: { $count }
+toast-file-list-open-failed = Не вдалося відкрити список файлів: { $error }
+toast-export-done = Експортовано результатів: { $written } у форматі { $format }
+toast-export-lossy = Експортовано { $written } з { $total } результатів у форматі { $format }
+toast-export-failed = Помилка експорту: { $error }
+toast-copied-paths = Скопійовано шляхів: { $count }
+toast-copied-contents = Скопійовано вміст { $name }
+toast-copied-files = Скопійовано файлів: { $count }
+settings-node-custom-commands = Власні команди
+settings-custom-commands-hint = Додані тут команди з’являються в контекстному меню результатів. Використовуйте { "{" }path{ "}" }, { "{" }dir{ "}" }, { "{" }name{ "}" }, { "{" }stem{ "}" } та { "{" }ext{ "}" } в аргументах.
+settings-custom-commands-empty = Власних команд ще немає.
+settings-custom-commands-unnamed = Команда без назви
+settings-custom-commands-name = Назва
+settings-custom-commands-program = Програма
+settings-custom-commands-args = Аргументи
+settings-custom-commands-extensions = Лише для розширень
+settings-custom-commands-add = Додати команду

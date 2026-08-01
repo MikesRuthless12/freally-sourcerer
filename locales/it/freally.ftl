@@ -788,3 +788,65 @@ opt-log-trace = Trace
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = Altre app Freally…
 moreapps-title = Altre app Freally
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+# Machine-translated draft — pending the pre-v1.0 reviewer pass.
+dupe-group-summary = { $count } copie · { $bytes }
+status-file-list = Elenco file: { $name }
+status-file-list-truncated = Mostra le prime 5.000 voci
+refine-label = Nei risultati
+refine-input-label = Restringi i risultati attuali
+refine-placeholder = Digita per restringere, Invio per aggiungere
+refine-count = { $shown } di { $total }
+refine-remove-chip = Rimuovi il filtro { $term }
+refine-clear = Cancella
+refine-close = Chiudi la barra di affinamento
+menu-search-within-results = Cerca nei risultati
+ctx-menu-label = Azioni sul risultato
+ctx-open = Apri
+ctx-reveal = Mostra nel gestore file
+ctx-view-hits = Vedi le corrispondenze nel contesto
+ctx-open-with = Apri con
+ctx-open-with-none = Nessuna applicazione registrata
+ctx-loading = Caricamento…
+ctx-copy-contents = Copia il contenuto
+ctx-copy-as-file = Copia come file
+ctx-copy-path-list = Copia l’elenco dei percorsi
+ctx-quote-lines = Uno per riga
+ctx-quote-quoted = Tra virgolette
+ctx-quote-space = Separati da spazi
+ctx-quote-escaped = Con escape per la shell
+ctx-terminal-here = Apri terminale qui
+verb-failed = { $verb } non riuscito: { $error }
+hitviewer-title = Corrispondenze in { $name }
+hitviewer-no-matches = Nessuna corrispondenza
+hitviewer-match-position = Corrispondenza { $current } di { $total }
+hitviewer-prev = Precedente
+hitviewer-next = Successivo
+hitviewer-loading = Estrazione…
+hitviewer-extractor = Estratto da { $id }
+hitviewer-truncated = Documento troncato per la visualizzazione
+hitviewer-keys = F3 avanti · Maiusc+F3 indietro · Esc chiudi
+close = Chiudi
+toast-dismiss = Ignora
+toast-file-list-opened = Aperto { $name } — { $count } voci
+toast-file-list-open-failed = Impossibile aprire l’elenco file: { $error }
+toast-export-done = Esportati { $written } risultati come { $format }
+toast-export-lossy = Esportati { $written } di { $total } risultati come { $format }
+toast-export-failed = Esportazione non riuscita: { $error }
+toast-copied-paths = Copiati { $count } percorsi
+toast-copied-contents = Copiato il contenuto di { $name }
+toast-copied-files = Copiati { $count } file
+settings-node-custom-commands = Comandi personalizzati
+settings-custom-commands-hint = I comandi aggiunti qui compaiono nel menu contestuale dei risultati. Usa { "{" }path{ "}" }, { "{" }dir{ "}" }, { "{" }name{ "}" }, { "{" }stem{ "}" } ed { "{" }ext{ "}" } negli argomenti.
+settings-custom-commands-empty = Ancora nessun comando personalizzato.
+settings-custom-commands-unnamed = Comando senza nome
+settings-custom-commands-name = Nome
+settings-custom-commands-program = Programma
+settings-custom-commands-args = Argomenti
+settings-custom-commands-extensions = Solo per le estensioni
+settings-custom-commands-add = Aggiungi comando

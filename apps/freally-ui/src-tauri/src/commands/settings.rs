@@ -246,6 +246,9 @@ fn phase_12_default_extras() -> HashMap<String, serde_json::Value> {
         ),
         ("default_lens_visibility", lens_vis.clone()),
         ("default_lens_result_limits", lens_limits),
+        // SRC-M06 user-defined result actions. Empty until the user
+        // adds one in Settings → General → Custom Commands.
+        ("custom_commands", serde_json::json!([])),
         // §8.4 General → Search
         ("fast_ascii_search", true.into()),
         ("match_path_when_term_contains_separator", true.into()),

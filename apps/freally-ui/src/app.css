@@ -41,3 +41,49 @@ body[data-row-mouseover="false"] .row:not(.selected):hover {
   background: transparent;
   color: inherit;
 }
+
+/* ===== Havoc-suite standard: modal backdrop blur =====
+ * Shared treatment for every modal backdrop (`.backdrop` in AboutDialog,
+ * SettingsDialog, ConnectEndpointDialog, OrganizeBookmarksDialog and
+ * FirstRunWizard): content beneath an open dialog is softly blurred and
+ * dimmed while the dialog itself stays crisp. Because the blur lives on
+ * each backdrop, stacked dialogs blur only what sits beneath the TOPMOST
+ * backdrop — a companion dialog above another stays crisp. The dim color
+ * itself stays in each component's scoped `.backdrop` rule; works in both
+ * light and dark themes (the dim is neutral black-alpha). */
+.backdrop {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: backdrop-fade-in 120ms ease-out;
+}
+@keyframes backdrop-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* Honor reduced motion: no blur/opacity transition — appear instantly. */
+@media (prefers-reduced-motion: reduce) {
+  .backdrop {
+    animation: none;
+  }
+}
+/* Plain-dim fallback where backdrop-filter is unsupported (older
+ * WebKitGTK): boost the dim so the dialog still separates from content.
+ * `!important` is required because the component-scoped
+ * `.backdrop.svelte-*` background rules outrank this global one. */
+@supports not (backdrop-filter: blur(1px)) {
+  .backdrop {
+    background: rgba(0, 0, 0, 0.6) !important;
+  }
+}
+/* Honor reduced transparency where supported: drop the blur, plain dim. */
+@media (prefers-reduced-transparency: reduce) {
+  .backdrop {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: rgba(0, 0, 0, 0.6) !important;
+  }
+}

@@ -788,3 +788,65 @@ opt-log-trace = Trace
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = Meer Freally-apps…
 moreapps-title = Meer Freally-apps
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+# Machine-translated draft — pending the pre-v1.0 reviewer pass.
+dupe-group-summary = { $count } kopieën · { $bytes }
+status-file-list = Bestandslijst: { $name }
+status-file-list-truncated = Toont de eerste 5.000 items
+refine-label = Binnen resultaten
+refine-input-label = De huidige resultaten verfijnen
+refine-placeholder = Typ om te verfijnen, Enter om toe te voegen
+refine-count = { $shown } van { $total }
+refine-remove-chip = Verfijning { $term } verwijderen
+refine-clear = Wissen
+refine-close = Verfijnbalk sluiten
+menu-search-within-results = Binnen resultaten zoeken
+ctx-menu-label = Acties voor resultaat
+ctx-open = Openen
+ctx-reveal = Tonen in bestandsbeheer
+ctx-view-hits = Treffers in context bekijken
+ctx-open-with = Openen met
+ctx-open-with-none = Geen geregistreerde toepassingen
+ctx-loading = Laden…
+ctx-copy-contents = Inhoud kopiëren
+ctx-copy-as-file = Als bestand kopiëren
+ctx-copy-path-list = Padlijst kopiëren
+ctx-quote-lines = Eén per regel
+ctx-quote-quoted = Tussen aanhalingstekens
+ctx-quote-space = Gescheiden door spaties
+ctx-quote-escaped = Shell-escaped
+ctx-terminal-here = Terminal hier openen
+verb-failed = { $verb } mislukt: { $error }
+hitviewer-title = Treffers in { $name }
+hitviewer-no-matches = Geen treffers
+hitviewer-match-position = Treffer { $current } van { $total }
+hitviewer-prev = Vorige
+hitviewer-next = Volgende
+hitviewer-loading = Bezig met extraheren…
+hitviewer-extractor = Geëxtraheerd door { $id }
+hitviewer-truncated = Document ingekort voor weergave
+hitviewer-keys = F3 volgende · Shift+F3 vorige · Esc sluiten
+close = Sluiten
+toast-dismiss = Sluiten
+toast-file-list-opened = { $name } geopend — { $count } items
+toast-file-list-open-failed = Kon de bestandslijst niet openen: { $error }
+toast-export-done = { $written } resultaten geëxporteerd als { $format }
+toast-export-lossy = { $written } van { $total } resultaten geëxporteerd als { $format }
+toast-export-failed = Export mislukt: { $error }
+toast-copied-paths = { $count } paden gekopieerd
+toast-copied-contents = Inhoud van { $name } gekopieerd
+toast-copied-files = { $count } bestanden gekopieerd
+settings-node-custom-commands = Aangepaste opdrachten
+settings-custom-commands-hint = Opdrachten die je hier toevoegt verschijnen in het rechtsklikmenu van resultaten. Gebruik { "{" }path{ "}" }, { "{" }dir{ "}" }, { "{" }name{ "}" }, { "{" }stem{ "}" } en { "{" }ext{ "}" } in de argumenten.
+settings-custom-commands-empty = Nog geen aangepaste opdrachten.
+settings-custom-commands-unnamed = Naamloze opdracht
+settings-custom-commands-name = Naam
+settings-custom-commands-program = Programma
+settings-custom-commands-args = Argumenten
+settings-custom-commands-extensions = Alleen voor extensies
+settings-custom-commands-add = Opdracht toevoegen

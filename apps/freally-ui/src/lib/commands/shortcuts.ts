@@ -61,7 +61,10 @@ export const BINDINGS: Binding[] = [
   { shortcut: { key: "u", mod: true }, command: "search.match_path" },
   { shortcut: { key: "m", mod: true }, command: "search.match_diacritics" },
   { shortcut: { key: "r", mod: true }, command: "search.enable_regex" },
-  { shortcut: { key: "f", mod: true, shift: true }, command: "search.organize_filters" },
+  // SRC-M02 claims Ctrl+Shift+F ("find within found") as the roadmap
+  // specifies; Organize Filters moves to Ctrl+Shift+O, which was free.
+  { shortcut: { key: "f", mod: true, shift: true }, command: "search.within_results" },
+  { shortcut: { key: "o", mod: true, shift: true }, command: "search.organize_filters" },
   // Bookmarks
   { shortcut: { key: "d", mod: true }, command: "bookmarks.add" },
   { shortcut: { key: "b", mod: true, shift: true }, command: "bookmarks.organize" },

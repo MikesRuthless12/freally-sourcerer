@@ -153,6 +153,7 @@
           <a href="#filters">Quick Filters</a>
           <a href="#bookmarks">Bookmarks</a>
           <a href="#results">Working with Results</a>
+          <a href="#file-lists">File Lists &amp; Export</a>
           <a href="#preview">Preview Pane</a>
           <a href="#hotkey">Global Hotkey</a>
           <a href="#settings">Settings</a>
@@ -192,6 +193,7 @@
             <li><strong>Click any result row</strong> to select it, or use the arrow keys to move through results.</li>
             <li><strong>Open a file</strong> by double-clicking its row, or pressing <code>Enter</code> on a selected row. Freally uses the OS default handler for the file type.</li>
             <li><strong>Reveal a file</strong> in Finder / Explorer / your file manager by pressing <code>Ctrl+R</code> (Windows/Linux) or <code>⌘R</code> (macOS) with a row selected.</li>
+            <li><strong>Search within the results you already have</strong> with <code>Ctrl+Shift+F</code> (<code>⌘⇧F</code> on macOS). Each term you add becomes a removable chip, so you can peel one refinement off without retyping the broad search. A term containing <code>/</code> or <code>\</code> narrows by path instead of by name.</li>
             <li><strong>Clear the search bar</strong> with <code>Escape</code> to return to the empty/bookmarks view.</li>
           </ol>
           <div class="tip"><strong>Tip:</strong> An "Index ready" badge in the status bar confirms the initial crawl is complete. A "Still indexing" badge means results are live but partial — all newly indexed files will appear without a restart.</div>
@@ -256,6 +258,10 @@
               <tr><td>dr:&gt;N</td><td>Audio dynamic range in dB</td><td><code>dr:&gt;12</code></td></tr>
               <tr><td>similar:term</td><td>Filenames similar to term (fuzzy)</td><td><code>similar:invoce</code></td></tr>
               <tr><td>attrib:H</td><td>File attribute (H=hidden, R=readonly, S=system)</td><td><code>attrib:H</code></td></tr>
+              <tr><td>dupe:</td><td>Files sharing a name <em>and</em> a size. <code>dupe:name</code> / <code>name-dupe:</code> match on name alone, <code>dupe:size</code> / <code>size-dupe:</code> on size alone. Results cluster under a group header.</td><td><code>dupe: ext:pdf</code></td></tr>
+              <tr><td>empty:</td><td>Zero-byte files and childless folders. <code>empty:file</code> and <code>empty:folder</code> scope it; <code>empty:roots</code> reports the top of each folder chain that holds no files at any depth.</td><td><code>empty:roots</code></td></tr>
+              <tr><td>child-count:N</td><td>Folders with N direct children (supports &lt;, &lt;=, &gt;, &gt;=, =)</td><td><code>child-count:&gt;500</code></td></tr>
+              <tr><td>descendant-count:N</td><td>Folders with N descendants at any depth</td><td><code>descendant-count:&lt;10</code></td></tr>
             </tbody>
           </table>
 
@@ -307,7 +313,25 @@
             <li><strong>Sort results:</strong> click any column header (Name, Path, Size, Modified, Type, Extension) to sort ascending; click again to sort descending.</li>
             <li><strong>Resize columns:</strong> drag the divider between column headers to resize them. Column widths are saved per view profile.</li>
             <li><strong>Switch views:</strong> use the toolbar view buttons to switch between <strong>Compact</strong>, <strong>Comfortable</strong>, <strong>Details</strong>, and <strong>Thumbnails</strong>.</li>
+            <li><strong>Open with a specific app:</strong> right-click a row and pick from <strong>Open with</strong>. The list comes from the OS itself — the registered handlers on Windows, the apps that declare the file type on macOS, the matching <code>.desktop</code> entries on Linux.</li>
+            <li><strong>View hits in context:</strong> right-click and choose <strong>View hits in context</strong> for a full-document view with every match highlighted and numbered lines. <code>F3</code> jumps to the next match, <code>Shift+F3</code> to the previous, <code>Esc</code> closes.</li>
+            <li><strong>Advanced copy:</strong> right-click for <strong>Copy contents</strong> (a text file's body), <strong>Copy as file</strong> (the file itself, so pasting into a file manager copies it), and <strong>Copy path list</strong> with a choice of quoting — one per line, quoted, space-separated, or shell-escaped.</li>
+            <li><strong>Open a terminal here:</strong> right-click and choose <strong>Open terminal here</strong> to launch your terminal in the file's folder.</li>
+            <li><strong>Run a custom command:</strong> commands you define in <strong>Settings → General → Custom Commands</strong> appear at the bottom of the right-click menu. Arguments accept <code>{path}</code>, <code>{dir}</code>, <code>{name}</code>, <code>{stem}</code> and <code>{ext}</code>, and each becomes one argument — never a shell line, so a filename with <code>&amp;&amp;</code> in it is inert.</li>
           </ol>
+        </section>
+
+        <!-- File lists & export -->
+        <section id="file-lists">
+          <h2>File Lists &amp; Export</h2>
+          <p class="section-intro">Freally reads and writes voidtools <em>Everything</em>'s <code>.efu</code> file lists, so a catalogue of a drive moves between machines — and stays searchable after the drive is unplugged.</p>
+          <ol>
+            <li><strong>Export the current results</strong> with <strong>File → Export Results…</strong> (<code>Ctrl+S</code>). The format follows the extension you choose in the save dialog: <code>.efu</code> for Everything interop, <code>.csv</code> for a spreadsheet, <code>.txt</code> for one path per line, <code>.m3u</code> / <code>.m3u8</code> for a playlist, <code>.ndjson</code> for a script, <code>.json</code> for a full dump.</li>
+            <li><strong>Playlists carry audio only.</strong> Exporting a mixed result set to <code>.m3u8</code> writes just the audio files, and the confirmation says how many of how many were written.</li>
+            <li><strong>Open a file list</strong> with <strong>File → Open File List…</strong> (<code>Ctrl+O</code>). Its entries replace the live index as the search target — that is how a catalogue of a disconnected volume answers "which drive was that file on?". The status bar shows the loaded list's name.</li>
+            <li><strong>Close the file list</strong> with <strong>File → Close File List</strong> to go back to searching the live index.</li>
+          </ol>
+          <div class="tip"><strong>Tip:</strong> <code>.efu</code> timestamps are Windows FILETIME ticks. Freally converts at the boundary, so a list written on Linux or macOS loads into Everything on Windows unchanged.</div>
         </section>
 
         <!-- Preview Pane -->

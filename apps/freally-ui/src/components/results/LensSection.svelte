@@ -1,10 +1,11 @@
 <script lang="ts">
-  import type { LensId, QueryHit } from "../../lib/ipc/types";
+  import type { HitGroup, LensId, QueryHit } from "../../lib/ipc/types";
   import LensTimingBadge from "./LensTimingBadge.svelte";
   import ResultRow from "./ResultRow.svelte";
   import ColumnHeaderRow from "./ColumnHeaderRow.svelte";
   import { settingsStore } from "../../lib/stores/settings.svelte";
   import { sortStore } from "../../lib/stores/sort.svelte";
+  import { formatBytes } from "../../lib/util/format";
   import { t } from "../../lib/i18n/t";
 
   interface Props {
@@ -12,13 +13,38 @@
     title: string;
     hits: QueryHit[];
     timingMs: number;
+    /** SRC-M07 duplicate clusters. Non-empty switches this section to
+     *  the grouped renderer. */
+    groups?: HitGroup[];
   }
-  let { lens, title, hits, timingMs }: Props = $props();
+  let { lens, title, hits, timingMs, groups = [] }: Props = $props();
 
   let collapsed = $state(false);
 
   const visible = $derived(settingsStore.state.lens_visibility[lens] !== false);
-  const sortedHits = $derived(sortStore.applied(hits));
+  const grouped = $derived(groups.length > 0);
+  // Column sorting would break the cluster contiguity the daemon's
+  // `start`/`len` offsets depend on, so grouped sections keep the
+  // daemon's order — the sort already ran *within* each cluster.
+  const sortedHits = $derived(grouped ? hits : sortStore.applied(hits));
+  const clusters = $derived(
+    groups.map((g) => {
+      const rows = hits.slice(g.start, g.start + g.len);
+      return {
+        ...g,
+        rows,
+        // The header is built here, not in the daemon: it has to go
+        // through Fluent and the user's chosen size format like every
+        // other string and number on screen.
+        label:
+          g.name ??
+          (g.size === undefined ? "" : formatBytes(g.size)),
+        // Recomputed from the rows actually shown, so a refinement that
+        // drops members can't leave a stale total in the header.
+        totalBytes: rows.reduce((n, h) => n + h.size, 0)
+      };
+    })
+  );
 </script>
 
 {#if visible}
@@ -44,9 +70,26 @@
     {#if !collapsed}
       <ColumnHeaderRow />
       <div class="rows" role="listbox" aria-label={title}>
-        {#each sortedHits as hit (hit.file_id)}
-          <ResultRow {hit} />
-        {/each}
+        {#if grouped}
+          {#each clusters as cluster (cluster.label + cluster.start)}
+            <div class="group-header" role="presentation">
+              <span class="group-label">{cluster.label}</span>
+              <span class="group-meta">
+                {t("dupe-group-summary", {
+                  count: cluster.len,
+                  bytes: formatBytes(cluster.totalBytes)
+                })}
+              </span>
+            </div>
+            {#each cluster.rows as hit (hit.file_id)}
+              <ResultRow {hit} />
+            {/each}
+          {/each}
+        {:else}
+          {#each sortedHits as hit (hit.file_id)}
+            <ResultRow {hit} />
+          {/each}
+        {/if}
         {#if hits.length === 0}
           <div class="empty">{t("lens-no-matches")}</div>
         {/if}
@@ -117,5 +160,27 @@
     padding: 12px;
     color: var(--text-secondary);
     font-size: 12px;
+  }
+  .group-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--bg-surface-2);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .group-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .group-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
   }
 </style>

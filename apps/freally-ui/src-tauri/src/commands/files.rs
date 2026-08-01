@@ -10,21 +10,23 @@ use tauri::{AppHandle, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_opener::OpenerExt;
 
-use super::known_paths::KnownPaths;
+use super::known_paths::{KnownPaths, Provenance};
 use crate::preview;
 
 /// Every file-ops command goes through this gate. Rejects paths the
 /// daemon never returned — defense-in-depth against a compromised JS
 /// layer (supply-chain on a frontend dep) asking the backend to act on
-/// arbitrary filesystem paths. The error string deliberately does NOT
-/// echo the supplied path (L1 fix) — caller-controlled bytes don't
-/// belong in error responses that may flow into logs or UIs.
+/// arbitrary filesystem paths.
+///
+/// These commands all *read*, so a search hit is enough. The write-side
+/// commands ask for [`Provenance::UserChosen`] instead.
 fn verify_path(path: &str, known: &KnownPaths) -> Result<(), String> {
-    if !known.contains(path) {
-        return Err("path not in current result set".into());
-    }
-    Ok(())
+    known.verify(path, Provenance::QueryHit).map(|_| ())
 }
+
+/// Largest payload any command will put on the OS clipboard. Past this,
+/// the clipboard stops being the right tool and the OS starts thrashing.
+pub const MAX_CLIPBOARD_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -243,17 +245,23 @@ pub fn files_copy_text(text: String, app: AppHandle) -> Result<(), String> {
     // the OS clipboard. Used by edit.advanced.copy_as_json /
     // copy_with_metadata so we don't abuse the path-shaped `copy_path`.
     // Cap to bound clipboard pressure.
-    if text.len() > 4 * 1024 * 1024 {
+    if text.len() > MAX_CLIPBOARD_BYTES {
         return Err("text too large for clipboard".into());
     }
     app.clipboard().write_text(text).map_err(|e| e.to_string())
 }
 
-/// Records a user-chosen path (e.g. from `view.go_to`'s native folder
-/// dialog or `file.export_results`'s save dialog) as known so subsequent
-/// file-ops commands accept it. The OS-native dialog is the trust
-/// boundary for these paths.
+/// Records a path the user pointed at *inside the app* — a selected
+/// result row, a folder picked for `view.go_to` — so the read-side
+/// file-ops commands accept it.
+///
+/// Grants only [`Provenance::QueryHit`], deliberately. This command is
+/// reachable from the webview with an arbitrary string, so whatever it
+/// grants is in practice caller-chosen; it must therefore never be able
+/// to hand out the write-capable `UserChosen` level. That level is
+/// granted in exactly one place — `commands::file_lists`, after a
+/// dialog the *backend* ran and whose result it read directly.
 #[tauri::command]
 pub fn files_whitelist_user_chosen(path: String, known: State<'_, KnownPaths>) {
-    known.whitelist_user_chosen(&path);
+    known.add(&path);
 }

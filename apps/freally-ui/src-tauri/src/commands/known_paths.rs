@@ -11,39 +11,46 @@
 //! Phase 12 keeps the same shape: `query_run` swaps from canned data to
 //! the real daemon, but the per-session known-path registry stays.
 //!
-//! User-initiated paths (e.g. `view.go_to`, `file.export_results` save
-//! dialog) flow through `whitelist_user_chosen` so they bypass the
-//! per-hit registry — the user explicitly selected them via the OS
-//! native dialog, which is the actual trust boundary.
+//! Build 1 adds the missing dimension. Two different facts used to share
+//! one set: "the daemon returned this as a search hit" and "the user
+//! picked this in an OS save dialog". That was fine while every gated
+//! command only *read*, but `file_list_export` writes — and with one
+//! undifferentiated set it would happily overwrite any file in the
+//! current result set. [`Provenance`] keeps the two apart so a
+//! write-side command can demand the narrower one.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 const MAX_KNOWN_PATHS: usize = 16_384;
 
+/// How a path earned its place in the registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Provenance {
+    /// The daemon returned it as a search hit. Enough to read, preview,
+    /// reveal, or open the file.
+    QueryHit,
+    /// The user picked it in an OS-native dialog. That dialog is the
+    /// real trust boundary, so this is what a command that *writes* to
+    /// a path requires.
+    UserChosen,
+}
+
 #[derive(Default)]
 pub struct KnownPaths {
-    pub set: Mutex<HashSet<String>>,
+    paths: Mutex<HashMap<String, Provenance>>,
 }
 
 impl KnownPaths {
     pub fn new() -> Self {
         Self {
-            set: Mutex::new(HashSet::new()),
+            paths: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn add(&self, path: &str) {
-        let mut g = self.set.lock().unwrap();
-        if g.len() >= MAX_KNOWN_PATHS {
-            // LRU is overkill for a defense-in-depth registry; just clear
-            // the oldest half once the cap is hit.
-            let to_drop: Vec<String> = g.iter().take(g.len() / 2).cloned().collect();
-            for p in to_drop {
-                g.remove(&p);
-            }
-        }
-        g.insert(path.to_string());
+        self.record(path, Provenance::QueryHit);
     }
 
     pub fn add_many<I: IntoIterator<Item = String>>(&self, paths: I) {
@@ -52,13 +59,112 @@ impl KnownPaths {
         }
     }
 
-    pub fn contains(&self, path: &str) -> bool {
-        self.set.lock().unwrap().contains(path)
+    /// User selected via OS-native dialog — the dialog itself is the
+    /// trust boundary, so this grants the wider `UserChosen` provenance.
+    pub fn whitelist_user_chosen(&self, path: &str) {
+        self.record(path, Provenance::UserChosen);
     }
 
-    pub fn whitelist_user_chosen(&self, path: &str) {
-        // User selected via OS-native dialog — trust boundary is the
-        // dialog itself; record so subsequent ops on the same path pass.
-        self.add(path);
+    fn record(&self, path: &str, provenance: Provenance) {
+        let mut g = self.paths.lock().unwrap();
+        if g.len() >= MAX_KNOWN_PATHS {
+            // LRU is overkill for a defense-in-depth registry; just clear
+            // the oldest half once the cap is hit.
+            let to_drop: Vec<String> = g.keys().take(g.len() / 2).cloned().collect();
+            for p in to_drop {
+                g.remove(&p);
+            }
+        }
+        // A path can be both a search hit and a user pick; keep the
+        // wider grant so re-selecting a result in a save dialog doesn't
+        // demote it.
+        g.entry(path.to_string())
+            .and_modify(|p| *p = (*p).max(provenance))
+            .or_insert(provenance);
+    }
+
+    pub fn contains(&self, path: &str) -> bool {
+        self.paths.lock().unwrap().contains_key(path)
+    }
+
+    /// The single gate every path-taking command goes through. Returns
+    /// the path only when the registry holds it with at least `required`
+    /// provenance.
+    ///
+    /// The error deliberately does NOT echo the supplied path —
+    /// caller-controlled bytes don't belong in responses that may flow
+    /// into logs or UIs.
+    pub fn verify(&self, path: &str, required: Provenance) -> Result<PathBuf, String> {
+        let held = self.paths.lock().unwrap().get(path).copied();
+        match held {
+            Some(p) if p >= required => Ok(PathBuf::from(path)),
+            Some(_) => Err("path was not chosen through a file dialog".into()),
+            None => Err("path not in current result set".into()),
+        }
+    }
+
+    /// [`KnownPaths::verify`] over a list, failing on the first path
+    /// that doesn't qualify.
+    pub fn verify_all(
+        &self,
+        paths: &[String],
+        required: Provenance,
+    ) -> Result<Vec<PathBuf>, String> {
+        paths.iter().map(|p| self.verify(p, required)).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_query_hit_can_be_read_but_not_written() {
+        let k = KnownPaths::new();
+        k.add("/vault/report.pdf");
+        assert!(k.verify("/vault/report.pdf", Provenance::QueryHit).is_ok());
+        let err = k
+            .verify("/vault/report.pdf", Provenance::UserChosen)
+            .unwrap_err();
+        assert!(err.contains("file dialog"), "message was {err}");
+    }
+
+    #[test]
+    fn a_user_chosen_path_satisfies_both() {
+        let k = KnownPaths::new();
+        k.whitelist_user_chosen("/vault/out.efu");
+        assert!(k.verify("/vault/out.efu", Provenance::QueryHit).is_ok());
+        assert!(k.verify("/vault/out.efu", Provenance::UserChosen).is_ok());
+    }
+
+    #[test]
+    fn an_unknown_path_is_rejected_without_echoing_it() {
+        let k = KnownPaths::new();
+        let err = k.verify("/etc/shadow", Provenance::QueryHit).unwrap_err();
+        assert!(
+            !err.contains("/etc/shadow"),
+            "message leaked the path: {err}"
+        );
+    }
+
+    #[test]
+    fn picking_a_result_in_a_save_dialog_widens_it_and_never_narrows() {
+        let k = KnownPaths::new();
+        k.add("/vault/a.txt");
+        k.whitelist_user_chosen("/vault/a.txt");
+        assert!(k.verify("/vault/a.txt", Provenance::UserChosen).is_ok());
+        // A later query hit for the same path must not demote it.
+        k.add("/vault/a.txt");
+        assert!(k.verify("/vault/a.txt", Provenance::UserChosen).is_ok());
+    }
+
+    #[test]
+    fn verify_all_fails_on_the_first_unqualified_path() {
+        let k = KnownPaths::new();
+        k.add("/vault/a.txt");
+        let paths = vec!["/vault/a.txt".to_string(), "/vault/b.txt".to_string()];
+        assert!(k.verify_all(&paths, Provenance::QueryHit).is_err());
+        k.add("/vault/b.txt");
+        assert_eq!(k.verify_all(&paths, Provenance::QueryHit).unwrap().len(), 2);
     }
 }

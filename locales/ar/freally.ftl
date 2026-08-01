@@ -788,3 +788,65 @@ opt-log-trace = تتبّع
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = مزيد من تطبيقات Freally…
 moreapps-title = مزيد من تطبيقات Freally
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+# Machine-translated draft — pending the pre-v1.0 reviewer pass.
+dupe-group-summary = { $count } نسخ · { $bytes }
+status-file-list = قائمة الملفات: { $name }
+status-file-list-truncated = يتم عرض أول 5000 إدخال
+refine-label = داخل النتائج
+refine-input-label = تضييق النتائج الحالية
+refine-placeholder = اكتب للتضييق، Enter للإضافة
+refine-count = { $shown } من { $total }
+refine-remove-chip = إزالة المرشّح { $term }
+refine-clear = مسح
+refine-close = إغلاق شريط التضييق
+menu-search-within-results = البحث داخل النتائج
+ctx-menu-label = إجراءات النتيجة
+ctx-open = فتح
+ctx-reveal = إظهار في مدير الملفات
+ctx-view-hits = عرض التطابقات في سياقها
+ctx-open-with = فتح باستخدام
+ctx-open-with-none = لا توجد تطبيقات مسجّلة
+ctx-loading = جارٍ التحميل…
+ctx-copy-contents = نسخ المحتوى
+ctx-copy-as-file = نسخ كملف
+ctx-copy-path-list = نسخ قائمة المسارات
+ctx-quote-lines = واحد في كل سطر
+ctx-quote-quoted = بين علامتي اقتباس
+ctx-quote-space = مفصولة بمسافات
+ctx-quote-escaped = مهيّأة للصدفة
+ctx-terminal-here = فتح طرفية هنا
+verb-failed = فشل { $verb }: { $error }
+hitviewer-title = التطابقات في { $name }
+hitviewer-no-matches = لا توجد تطابقات
+hitviewer-match-position = التطابق { $current } من { $total }
+hitviewer-prev = السابق
+hitviewer-next = التالي
+hitviewer-loading = جارٍ الاستخراج…
+hitviewer-extractor = مستخرَج بواسطة { $id }
+hitviewer-truncated = تم اقتطاع المستند للعرض
+hitviewer-keys = F3 التالي · Shift+F3 السابق · Esc إغلاق
+close = إغلاق
+toast-dismiss = إخفاء
+toast-file-list-opened = تم فتح { $name } — { $count } إدخالاً
+toast-file-list-open-failed = تعذّر فتح قائمة الملفات: { $error }
+toast-export-done = تم تصدير { $written } نتيجة بصيغة { $format }
+toast-export-lossy = تم تصدير { $written } من { $total } نتيجة بصيغة { $format }
+toast-export-failed = فشل التصدير: { $error }
+toast-copied-paths = تم نسخ { $count } مسار
+toast-copied-contents = تم نسخ محتوى { $name }
+toast-copied-files = تم نسخ { $count } ملف
+settings-node-custom-commands = أوامر مخصّصة
+settings-custom-commands-hint = تظهر الأوامر التي تضيفها هنا في قائمة النقر بالزر الأيمن على النتائج. استخدم { "{" }path{ "}" } و{ "{" }dir{ "}" } و{ "{" }name{ "}" } و{ "{" }stem{ "}" } و{ "{" }ext{ "}" } في الوسائط.
+settings-custom-commands-empty = لا توجد أوامر مخصّصة بعد.
+settings-custom-commands-unnamed = أمر بلا اسم
+settings-custom-commands-name = الاسم
+settings-custom-commands-program = البرنامج
+settings-custom-commands-args = الوسائط
+settings-custom-commands-extensions = لهذه الامتدادات فقط
+settings-custom-commands-add = إضافة أمر

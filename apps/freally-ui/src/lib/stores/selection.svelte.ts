@@ -39,6 +39,16 @@ class SelectionStore {
   get count(): number {
     return this.ids.size;
   }
+
+  /** Paths of the selected rows, in result order. The file-ops verbs
+   *  need paths, not ids, and only the batches know the mapping. */
+  paths(): string[] {
+    const out: string[] = [];
+    for (const batch of resultsStore.batches) {
+      for (const hit of batch.hits) if (this.ids.has(hit.file_id)) out.push(hit.path);
+    }
+    return out;
+  }
 }
 
 export const selectionStore = new SelectionStore();

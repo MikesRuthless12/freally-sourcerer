@@ -32,6 +32,7 @@ export type PanelId =
   | "general.results"
   | "general.view"
   | "general.context_menu"
+  | "general.custom_commands"
   | "general.fonts_colors"
   | "general.keyboard"
   | "history"
@@ -60,6 +61,7 @@ export const PANEL_IDS: PanelId[] = [
   "general.results",
   "general.view",
   "general.context_menu",
+  "general.custom_commands",
   "general.fonts_colors",
   "general.keyboard",
   "history",
@@ -189,6 +191,7 @@ class SettingsDialogModel {
       case "general.results":
       case "general.view":
       case "general.context_menu":
+      case "general.custom_commands":
       case "general.fonts_colors":
       case "general.keyboard":
       case "lenses.filename":
