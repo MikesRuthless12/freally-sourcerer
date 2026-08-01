@@ -1,0 +1,7 @@
+{
+  "name": "freally-sourcerer",
+  "private": true,
+  "scripts": {
+    "ci:local": "node scripts/ci-local.mjs"
+  }
+}

@@ -788,3 +788,65 @@ opt-log-trace = Trace
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = 더 많은 Freally 앱…
 moreapps-title = 더 많은 Freally 앱
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+# Machine-translated draft — pending the pre-v1.0 reviewer pass.
+dupe-group-summary = 사본 { $count }개 · { $bytes }
+status-file-list = 파일 목록: { $name }
+status-file-list-truncated = 처음 5,000개 항목만 표시
+refine-label = 결과 내
+refine-input-label = 현재 결과 좁히기
+refine-placeholder = 입력해 좁히고 Enter로 추가
+refine-count = { $total }개 중 { $shown }개
+refine-remove-chip = { $term } 필터 제거
+refine-clear = 지우기
+refine-close = 좁히기 막대 닫기
+menu-search-within-results = 결과 내 검색
+ctx-menu-label = 결과 동작
+ctx-open = 열기
+ctx-reveal = 파일 관리자에서 보기
+ctx-view-hits = 문맥에서 일치 항목 보기
+ctx-open-with = 연결 프로그램
+ctx-open-with-none = 등록된 애플리케이션 없음
+ctx-loading = 불러오는 중…
+ctx-copy-contents = 내용 복사
+ctx-copy-as-file = 파일로 복사
+ctx-copy-path-list = 경로 목록 복사
+ctx-quote-lines = 한 줄에 하나
+ctx-quote-quoted = 따옴표로 감싸기
+ctx-quote-space = 공백으로 구분
+ctx-quote-escaped = 셸 이스케이프
+ctx-terminal-here = 여기서 터미널 열기
+verb-failed = { $verb } 실패: { $error }
+hitviewer-title = { $name }의 일치 항목
+hitviewer-no-matches = 일치 항목 없음
+hitviewer-match-position = { $total }개 중 { $current }번째
+hitviewer-prev = 이전
+hitviewer-next = 다음
+hitviewer-loading = 추출 중…
+hitviewer-extractor = { $id }(으)로 추출됨
+hitviewer-truncated = 표시를 위해 문서를 잘랐습니다
+hitviewer-keys = F3 다음 · Shift+F3 이전 · Esc 닫기
+close = 닫기
+toast-dismiss = 닫기
+toast-file-list-opened = { $name } 열림 — 항목 { $count }개
+toast-file-list-open-failed = 파일 목록을 열 수 없습니다: { $error }
+toast-export-done = 결과 { $written }개를 { $format }(으)로 내보냈습니다
+toast-export-lossy = 결과 { $total }개 중 { $written }개를 { $format }(으)로 내보냈습니다
+toast-export-failed = 내보내기 실패: { $error }
+toast-copied-paths = 경로 { $count }개를 복사했습니다
+toast-copied-contents = { $name }의 내용을 복사했습니다
+toast-copied-files = 파일 { $count }개를 복사했습니다
+settings-node-custom-commands = 사용자 지정 명령
+settings-custom-commands-hint = 여기에 추가한 명령은 결과의 오른쪽 클릭 메뉴에 나타납니다. 인수에 { "{" }path{ "}" }, { "{" }dir{ "}" }, { "{" }name{ "}" }, { "{" }stem{ "}" }, { "{" }ext{ "}" }를 사용하세요.
+settings-custom-commands-empty = 아직 사용자 지정 명령이 없습니다.
+settings-custom-commands-unnamed = 이름 없는 명령
+settings-custom-commands-name = 이름
+settings-custom-commands-program = 프로그램
+settings-custom-commands-args = 인수
+settings-custom-commands-extensions = 다음 확장자에만
+settings-custom-commands-add = 명령 추가

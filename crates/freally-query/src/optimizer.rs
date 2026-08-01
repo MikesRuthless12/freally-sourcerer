@@ -77,8 +77,17 @@ pub fn selectivity_rank(node: &QueryNode) -> u8 {
             ModifierKind::Date(_) => 22,
             ModifierKind::Attrib(_) => 24,
             ModifierKind::Path(_) | ModifierKind::Parent(_) => 30,
+            // SRC-M08: a hash lookup into the pre-built `DirStats` —
+            // the build is per-query, the lookup itself is cheap.
+            ModifierKind::Empty(_)
+            | ModifierKind::ChildCount { .. }
+            | ModifierKind::DescendantCount { .. } => 35,
             // Per-row provider lookup — the most expensive.
             ModifierKind::Audio(_) => 80,
+            // SRC-M07: resolved as a whole-set post-pass, so its
+            // per-row cost is nil but it must not be reordered ahead
+            // of the predicates that shrink the set it groups over.
+            ModifierKind::Dupe(_) => 86,
             // LSH lookup is per-query, not per-row, but the routing
             // cost dominates so it sorts late among siblings.
             ModifierKind::Similar(_) => 85,

@@ -3,6 +3,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import MenuBar from "./components/menu/MenuBar.svelte";
   import SearchBar from "./components/search-bar/SearchBar.svelte";
+  import RefineBar from "./components/search-bar/RefineBar.svelte";
   import QuickFiltersPalette from "./components/filters/QuickFiltersPalette.svelte";
   import ResultList from "./components/results/ResultList.svelte";
   import StatusBar from "./components/statusbar/StatusBar.svelte";
@@ -12,6 +13,9 @@
   import MoreFreallyAppsDialog from "./components/dialogs/MoreFreallyAppsDialog.svelte";
   import ConnectEndpointDialog from "./components/dialogs/ConnectEndpointDialog.svelte";
   import SettingsDialog from "./components/settings/SettingsDialog.svelte";
+  import ToastHost from "./components/ToastHost.svelte";
+  import ResultContextMenu from "./components/results/ResultContextMenu.svelte";
+  import HitViewer from "./components/preview/HitViewer.svelte";
   import { bootstrap } from "./lib/bootstrap";
   import { dialogsStore } from "./lib/stores/dialogs.svelte";
   import { settingsStore } from "./lib/stores/settings.svelte";
@@ -52,6 +56,7 @@
 <div class="app">
   <MenuBar />
   <SearchBar />
+  <RefineBar />
   <QuickFiltersPalette />
   <ResultList />
   <StatusBar />
@@ -78,6 +83,9 @@
   open={dialogsStore.active === "more_freally_apps"}
   onClose={() => dialogsStore.close()}
 />
+<ResultContextMenu />
+<HitViewer />
+<ToastHost />
 
 <style>
   .app {

@@ -48,8 +48,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # vendor/freally-central (the "More Freally apps" panel) is a submodule.
-          submodules: recursive
+          # No submodules: the "More Freally apps" panel used to be one,
+          # pointing at a repository that no longer exists — which failed
+          # every leg at checkout before a build step could run. It is
+          # vendored as plain source at vendor/freally-central/ now.
+          submodules: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

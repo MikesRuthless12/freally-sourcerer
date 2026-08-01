@@ -56,6 +56,11 @@ pub enum QueryError {
     )]
     UnsupportedSimilarPosition,
     #[error(
+        "`dupe:` / `name-dupe:` / `size-dupe:` are only supported at the root or as a \
+         top-level AND child; buried in NOT / OR / nested AND is rejected"
+    )]
+    UnsupportedDupePosition,
+    #[error(
         "query uses an audio modifier (lufs / codec / length / rate / silence / dr) \
          but no audio provider was supplied — call execute_with_audio(idx, Some(&audio), …)"
     )]

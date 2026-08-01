@@ -4,6 +4,7 @@
   import { selectionStore } from "../../lib/stores/selection.svelte";
   import { settingsStore } from "../../lib/stores/settings.svelte";
   import { menuHoverStore } from "../../lib/stores/menu_hover.svelte";
+  import { fileListStore } from "../../lib/stores/file_list.svelte";
   import { themeStore } from "../../lib/stores/theme.svelte";
   import { formatBytes, formatCount } from "../../lib/util/format";
   import { t } from "../../lib/i18n/t";
@@ -55,10 +56,18 @@
     {/if}
 
     <span class="seg endpoint">
-      {settingsStore.state.endpoint.kind === "remote"
-        ? t("status-endpoint-remote", { name: settingsStore.state.endpoint.name })
-        : t("status-endpoint-local")}
+      {#if fileListStore.active}
+        {t("status-file-list", { name: fileListStore.label })}
+      {:else if settingsStore.state.endpoint.kind === "remote"}
+        {t("status-endpoint-remote", { name: settingsStore.state.endpoint.name })}
+      {:else}
+        {t("status-endpoint-local")}
+      {/if}
     </span>
+
+    {#if fileListStore.truncated}
+      <span class="seg truncated">{t("status-file-list-truncated")}</span>
+    {/if}
 
     <span class="seg hover-hint grow">{menuHoverStore.hint ?? idleHint}</span>
 

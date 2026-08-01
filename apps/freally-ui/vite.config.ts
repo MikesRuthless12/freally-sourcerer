@@ -14,15 +14,17 @@ const workspaceRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "../
 
 export default defineConfig({
   plugins: [svelte()],
-  // The "More Freally apps" panel is the React `CentralPanel` vendored from the
-  // freally-central submodule (view-only). Svelte owns the app; the panel is a
-  // React island. esbuild's automatic JSX runtime transforms the vendored .tsx
-  // at build time — no @vitejs/plugin-react (which would fight the Svelte
-  // plugin's HMR). The alias is the panel's only public entry point.
+  // The "More Freally apps" panel is the view-only React `CentralPanel`,
+  // vendored at `vendor/freally-central/` (a plain directory — see its
+  // README for why it is no longer a submodule). Svelte owns the app; the
+  // panel is a React island. esbuild's automatic JSX runtime transforms the
+  // vendored .tsx at build time — no @vitejs/plugin-react (which would
+  // fight the Svelte plugin's HMR). The alias is the panel's only public
+  // entry point.
   resolve: {
     // The vendored panel lives at repo-root vendor/, outside this package, so
-    // its bare imports can't walk up to our node_modules. dedupe forces them to
-    // resolve from this project's single installed copy.
+    // its bare imports can't walk up to our node_modules. dedupe forces them
+    // to resolve from this project's single installed copy.
     dedupe: ["react", "react-dom", "@tauri-apps/api"],
     alias: {
       "@freally/central-panel": fileURLToPath(

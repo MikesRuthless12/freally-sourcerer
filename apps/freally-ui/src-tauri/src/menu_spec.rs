@@ -224,11 +224,16 @@ pub fn menu_bar() -> Vec<RootSpec> {
                 item_check_a("search.match_diacritics", "Match Diacritics", "Ctrl+M"),
                 item_check_a("search.enable_regex", "Enable Regex", "Ctrl+R"),
                 item("search.advanced", "Advanced Search…"),
+                item_a(
+                    "search.within_results",
+                    "Search Within Results",
+                    "Ctrl+Shift+F",
+                ),
                 item("search.add_to_filters", "Add to Filters…"),
                 item_a(
                     "search.organize_filters",
                     "Organize Filters…",
-                    "Ctrl+Shift+F",
+                    "Ctrl+Shift+O",
                 ),
                 sep(),
                 item("search.filter.everything", "Everything"),

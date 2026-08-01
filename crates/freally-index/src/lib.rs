@@ -22,6 +22,7 @@
 
 #![deny(rust_2018_idioms)]
 
+pub mod dirstats;
 pub mod error;
 pub mod location;
 pub mod manifest;
@@ -45,6 +46,7 @@ use tantivy::{
 };
 use tracing::{debug, warn};
 
+pub use dirstats::{ATTR_DIRECTORY, DirCounts, DirStats};
 pub use error::IndexError;
 pub use location::{default_index_root, service_index_root};
 pub use manifest::Manifest;
@@ -76,6 +78,9 @@ pub struct Index {
     store: store::Store,
     name_index: name_index::NameIndex,
     manifest: Mutex<Manifest>,
+    /// Memoized directory shape, tagged with the `applied_events` count
+    /// it was derived at. See [`Index::dir_stats`].
+    dir_stats: Mutex<Option<(u64, Arc<dirstats::DirStats>)>>,
 }
 
 impl Index {
@@ -112,6 +117,7 @@ impl Index {
             store,
             name_index: name_idx,
             manifest: Mutex::new(manifest),
+            dir_stats: Mutex::new(None),
         });
 
         s.recover_if_needed()?;
@@ -169,6 +175,34 @@ impl Index {
 
     pub fn name_index(&self) -> &name_index::NameIndex {
         &self.name_index
+    }
+
+    /// Directory shape for the whole index (SRC-M08), memoized.
+    ///
+    /// Deriving it is a full scan of `files.db`, and the emptiness
+    /// modifiers run at keystroke rate like every other query — so
+    /// without this, typing `empty:roots` one character at a time would
+    /// re-scan the store for every keystroke and hold the store mutex
+    /// while doing it.
+    ///
+    /// The cache key is `applied_events`, which every path that mutates
+    /// the canonical store advances — `apply()`, and
+    /// `finalize_bootstrap()` for the bulk-scan path. That makes a stale
+    /// answer possible only for events not yet applied, which is exactly
+    /// the staleness the query itself already has, since it reads the
+    /// same store.
+    pub fn dir_stats(&self) -> Result<Arc<dirstats::DirStats>, IndexError> {
+        let generation = self.manifest.lock().applied_events;
+        if let Some((at, cached)) = self.dir_stats.lock().as_ref()
+            && *at == generation
+        {
+            return Ok(Arc::clone(cached));
+        }
+        // Built outside the cache lock: the scan is slow, and a second
+        // caller racing us should block on the store, not on this.
+        let built = Arc::new(dirstats::DirStats::build(&self.store)?);
+        *self.dir_stats.lock() = Some((generation, Arc::clone(&built)));
+        Ok(built)
     }
 
     pub fn stats(&self) -> Result<IndexStats, IndexError> {
@@ -291,6 +325,13 @@ impl Index {
         self.store.checkpoint()?;
         let mut m = self.manifest.lock();
         m.tantivy_generation = m.tantivy_generation.saturating_add(1);
+        // This is where the bootstrap's rows actually land in the store,
+        // so it has to move the derived-cache key too. `bootstrap_apply`
+        // advances `applied_events` while writing *nothing* to
+        // `files.db`; a `DirStats` built in that window would otherwise
+        // be cached under the same generation as the finished store and
+        // report every directory as empty forever.
+        m.applied_events = m.applied_events.saturating_add(rebuilt);
         m.save(&self.root)?;
         Ok(rebuilt)
     }

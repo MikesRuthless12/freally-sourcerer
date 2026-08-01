@@ -70,12 +70,38 @@ pub struct QueryRunHandle {
     pub handle: String,
 }
 
+/// A contiguous run of hits that belong together under a header row,
+/// emitted by the SRC-M07 `dupe:` family.
+///
+/// Carries the values the members share, not a rendered header string:
+/// the UI localises the header through Fluent and formats bytes with
+/// the user's chosen size format, exactly as it does for every other
+/// number on screen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HitGroup {
+    /// Shared file name, when the query grouped by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Shared byte size, when the query grouped by size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// Index of the group's first hit within `QueryBatch::hits`.
+    pub start: u32,
+    /// How many hits belong to this group.
+    pub len: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryBatch {
     pub handle: String,
     pub lens: LensId,
     pub hits: Vec<QueryHit>,
     pub done: bool,
+    /// Header rows for grouped result views. Empty for ordinary
+    /// queries. `#[serde(default)]` keeps pre-Build-1 daemons and
+    /// recorded fixtures readable.
+    #[serde(default)]
+    pub groups: Vec<HitGroup>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

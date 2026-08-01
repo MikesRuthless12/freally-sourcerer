@@ -788,3 +788,65 @@ opt-log-trace = Trace
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = Aplikasi Freally lainnya…
 moreapps-title = Aplikasi Freally lainnya
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+# Machine-translated draft — pending the pre-v1.0 reviewer pass.
+dupe-group-summary = { $count } salinan · { $bytes }
+status-file-list = Daftar berkas: { $name }
+status-file-list-truncated = Menampilkan 5.000 entri pertama
+refine-label = Dalam hasil
+refine-input-label = Persempit hasil saat ini
+refine-placeholder = Ketik untuk mempersempit, Enter untuk menambah
+refine-count = { $shown } dari { $total }
+refine-remove-chip = Hapus penyaring { $term }
+refine-clear = Bersihkan
+refine-close = Tutup bilah penyempitan
+menu-search-within-results = Cari dalam hasil
+ctx-menu-label = Tindakan hasil
+ctx-open = Buka
+ctx-reveal = Tampilkan di pengelola berkas
+ctx-view-hits = Lihat kecocokan dalam konteks
+ctx-open-with = Buka dengan
+ctx-open-with-none = Tidak ada aplikasi terdaftar
+ctx-loading = Memuat…
+ctx-copy-contents = Salin isi
+ctx-copy-as-file = Salin sebagai berkas
+ctx-copy-path-list = Salin daftar jalur
+ctx-quote-lines = Satu per baris
+ctx-quote-quoted = Dalam tanda kutip
+ctx-quote-space = Dipisahkan spasi
+ctx-quote-escaped = Di-escape untuk shell
+ctx-terminal-here = Buka terminal di sini
+verb-failed = { $verb } gagal: { $error }
+hitviewer-title = Kecocokan di { $name }
+hitviewer-no-matches = Tidak ada kecocokan
+hitviewer-match-position = Kecocokan { $current } dari { $total }
+hitviewer-prev = Sebelumnya
+hitviewer-next = Berikutnya
+hitviewer-loading = Mengekstrak…
+hitviewer-extractor = Diekstrak oleh { $id }
+hitviewer-truncated = Dokumen dipotong untuk tampilan
+hitviewer-keys = F3 berikutnya · Shift+F3 sebelumnya · Esc tutup
+close = Tutup
+toast-dismiss = Tutup
+toast-file-list-opened = { $name } dibuka — { $count } entri
+toast-file-list-open-failed = Tidak dapat membuka daftar berkas: { $error }
+toast-export-done = { $written } hasil diekspor sebagai { $format }
+toast-export-lossy = { $written } dari { $total } hasil diekspor sebagai { $format }
+toast-export-failed = Ekspor gagal: { $error }
+toast-copied-paths = { $count } jalur disalin
+toast-copied-contents = Isi { $name } disalin
+toast-copied-files = { $count } berkas disalin
+settings-node-custom-commands = Perintah khusus
+settings-custom-commands-hint = Perintah yang Anda tambahkan di sini muncul di menu klik kanan hasil. Gunakan { "{" }path{ "}" }, { "{" }dir{ "}" }, { "{" }name{ "}" }, { "{" }stem{ "}" }, dan { "{" }ext{ "}" } pada argumen.
+settings-custom-commands-empty = Belum ada perintah khusus.
+settings-custom-commands-unnamed = Perintah tanpa nama
+settings-custom-commands-name = Nama
+settings-custom-commands-program = Program
+settings-custom-commands-args = Argumen
+settings-custom-commands-extensions = Hanya untuk ekstensi
+settings-custom-commands-add = Tambah perintah

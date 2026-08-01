@@ -788,3 +788,65 @@ opt-log-trace = İzleme
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = Diğer Freally uygulamaları…
 moreapps-title = Diğer Freally uygulamaları
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+# Machine-translated draft — pending the pre-v1.0 reviewer pass.
+dupe-group-summary = { $count } kopya · { $bytes }
+status-file-list = Dosya listesi: { $name }
+status-file-list-truncated = İlk 5.000 kayıt gösteriliyor
+refine-label = Sonuçlar içinde
+refine-input-label = Geçerli sonuçları daralt
+refine-placeholder = Daraltmak için yazın, eklemek için Enter
+refine-count = { $total } içinden { $shown }
+refine-remove-chip = { $term } daraltmasını kaldır
+refine-clear = Temizle
+refine-close = Daraltma çubuğunu kapat
+menu-search-within-results = Sonuçlar içinde ara
+ctx-menu-label = Sonuç eylemleri
+ctx-open = Aç
+ctx-reveal = Dosya yöneticisinde göster
+ctx-view-hits = Eşleşmeleri bağlamıyla gör
+ctx-open-with = Birlikte aç
+ctx-open-with-none = Kayıtlı uygulama yok
+ctx-loading = Yükleniyor…
+ctx-copy-contents = İçeriği kopyala
+ctx-copy-as-file = Dosya olarak kopyala
+ctx-copy-path-list = Yol listesini kopyala
+ctx-quote-lines = Her satıra bir tane
+ctx-quote-quoted = Tırnak içinde
+ctx-quote-space = Boşlukla ayrılmış
+ctx-quote-escaped = Kabuk için kaçışlı
+ctx-terminal-here = Burada terminal aç
+verb-failed = { $verb } başarısız: { $error }
+hitviewer-title = { $name } içindeki eşleşmeler
+hitviewer-no-matches = Eşleşme yok
+hitviewer-match-position = { $total } eşleşmeden { $current }.
+hitviewer-prev = Önceki
+hitviewer-next = Sonraki
+hitviewer-loading = Çıkarılıyor…
+hitviewer-extractor = { $id } tarafından çıkarıldı
+hitviewer-truncated = Belge görüntüleme için kısaltıldı
+hitviewer-keys = F3 sonraki · Shift+F3 önceki · Esc kapat
+close = Kapat
+toast-dismiss = Kapat
+toast-file-list-opened = { $name } açıldı — { $count } kayıt
+toast-file-list-open-failed = Dosya listesi açılamadı: { $error }
+toast-export-done = { $written } sonuç { $format } olarak dışa aktarıldı
+toast-export-lossy = { $total } sonuçtan { $written } tanesi { $format } olarak dışa aktarıldı
+toast-export-failed = Dışa aktarma başarısız: { $error }
+toast-copied-paths = { $count } yol kopyalandı
+toast-copied-contents = { $name } içeriği kopyalandı
+toast-copied-files = { $count } dosya kopyalandı
+settings-node-custom-commands = Özel komutlar
+settings-custom-commands-hint = Buraya eklediğiniz komutlar sonuçların sağ tık menüsünde görünür. Argümanlarda { "{" }path{ "}" }, { "{" }dir{ "}" }, { "{" }name{ "}" }, { "{" }stem{ "}" } ve { "{" }ext{ "}" } kullanın.
+settings-custom-commands-empty = Henüz özel komut yok.
+settings-custom-commands-unnamed = Adsız komut
+settings-custom-commands-name = Ad
+settings-custom-commands-program = Program
+settings-custom-commands-args = Argümanlar
+settings-custom-commands-extensions = Yalnızca şu uzantılar için
+settings-custom-commands-add = Komut ekle

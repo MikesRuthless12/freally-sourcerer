@@ -788,3 +788,65 @@ opt-log-trace = Trace
 # More Freally apps (Central inside panel) — host chrome
 menu-help-more-apps = Plus d'apps Freally…
 moreapps-title = Plus d'apps Freally
+
+# ---------------------------------------------------------------------
+# Build 1 — v0.21.0 (SRC-M01 … SRC-M08)
+# Hit-in-context viewer, search-within-results, file-list interop,
+# Open with…, advanced copy verbs, terminal-here + custom commands,
+# duplicate groups, and the emptiness modifiers.
+# Machine-translated draft — pending the pre-v1.0 reviewer pass.
+dupe-group-summary = { $count } copies · { $bytes }
+status-file-list = Liste de fichiers : { $name }
+status-file-list-truncated = Affichage des 5 000 premières entrées
+refine-label = Dans les résultats
+refine-input-label = Affiner les résultats actuels
+refine-placeholder = Saisir pour affiner, Entrée pour ajouter
+refine-count = { $shown } sur { $total }
+refine-remove-chip = Retirer le filtre { $term }
+refine-clear = Effacer
+refine-close = Fermer la barre d’affinage
+menu-search-within-results = Rechercher dans les résultats
+ctx-menu-label = Actions sur le résultat
+ctx-open = Ouvrir
+ctx-reveal = Afficher dans le gestionnaire de fichiers
+ctx-view-hits = Voir les occurrences en contexte
+ctx-open-with = Ouvrir avec
+ctx-open-with-none = Aucune application enregistrée
+ctx-loading = Chargement…
+ctx-copy-contents = Copier le contenu
+ctx-copy-as-file = Copier comme fichier
+ctx-copy-path-list = Copier la liste des chemins
+ctx-quote-lines = Un par ligne
+ctx-quote-quoted = Entre guillemets
+ctx-quote-space = Séparés par des espaces
+ctx-quote-escaped = Échappés pour le shell
+ctx-terminal-here = Ouvrir un terminal ici
+verb-failed = Échec de { $verb } : { $error }
+hitviewer-title = Occurrences dans { $name }
+hitviewer-no-matches = Aucune occurrence
+hitviewer-match-position = Occurrence { $current } sur { $total }
+hitviewer-prev = Précédent
+hitviewer-next = Suivant
+hitviewer-loading = Extraction…
+hitviewer-extractor = Extrait par { $id }
+hitviewer-truncated = Document tronqué pour l’affichage
+hitviewer-keys = F3 suivant · Maj+F3 précédent · Échap fermer
+close = Fermer
+toast-dismiss = Ignorer
+toast-file-list-opened = { $name } ouvert — { $count } entrées
+toast-file-list-open-failed = Impossible d’ouvrir la liste de fichiers : { $error }
+toast-export-done = { $written } résultats exportés en { $format }
+toast-export-lossy = { $written } résultats sur { $total } exportés en { $format }
+toast-export-failed = Échec de l’export : { $error }
+toast-copied-paths = { $count } chemins copiés
+toast-copied-contents = Contenu de { $name } copié
+toast-copied-files = { $count } fichiers copiés
+settings-node-custom-commands = Commandes personnalisées
+settings-custom-commands-hint = Les commandes ajoutées ici apparaissent dans le menu contextuel des résultats. Utilisez { "{" }path{ "}" }, { "{" }dir{ "}" }, { "{" }name{ "}" }, { "{" }stem{ "}" } et { "{" }ext{ "}" } dans les arguments.
+settings-custom-commands-empty = Aucune commande personnalisée pour l’instant.
+settings-custom-commands-unnamed = Commande sans nom
+settings-custom-commands-name = Nom
+settings-custom-commands-program = Programme
+settings-custom-commands-args = Arguments
+settings-custom-commands-extensions = Uniquement pour les extensions
+settings-custom-commands-add = Ajouter une commande

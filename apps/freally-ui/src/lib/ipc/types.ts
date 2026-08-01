@@ -104,11 +104,66 @@ export interface QueryRunHandle {
   handle: string;
 }
 
+/** One application the OS registers for a file type (SRC-M04).
+ *  Mirrors `shell_actions::AppHandler`. */
+export interface AppHandler {
+  /** Opaque OS launch token — never shown to the user. */
+  id: string;
+  name: string;
+}
+
+/** A user-defined result action (SRC-M06). Mirrors
+ *  `shell_actions::CustomCommand`. */
+export interface CustomCommand {
+  id: string;
+  name: string;
+  program: string;
+  /** Argument templates. `{path}` `{dir}` `{name}` `{stem}` `{ext}`
+   *  expand per-invocation; each becomes one argv slot, never a shell
+   *  command line. */
+  args: string[];
+  /** Lowercase extensions this command applies to. Empty = all files. */
+  extensions: string[];
+}
+
+/** How a multi-selection path list is written to the clipboard
+ *  (SRC-M05). Mirrors `commands::shell_verbs::QuoteStyle`. */
+export type QuoteStyle = "lines" | "quoted" | "space_separated" | "escaped";
+
+/** Interop formats Freally reads and writes (SRC-M03). Mirrors
+ *  `freally_rpc::filelist::FileListFormat`. */
+export type FileListFormat = "efu" | "csv" | "txt" | "m3u" | "m3u8" | "ndjson" | "json";
+
+/** One row of an imported file list. Mirrors
+ *  `freally_rpc::filelist::FileListEntry`. */
+export interface FileListEntry {
+  path: string;
+  size: number;
+  modified_ms: number;
+  created_ms: number;
+  attrs: number;
+}
+
+/** A contiguous run of hits that share a header row. Emitted by the
+ *  SRC-M07 `dupe:` family; `start`/`len` index into `QueryBatch.hits`.
+ *  Carries the shared values — the header text is localised and
+ *  byte-formatted here, not in the daemon. */
+export interface HitGroup {
+  /** Shared file name, when the query grouped by name. */
+  name?: string;
+  /** Shared byte size, when the query grouped by size. */
+  size?: number;
+  start: number;
+  len: number;
+}
+
 export interface QueryBatch {
   handle: string;
   lens: LensId;
   hits: QueryHit[];
   done: boolean;
+  /** Absent on pre-Build-1 daemons and on ungrouped queries. */
+  groups?: HitGroup[];
 }
 
 export interface QueryDone {
@@ -383,6 +438,8 @@ export interface SettingsState {
   default_https_endpoint: { url: string; token_fingerprint: string };
   default_lens_visibility: Record<LensId, boolean>;
   default_lens_result_limits: Record<LensId, number>;
+  /** SRC-M06 user-defined result actions. */
+  custom_commands: CustomCommand[];
 
   // ---- General → Search (§8.4) ----
   fast_ascii_search: boolean;

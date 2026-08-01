@@ -12,6 +12,7 @@ pub mod hotkey;
 pub mod menu_spec;
 pub mod native_menu;
 pub mod preview;
+pub mod shell_actions;
 pub mod url_protocol;
 
 use std::sync::Arc;
@@ -65,8 +66,7 @@ fn kill_other_freally_instances() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env()
                 // Default raises the floor to `info` for our own crates
                 // so the targeted instrumentation (freally::preview,
                 // freally::icons, freally_ui_lib) is visible without
@@ -76,8 +76,7 @@ pub fn run() {
                     tracing_subscriber::EnvFilter::new(
                         "warn,freally=info,freally_ui_lib=info,freally_indexd=info",
                     )
-                }),
-        )
+                }))
         .try_init();
 
     // Surface Rust panics in the console with the panic message + a
@@ -184,6 +183,19 @@ pub fn run() {
             commands::files::files_preview,
             commands::files::files_copy_text,
             commands::files::files_whitelist_user_chosen,
+            // Build 1 (SRC-M03) file-list interop.
+            commands::file_lists::file_list_export,
+            commands::file_lists::file_list_import,
+            // Build 1 result verbs — SRC-M04 / M05 / M06.
+            commands::shell_verbs::open_with_candidates,
+            commands::shell_verbs::open_with,
+            commands::shell_verbs::copy_file_contents,
+            commands::shell_verbs::copy_files_as_objects,
+            commands::shell_verbs::copy_path_list,
+            commands::shell_verbs::open_terminal_here,
+            commands::shell_verbs::run_custom_command,
+            // Build 1 (SRC-M01) hit-in-context viewer.
+            commands::content_view::content_document,
             // Phase 12 daemon-routed Settings → Indexes panels.
             commands::volumes::volumes_list,
             commands::volumes::volumes_update,
