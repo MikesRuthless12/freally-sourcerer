@@ -83,6 +83,14 @@ impl KnownPaths {
             .or_insert(provenance);
     }
 
+    /// Drop a grant. Used when a path stops naming the file it was
+    /// granted for — after a rename, the old name is just a free slot,
+    /// and a later unrelated file created there must not inherit a
+    /// permission the daemon never gave it.
+    pub fn revoke(&self, path: &str) {
+        self.paths.lock().unwrap().remove(path);
+    }
+
     pub fn contains(&self, path: &str) -> bool {
         self.paths.lock().unwrap().contains_key(path)
     }
@@ -156,6 +164,17 @@ mod tests {
         // A later query hit for the same path must not demote it.
         k.add("/vault/a.txt");
         assert!(k.verify("/vault/a.txt", Provenance::UserChosen).is_ok());
+    }
+
+    #[test]
+    fn a_revoked_path_stops_qualifying() {
+        let k = KnownPaths::new();
+        k.add("/vault/a.txt");
+        assert!(k.verify("/vault/a.txt", Provenance::QueryHit).is_ok());
+        // After a rename, /vault/a.txt names nothing. A file later
+        // created there was never in any result set.
+        k.revoke("/vault/a.txt");
+        assert!(k.verify("/vault/a.txt", Provenance::QueryHit).is_err());
     }
 
     #[test]

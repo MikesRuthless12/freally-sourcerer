@@ -166,6 +166,9 @@ struct VolumeWatcher {
     metrics: Arc<WatcherMetrics>,
     state: WatcherState,
     stop: Arc<AtomicBool>,
+    /// Dropped to wake the producer out of its stream wait. Nothing is
+    /// ever sent on it — the drop is the signal.
+    stop_tx: Option<futures::channel::oneshot::Sender<()>>,
     /// `None` when the subscriber could not be opened.
     subscriber: Option<Arc<JournalSubscriber>>,
     /// Stream generation observed at open. A later mismatch means the OS
@@ -276,6 +279,7 @@ impl WatcherSupervisor {
         let queue = EventQueue::new(QUEUE_CAPACITY);
         let metrics = Arc::new(WatcherMetrics::default());
         let stop = Arc::new(AtomicBool::new(false));
+        let (stop_tx, stop_rx) = futures::channel::oneshot::channel::<()>();
 
         let opened = freally_journal::open(&root);
         let (state, subscriber, opened_generation) = match opened {
@@ -302,6 +306,7 @@ impl WatcherSupervisor {
                 queue.clone(),
                 metrics.clone(),
                 stop.clone(),
+                stop_rx,
             ));
             threads.push(spawn_consumer(
                 root.clone(),
@@ -319,6 +324,7 @@ impl WatcherSupervisor {
             metrics,
             state,
             stop,
+            stop_tx: Some(stop_tx),
             subscriber,
             opened_generation,
             threads,
@@ -329,8 +335,11 @@ impl WatcherSupervisor {
 impl VolumeWatcher {
     fn shutdown(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        // Wakes the consumer's `wait_for_events` and makes the producer's
-        // next `try_push` fail, so both loops observe the stop flag.
+        // Dropping the sender is what actually wakes the producer: it is
+        // parked on an OS stream that may never yield again, so a flag
+        // alone would leave the join below blocking forever.
+        self.stop_tx.take();
+        // Wakes the consumer's `wait_for_events`.
         self.queue.close();
         for t in self.threads.drain(..) {
             let _ = t.join();
@@ -351,6 +360,7 @@ fn spawn_producer(
     queue: EventQueue,
     metrics: Arc<WatcherMetrics>,
     stop: Arc<AtomicBool>,
+    stop_rx: futures::channel::oneshot::Receiver<()>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name("freally-indexd/journal-producer".into())
@@ -359,19 +369,37 @@ fn spawn_producer(
             use futures::executor::block_on;
 
             let stream = subscriber.subscribe();
-            let mut stream = Box::pin(stream);
-            while let Some(event) = block_on(stream.next()) {
-                if stop.load(Ordering::Relaxed) {
-                    break;
+            block_on(async move {
+                // Racing the stream against a stop signal is what makes
+                // shutdown possible at all. Checking a flag after
+                // `stream.next()` resolves is not enough: on a quiet
+                // volume the next event may be hours away, or never, and
+                // the OS stream cannot be closed from this side — the
+                // Windows subscriber has no `Drop`, and the mac/linux
+                // ones only stop when the subscriber itself drops, which
+                // cannot happen while this thread holds a clone of it.
+                // Without this the `join()` in `shutdown` blocks forever.
+                let mut stream = stream.fuse();
+                let mut stop_rx = stop_rx;
+                loop {
+                    futures::select! {
+                        event = stream.next() => {
+                            let Some(event) = event else { break };
+                            if stop.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            if !matches_prefixes(&event, &prefixes) {
+                                continue;
+                            }
+                            metrics.note_event();
+                            if queue.try_push(event).is_err() {
+                                metrics.note_drop();
+                            }
+                        }
+                        _ = stop_rx => break,
+                    }
                 }
-                if !matches_prefixes(&event, &prefixes) {
-                    continue;
-                }
-                metrics.note_event();
-                if queue.try_push(event).is_err() {
-                    metrics.note_drop();
-                }
-            }
+            });
             info!(root = %root.display(), "journal producer exited");
         })
         .expect("spawn journal producer")
@@ -469,21 +497,35 @@ fn coalesce(batch: Vec<JournalEvent>) -> Vec<JournalEvent> {
     {
         // Keys borrow from `batch`, so folding costs no allocation — the
         // scope ends before `batch` is consumed below.
-        let mut last_foldable: std::collections::HashMap<&Path, usize> =
+        // Keyed by (path, kind), because `Modify` and `AttrChange` are
+        // NOT interchangeable: a `Modify` carries size and mtime, an
+        // `AttrChange` carries only the attribute bits. Folding a
+        // `Modify` into a following `AttrChange` — `cc -o app` then
+        // `chmod +x app`, which arrive in one batch — would throw the
+        // new size and mtime away and index the stale ones.
+        let mut last_foldable: std::collections::HashMap<(&Path, u8), usize> =
             std::collections::HashMap::new();
         for (i, ev) in batch.iter().enumerate() {
             match ev {
-                JournalEvent::Modify { path, .. } | JournalEvent::AttrChange { path, .. } => {
-                    if let Some(prev) = last_foldable.insert(path.as_path(), i) {
+                JournalEvent::Modify { path, .. } => {
+                    if let Some(prev) = last_foldable.insert((path.as_path(), 0), i) {
+                        keep[prev] = false;
+                    }
+                }
+                JournalEvent::AttrChange { path, .. } => {
+                    if let Some(prev) = last_foldable.insert((path.as_path(), 1), i) {
                         keep[prev] = false;
                     }
                 }
                 JournalEvent::Create { path, .. } | JournalEvent::Delete { path } => {
-                    last_foldable.remove(path.as_path());
+                    last_foldable.remove(&(path.as_path(), 0));
+                    last_foldable.remove(&(path.as_path(), 1));
                 }
                 JournalEvent::Rename { old_path, new_path } => {
-                    last_foldable.remove(old_path.as_path());
-                    last_foldable.remove(new_path.as_path());
+                    for p in [old_path.as_path(), new_path.as_path()] {
+                        last_foldable.remove(&(p, 0));
+                        last_foldable.remove(&(p, 1));
+                    }
                 }
             }
         }
@@ -506,11 +548,16 @@ fn matches_prefixes(event: &JournalEvent, prefixes: &[String]) -> bool {
     // every USN record on the drive — including the vast majority that
     // are filtered out. Compare in place rather than lowercasing a copy
     // of each path first.
+    // Case folding is full-Unicode, not ASCII-only: NTFS and APFS fold
+    // the whole Unicode range, so a watched folder configured as
+    // `C:\Café\` must still match the journal's `C:\CAFÉ\notes.txt`.
+    // Comparing those byte-wise would filter out every event for that
+    // folder while the Health panel still reported it as monitored.
+    // Compared character-by-character so no lowercased copy is allocated
+    // per event.
     let under_any = |p: &Path| {
-        let bytes = p.as_os_str().as_encoded_bytes();
-        prefixes.iter().any(|pre| {
-            bytes.len() >= pre.len() && bytes[..pre.len()].eq_ignore_ascii_case(pre.as_bytes())
-        })
+        let path = p.to_string_lossy();
+        prefixes.iter().any(|pre| starts_with_fold(&path, pre))
     };
     match event {
         JournalEvent::Create { path, .. }
@@ -521,6 +568,24 @@ fn matches_prefixes(event: &JournalEvent, prefixes: &[String]) -> bool {
         // be removed from the index.
         JournalEvent::Rename { old_path, new_path } => under_any(old_path) || under_any(new_path),
     }
+}
+
+/// Case-insensitive, separator-insensitive `starts_with`, allocation-free.
+///
+/// Both separators are treated as equal so a folder configured with
+/// forward slashes still matches the backslash paths the USN journal
+/// reports.
+fn starts_with_fold(haystack: &str, prefix: &str) -> bool {
+    let mut h = haystack.chars();
+    for pc in prefix.chars() {
+        let Some(hc) = h.next() else { return false };
+        let norm = |c: char| if c == '\\' { '/' } else { c };
+        let (hc, pc) = (norm(hc), norm(pc));
+        if hc != pc && !hc.to_lowercase().eq(pc.to_lowercase()) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Map watched folders onto the roots a subscriber can actually be opened
@@ -635,6 +700,67 @@ mod tests {
                 modify("/a", 2),
             ]
         );
+    }
+
+    #[test]
+    fn a_modify_is_never_folded_into_a_following_attrchange() {
+        // `cc -o app foo.c && chmod +x app` emits Modify then AttrChange
+        // in one batch. AttrChange carries only the attribute bits, so
+        // folding the Modify away would index the stale size and mtime.
+        let out = coalesce(vec![
+            modify("/a/app", 4096),
+            JournalEvent::AttrChange {
+                path: PathBuf::from("/a/app"),
+                attrs: 0o755,
+            },
+        ]);
+        assert_eq!(
+            out.len(),
+            2,
+            "the Modify carries size/mtime and must survive"
+        );
+        assert_eq!(out[0], modify("/a/app", 4096));
+    }
+
+    #[test]
+    fn repeated_attrchanges_still_fold() {
+        let out = coalesce(vec![
+            JournalEvent::AttrChange {
+                path: PathBuf::from("/a/x"),
+                attrs: 1,
+            },
+            JournalEvent::AttrChange {
+                path: PathBuf::from("/a/x"),
+                attrs: 2,
+            },
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out[0],
+            JournalEvent::AttrChange {
+                path: PathBuf::from("/a/x"),
+                attrs: 2
+            }
+        );
+    }
+
+    #[test]
+    fn the_prefix_filter_folds_non_ascii_case_like_the_filesystem_does() {
+        // NTFS and APFS fold the whole Unicode range, so a folder
+        // configured as `C:\Café\` must match the journal's `C:\CAFÉ\`.
+        // ASCII-only folding silently dropped every event for it.
+        let prefixes = vec!["C:\\Café\\".to_string()];
+        assert!(matches_prefixes(&create("C:\\CAFÉ\\notes.txt"), &prefixes));
+        assert!(matches_prefixes(&create("c:\\café\\notes.txt"), &prefixes));
+        assert!(!matches_prefixes(&create("C:\\Other\\x.txt"), &prefixes));
+    }
+
+    #[test]
+    fn the_prefix_filter_accepts_either_separator() {
+        // A folder configured with forward slashes still has to match
+        // the backslash paths the USN journal reports.
+        let prefixes = vec!["C:/Users/Me/".to_string()];
+        assert!(matches_prefixes(&create("C:\\Users\\Me\\a.txt"), &prefixes));
     }
 
     #[test]

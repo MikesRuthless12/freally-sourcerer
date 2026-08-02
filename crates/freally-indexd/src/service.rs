@@ -541,10 +541,16 @@ async fn index_compact(_svc: &IndexdService) -> Result<Value, RpcError> {
 }
 
 async fn index_rebuild(svc: &IndexdService) -> Result<Value, RpcError> {
+    svc.state.reconcile_catalogs().await;
     let folders = svc.state.folders.read().await.clone();
     tracing::info!(count = folders.len(), "index.rebuild received");
     for f in folders {
         let scan_path = std::path::PathBuf::from(&f.path);
+        // The scan stamps every row with whatever volume map is installed,
+        // so refresh it first — otherwise a drive plugged in since boot is
+        // indexed with no volume, or worse, with the id of whatever used to
+        // hold that drive letter.
+        svc.state.reconcile_catalogs().await;
         crate::scanner::spawn_scan(svc.state.index.clone(), &scan_path);
     }
     Ok(json!({ "ok": true }))
@@ -911,6 +917,7 @@ async fn folders_rescan(svc: &IndexdService, params: Value) -> Result<Value, Rpc
 }
 
 async fn folders_rescan_all(svc: &IndexdService) -> Result<Value, RpcError> {
+    svc.state.reconcile_catalogs().await;
     let folders = svc.state.folders.read().await.clone();
     tracing::info!(count = folders.len(), "folders.rescan_all received");
     for f in folders {

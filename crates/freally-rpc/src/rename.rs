@@ -297,19 +297,22 @@ fn derive_name(from_name: &str, rule: &RenameRule, m: &Matcher, counter: u32) ->
         NamePart::Full => from_name,
     };
 
+    // The counter is expanded into the *replacement text only*, never
+    // over the finished name. Expanding afterwards would rewrite a
+    // literal `{n}` that was already part of the file's own name, so a
+    // folder of templates (`invoice_{n}.pdf`) would be silently
+    // renumbered by a rule that matches nothing at all.
+    let replacement = expand_counter(&rule.replace, counter);
     let replaced = match m {
         Matcher::Passthrough => target.to_string(),
         Matcher::Literal { find, ignore_case } => {
-            replace_literal(target, find, &rule.replace, *ignore_case)
+            replace_literal(target, find, &replacement, *ignore_case)
         }
-        // `$1` capture references are expanded by the regex crate; the
-        // counter tokens are expanded afterwards so `{n}` works in both
-        // regex and literal mode.
-        Matcher::Regex(re) => re.replace_all(target, rule.replace.as_str()).into_owned(),
+        // `$1` capture references are expanded by the regex crate.
+        Matcher::Regex(re) => re.replace_all(target, replacement.as_str()).into_owned(),
     };
 
-    let with_counter = expand_counter(&replaced, counter);
-    let cased = apply_case(&with_counter, rule.case);
+    let cased = apply_case(&replaced, rule.case);
 
     match rule.part {
         // Re-attach the extension the rule was never allowed to touch.
@@ -506,25 +509,149 @@ pub enum RenameApplyError {
     EscapesDirectory,
     #[error("rename failed, batch rolled back: {0}")]
     Failed(String),
+    /// The batch failed *and* undoing what had already moved failed too,
+    /// so some files are sitting under their new names with no journal
+    /// entry. Named explicitly because telling the user "nothing
+    /// changed" here would leave them unable to find those files.
+    #[error("rename failed ({error}), and {} file(s) could not be moved back: {}", stranded.len(), stranded.join(", "))]
+    PartiallyRolledBack {
+        error: String,
+        stranded: Vec<String>,
+    },
+}
+
+/// True when both paths name the same file on disk — which is what a
+/// case-only rename looks like on Windows and macOS, where the
+/// filesystem is case-insensitive.
+///
+/// Needed because "does the destination already exist?" and "would this
+/// rename destroy something?" are different questions: renaming
+/// `report.txt` to `REPORT.txt` finds an existing destination that *is*
+/// the source, and refusing it would make every case transform
+/// impossible on the two platforms most users are on.
+pub fn is_same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// `std::fs::rename` that refuses to replace an existing destination.
+///
+/// The standard library's rename maps to `MOVEFILE_REPLACE_EXISTING` on
+/// Windows and plain `rename(2)` on Unix, both of which **silently
+/// destroy** whatever is at the destination. Every guard above this is a
+/// `try_exists` check, and a check is not a guarantee: between the check
+/// and the move, a sync client, an editor, or the user's own file
+/// manager can create that name. This is the only place the guarantee
+/// can actually be made, because only the kernel can make it atomically.
+fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Storage::FileSystem::{MOVE_FILE_FLAGS, MoveFileExW};
+        use windows::core::PCWSTR;
+
+        let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(Some(0)).collect() };
+        let (f, t) = (wide(from), wide(to));
+        // No MOVEFILE_REPLACE_EXISTING: the call fails with
+        // ERROR_ALREADY_EXISTS rather than clobbering.
+        unsafe { MoveFileExW(PCWSTR(f.as_ptr()), PCWSTR(t.as_ptr()), MOVE_FILE_FLAGS(0)) }
+            .map_err(|e| std::io::Error::other(e.to_string()))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let c = |p: &Path| CString::new(p.as_os_str().as_bytes()).ok();
+        let (Some(f), Some(t)) = (c(from), c(to)) else {
+            return Err(std::io::Error::other("path contains an interior NUL"));
+        };
+        // RENAME_NOREPLACE (1) needs Linux 3.15+ and filesystem support.
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                libc::AT_FDCWD,
+                f.as_ptr(),
+                libc::AT_FDCWD,
+                t.as_ptr(),
+                1u32,
+            )
+        };
+        if rc == 0 {
+            return Ok(());
+        }
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            // Old kernel or a filesystem without the flag. Fall back to
+            // the racy rename rather than refusing to work at all — the
+            // caller's existence check still covers the common case.
+            Some(libc::ENOSYS) | Some(libc::EINVAL) | Some(libc::ENOTTY) => {
+                std::fs::rename(from, to)
+            }
+            _ => Err(err),
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let c = |p: &Path| CString::new(p.as_os_str().as_bytes()).ok();
+        let (Some(f), Some(t)) = (c(from), c(to)) else {
+            return Err(std::io::Error::other("path contains an interior NUL"));
+        };
+        // RENAME_EXCL == 0x04.
+        let rc = unsafe { libc::renamex_np(f.as_ptr(), t.as_ptr(), 0x04) };
+        if rc == 0 {
+            return Ok(());
+        }
+        let err = std::io::Error::last_os_error();
+        match err.raw_os_error() {
+            Some(libc::ENOTSUP) | Some(libc::EINVAL) => std::fs::rename(from, to),
+            _ => Err(err),
+        }
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        std::fs::rename(from, to)
+    }
 }
 
 /// Perform the moves, rolling back on the first failure.
 ///
 /// A bulk rename that dies halfway leaves the user with a directory in
 /// two naming schemes and no record of which files moved. The rollback
-/// is best-effort — if it also fails there is nothing further to try —
-/// but it turns the common failure (one file locked by another process)
-/// into a no-op instead of a mess.
+/// is best-effort, and when it *also* fails the error says so rather
+/// than claiming a clean rollback — a caller that is told "nothing
+/// changed" when files did move has no way to find them again.
 pub fn perform_moves(moves: &[(PathBuf, PathBuf)]) -> Result<usize, RenameApplyError> {
     let mut done: Vec<&(PathBuf, PathBuf)> = Vec::with_capacity(moves.len());
     for pair in moves {
-        match std::fs::rename(&pair.0, &pair.1) {
+        // A case-only rename has a destination that *is* the source, so
+        // the no-replace call would refuse it. Nothing can be destroyed
+        // in that case by definition.
+        let res = if is_same_file(&pair.0, &pair.1) {
+            std::fs::rename(&pair.0, &pair.1)
+        } else {
+            rename_no_replace(&pair.0, &pair.1)
+        };
+        match res {
             Ok(()) => done.push(pair),
             Err(e) => {
+                let mut stranded = Vec::new();
                 for (undo_from, undo_to) in done.iter().rev() {
-                    let _ = std::fs::rename(undo_to, undo_from);
+                    if std::fs::rename(undo_to, undo_from).is_err() {
+                        stranded.push(undo_to.to_string_lossy().into_owned());
+                    }
                 }
-                return Err(RenameApplyError::Failed(e.to_string()));
+                return Err(if stranded.is_empty() {
+                    RenameApplyError::Failed(e.to_string())
+                } else {
+                    RenameApplyError::PartiallyRolledBack {
+                        error: e.to_string(),
+                        stranded,
+                    }
+                });
             }
         }
     }
@@ -640,6 +767,39 @@ mod tests {
         };
         let p = plan(&["/a/x.txt".into(), "/a/x2.txt".into()], &r);
         assert_eq!(names(&p), vec!["9.txt", "102.txt"]);
+    }
+
+    #[test]
+    fn a_counter_token_already_in_the_file_name_is_left_alone() {
+        // A folder of templates (`invoice_{n}.pdf`) must survive a rule
+        // that does not target them. Expanding the counter over the
+        // finished name renumbered every one of them, under a rule that
+        // matches nothing at all.
+        // (A padded token like `{n:04}` cannot appear in a real file
+        // name — the colon is rejected outright — so the bare form is
+        // the only one that can actually sit on disk.)
+        let p = plan(
+            &["/d/invoice_{n}.pdf".into(), "/d/label_{n}.svg".into()],
+            &rule(),
+        );
+        assert_eq!(names(&p), vec!["invoice_{n}.pdf", "label_{n}.svg"]);
+        assert!(p.items.iter().all(|i| i.status == RenameStatus::Unchanged));
+    }
+
+    #[test]
+    fn a_counter_in_the_replacement_still_expands_over_such_a_name() {
+        let r = RenameRule {
+            find: "invoice".into(),
+            replace: "bill-{n}".into(),
+            counter_start: 7,
+            ..rule()
+        };
+        // The literal `{n}` from the original name survives; only the
+        // one the rule introduced is numbered.
+        assert_eq!(
+            names(&plan(&["/d/invoice_{n}.pdf".into()], &r)),
+            vec!["bill-7_{n}.pdf"]
+        );
     }
 
     #[test]

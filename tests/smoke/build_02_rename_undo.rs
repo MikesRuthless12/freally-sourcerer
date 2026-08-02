@@ -107,6 +107,44 @@ fn a_batch_that_would_overwrite_an_existing_file_changes_nothing() {
 }
 
 #[test]
+fn a_move_never_destroys_an_existing_destination() {
+    // `std::fs::rename` replaces the destination on every platform, so
+    // the `exists()` check upstream is a check, not a guarantee: a sync
+    // client can create the name in the window between the two. This is
+    // the guarantee itself.
+    let dir = tempfile::tempdir().unwrap();
+    let a = touch(dir.path(), "a.txt");
+    let victim = dir.path().join("b.txt");
+    std::fs::write(&victim, b"MUST-SURVIVE").unwrap();
+
+    let moves = vec![(PathBuf::from(&a), victim.clone())];
+    assert!(
+        perform_moves(&moves).is_err(),
+        "renaming over an existing file must be refused by the kernel"
+    );
+    assert_eq!(std::fs::read(&victim).unwrap(), b"MUST-SURVIVE");
+    assert!(Path::new(&a).exists(), "the source is left where it was");
+}
+
+#[test]
+fn a_case_only_rename_is_allowed_even_where_the_filesystem_is_case_insensitive() {
+    // On NTFS and APFS the destination "exists" because it *is* the
+    // source. Refusing that would make every Case transform impossible
+    // on the two platforms most users are on.
+    let dir = tempfile::tempdir().unwrap();
+    let from = touch(dir.path(), "report.txt");
+    let to = dir.path().join("REPORT.txt");
+
+    assert_eq!(perform_moves(&[(PathBuf::from(&from), to)]).unwrap(), 1);
+    let got = names_in(dir.path());
+    assert_eq!(got.len(), 1);
+    assert!(
+        got.contains("REPORT.txt") || got.contains("report.txt"),
+        "got {got:?}"
+    );
+}
+
+#[test]
 fn a_failed_move_rolls_the_whole_batch_back() {
     let dir = tempfile::tempdir().unwrap();
     let a = touch(dir.path(), "a.txt");

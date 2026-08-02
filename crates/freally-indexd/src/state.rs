@@ -201,20 +201,31 @@ impl DaemonState {
         let detected = crate::volumes::detect();
         let now = crate::watcher::now_ms();
 
-        let went_offline = self.catalogs.write().await.reconcile(&detected, now);
+        let (went_offline, registry_changed) =
+            self.catalogs.write().await.reconcile(&detected, now);
         for id in &went_offline {
             // Rows stay in the index — that is the whole point of a
             // catalog. Only the badge changes.
             tracing::info!(volume = %id, "volume detached; retained as an offline catalog");
         }
 
+        // Same predicate the registry uses. A mounted-but-unreadable
+        // volume (an empty card reader) has no catalog, so stamping rows
+        // with its id would produce hits that can never carry a badge or
+        // be reached by `volume:`.
         self.index.set_volume_map(freally_index::VolumeMap::new(
             detected
                 .iter()
+                .filter(|v| v.status != freally_rpc::VolumeStatus::Offline)
                 .map(|v| (PathBuf::from(&v.mount_point), v.id.clone())),
         ));
 
-        if !went_offline.is_empty() {
+        // Persist whenever the registry changed at all, not only when
+        // something went offline. A device seen for the first time is
+        // exactly the record that must survive the next unplug, and
+        // relying on some later handler to persist it meant a quiet
+        // session could lose it.
+        if !went_offline.is_empty() || registry_changed {
             if let Err(e) = self.persist().await {
                 tracing::warn!(error = %e, "persisting catalogs failed");
             }
@@ -287,9 +298,22 @@ fn write_json<T: Serialize>(p: &std::path::Path, v: &T) -> anyhow::Result<()> {
     }
     let s = serde_json::to_string_pretty(v)?;
     // Tmp-rename so a crash mid-write can't truncate the file.
-    let tmp = p.with_extension("json.tmp");
+    //
+    // The tmp name is unique per call. The RPC server runs a task per
+    // request, so two handlers really can be inside `persist()` at once
+    // — and with a fixed `foo.json.tmp` they would write the same file
+    // and then one would rename a path the other had already consumed,
+    // failing the whole persist partway through. Worse, interleaved
+    // writes could leave a truncated file that `load_or_default`
+    // silently resets to defaults, losing every catalog the user had.
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = p.with_extension(format!("json.{}.{n}.tmp", std::process::id()));
     std::fs::write(&tmp, s)?;
-    std::fs::rename(&tmp, p)?;
+    if let Err(e) = std::fs::rename(&tmp, p) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(())
 }
 

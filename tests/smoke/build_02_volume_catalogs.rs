@@ -181,7 +181,7 @@ fn unplugging_a_drive_keeps_its_files_findable_and_still_named() {
     let (_d, idx, mut registry) = fixture();
 
     // Orange is detached; only Blue is still attached.
-    let gone = registry.reconcile(&[vol("ext-blue", "Blue Backup", "/mnt/blue")], 2_000);
+    let (gone, _) = registry.reconcile(&[vol("ext-blue", "Blue Backup", "/mnt/blue")], 2_000);
     assert_eq!(gone, vec!["ext-orange"]);
 
     // The whole point: the files are still there.

@@ -261,6 +261,15 @@ async fn run_service_daemon() -> Result<()> {
     // launch until much later (or ever, if Freally is being used
     // exclusively via its CLI / HTTP endpoint).
     {
+        // Catalogs first, and watchers second, exactly as `spawn_at`
+        // does. This path does not go through `spawn_at`, so without
+        // these the service would bootstrap a full-volume scan against
+        // an empty volume map — stamping every row with no volume,
+        // permanently, until a rescan — and would never start live
+        // journaling at all.
+        state.reconcile_catalogs().await;
+        state.reconcile_watchers().await;
+
         let folders = state.folders.read().await.clone();
         if folders.is_empty() {
             tracing::info!("service: no folders configured yet; waiting for IPC");
@@ -287,6 +296,7 @@ async fn run_service_daemon() -> Result<()> {
     }
 
     server_handle.abort();
+    state.watchers.shutdown();
     let _ = state.persist().await;
     tracing::info!("service: clean shutdown");
     Ok(())
