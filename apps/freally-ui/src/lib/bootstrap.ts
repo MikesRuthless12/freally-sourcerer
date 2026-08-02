@@ -566,6 +566,7 @@ function registerHandlers() {
   registry.register("tools.custom_extractor_manager", async () =>
     dialogsStore.open("custom_extractor_manager")
   );
+  registry.register("tools.index_health", async () => dialogsStore.open("index_health"));
   registry.register("tools.verify_index", async () => indexIpc.verify());
   registry.register("tools.compact_index", async () => indexIpc.compact());
   registry.register("tools.rebuild_index", async () => indexIpc.rebuild());

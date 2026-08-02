@@ -24,3 +24,8 @@ freally-journal-mac = { path = "../freally-journal-mac" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 freally-journal-lin = { path = "../freally-journal-lin" }
+
+# Only the `portable_stub` fallback needs `futures` directly — on the three
+# real targets the per-OS crate re-exports its own stream type.
+[target.'cfg(not(any(windows, target_os = "macos", target_os = "linux")))'.dependencies]
+futures = { workspace = true }

@@ -103,6 +103,7 @@ export const COMMAND_IDS = [
   "tools.disconnect_endpoint",
   "tools.file_list_editor",
   "tools.custom_extractor_manager",
+  "tools.index_health",
   "tools.verify_index",
   "tools.compact_index",
   "tools.rebuild_index",

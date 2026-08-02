@@ -18,7 +18,7 @@ use futures::Stream;
 use futures::channel::mpsc;
 
 use crate::cursor::VolumeCursor;
-use crate::event::{JournalError, JournalEvent};
+use crate::event::{JournalError, JournalEvent, JournalPosition};
 use crate::ffi::{
     JournalState, ParsedUsnRecord, UsnRecordIter, VolumeHandle, enum_usn_data, query_usn_journal,
     read_usn_journal, resolve_path_by_frn, volume_info,
@@ -51,6 +51,15 @@ impl JournalSubscriber {
 
     pub fn cursor(&self) -> VolumeCursor {
         self.cursor.lock().expect("cursor mutex poisoned").clone()
+    }
+
+    /// OS-agnostic view of `cursor()` for the daemon's watcher supervisor.
+    pub fn position(&self) -> JournalPosition {
+        let c = self.cursor.lock().expect("cursor mutex poisoned");
+        JournalPosition {
+            generation: c.journal_id,
+            offset: c.next_usn.max(0) as u64,
+        }
     }
 }
 

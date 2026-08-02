@@ -1318,6 +1318,7 @@ dependencies = [
  "freally-similarity",
  "futures",
  "libc",
+ "parking_lot",
  "serde",
  "serde_json",
  "tempfile",
@@ -1336,6 +1337,7 @@ dependencies = [
  "freally-journal-lin",
  "freally-journal-mac",
  "freally-journal-win",
+ "futures",
  "serde",
  "thiserror",
 ]

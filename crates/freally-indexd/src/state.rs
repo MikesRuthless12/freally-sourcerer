@@ -28,6 +28,8 @@ use freally_rpc::{ExcludeRules, RescanSchedule, WatchedFolder};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+use crate::watcher::WatcherSupervisor;
+
 #[derive(Debug, Clone, Default)]
 pub struct DaemonOptions {
     pub index_root: Option<PathBuf>,
@@ -37,6 +39,9 @@ pub struct DaemonOptions {
 
 pub struct DaemonState {
     pub index: Arc<Index>,
+    /// Live change journaling. Starts idle; `reconcile_watchers` brings it
+    /// in line with the watched-folder set at boot and on every change.
+    pub watchers: WatcherSupervisor,
     pub audio_cache: Arc<AudioCache>,
     pub pipeline: RwLock<Pipeline>,
     pub custom_extractors: RwLock<CustomExtractorRegistry>,
@@ -160,6 +165,7 @@ impl DaemonState {
         let network = load_or_default::<NetworkState>(&config_dir.join("network.json"));
         let history = load_or_default::<HistoryConfig>(&config_dir.join("history.json"));
         Ok(Arc::new(Self {
+            watchers: WatcherSupervisor::new(index.clone()),
             index,
             audio_cache,
             pipeline: RwLock::new(pipeline),
@@ -171,6 +177,19 @@ impl DaemonState {
             history: RwLock::new(history),
             config_dir,
         }))
+    }
+
+    /// Bring the live watchers in line with the current watched-folder
+    /// set. Idempotent; call after anything that adds or removes a folder.
+    pub async fn reconcile_watchers(&self) {
+        let paths: Vec<String> = self
+            .folders
+            .read()
+            .await
+            .iter()
+            .map(|f| f.path.clone())
+            .collect();
+        self.watchers.reconcile(&paths);
     }
 
     pub async fn persist(&self) -> anyhow::Result<()> {
