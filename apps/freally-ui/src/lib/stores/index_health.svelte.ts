@@ -16,7 +16,7 @@ class IndexHealthStore {
   /** True while a one-click fix is running. */
   fixing = $state(false);
 
-  #timer: ReturnType<typeof setInterval> | null = null;
+  #timer: ReturnType<typeof setTimeout> | null = null;
 
   async refresh() {
     this.loading = this.health === null;
@@ -30,16 +30,28 @@ class IndexHealthStore {
     }
   }
 
+  #running = false;
+
   start() {
-    void this.refresh();
-    this.#timer ??= setInterval(() => void this.refresh(), POLL_MS);
+    if (this.#running) return;
+    this.#running = true;
+    void this.#tick();
   }
 
   stop() {
+    this.#running = false;
     if (this.#timer !== null) {
-      clearInterval(this.#timer);
+      clearTimeout(this.#timer);
       this.#timer = null;
     }
+  }
+
+  /** Self-scheduling rather than `setInterval`: a slow refresh must not
+   *  stack a second request on top of the one still in flight. */
+  async #tick() {
+    await this.refresh();
+    if (!this.#running) return;
+    this.#timer = setTimeout(() => void this.#tick(), POLL_MS);
   }
 
   /** Run an advisory's one-click fix, then re-read the numbers it fixed. */

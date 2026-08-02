@@ -303,4 +303,23 @@
     gap: 8px;
     margin-top: 16px;
   }
+  /* Matches the other dialogs' footer buttons. */
+  footer button {
+    padding: 6px 18px;
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 13px;
+  }
+  footer button.primary {
+    background: var(--accent-cyan);
+    border-color: var(--accent-cyan);
+    color: var(--bg-canvas);
+  }
+  footer button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 </style>

@@ -1,10 +1,12 @@
 //! SRC-M15 — the bulk-rename engine.
 //!
-//! Pure name arithmetic: given the selected paths and a rule, produce the
-//! new *file name* for each one, plus everything the preview table needs
-//! to warn before anything touches the disk. No I/O happens here, which
-//! is what makes the interesting parts — collision detection, template
-//! expansion, name validation — testable without a filesystem.
+//! Name arithmetic: given the selected paths and a rule, produce the new
+//! *file name* for each one, plus everything the preview table needs to
+//! warn before anything touches the disk. Planning is pure, which is what
+//! makes the interesting parts — collision detection, template expansion,
+//! name validation — testable without a filesystem. Applying a plan
+//! (`destination_for` / `perform_moves`) lives at the bottom of the file
+//! and is the only part that touches the disk.
 //!
 //! ## Why the engine returns names, never paths
 //!
@@ -20,6 +22,8 @@
 //! that could escape the source's own directory. The same derivation runs
 //! for the preview and for the apply, so what the user approved is what
 //! executes.
+
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -69,9 +73,6 @@ pub struct RenameRule {
     /// First value `{n}` takes.
     #[serde(default)]
     pub counter_start: u32,
-    /// How much `{n}` advances per item.
-    #[serde(default = "default_step")]
-    pub counter_step: u32,
 }
 
 fn default_case() -> CaseTransform {
@@ -79,9 +80,6 @@ fn default_case() -> CaseTransform {
 }
 fn default_part() -> NamePart {
     NamePart::Stem
-}
-fn default_step() -> u32 {
-    1
 }
 
 impl Default for RenameRule {
@@ -94,7 +92,6 @@ impl Default for RenameRule {
             case: CaseTransform::None,
             part: NamePart::Stem,
             counter_start: 1,
-            counter_step: 1,
         }
     }
 }
@@ -190,29 +187,23 @@ pub fn plan(paths: &[String], rule: &RenameRule) -> RenamePlan {
     let mut items: Vec<RenameItem> = Vec::with_capacity(paths.len());
     for (i, from) in paths.iter().enumerate() {
         let from_name = file_name_of(from);
-        let counter = rule
-            .counter_start
-            .saturating_add(rule.counter_step.saturating_mul(i as u32));
+        let counter = rule.counter_start.saturating_add(i as u32);
 
-        let to_name = match &matcher {
-            Err(_) => from_name.clone(),
-            Ok(m) => derive_name(&from_name, rule, m, counter),
+        let (to_name, reason) = match &matcher {
+            Err(_) => (from_name.clone(), Some(InvalidReason::BadPattern)),
+            Ok(m) => {
+                let n = derive_name(&from_name, rule, m, counter);
+                let r = validate_name(&n);
+                (n, r)
+            }
         };
 
-        let status = if matcher.is_err() {
-            RenameStatus::Invalid
-        } else if let Some(_r) = validate_name(&to_name) {
+        let status = if reason.is_some() {
             RenameStatus::Invalid
         } else if to_name == from_name {
             RenameStatus::Unchanged
         } else {
             RenameStatus::Ok
-        };
-
-        let reason = if matcher.is_err() {
-            Some(InvalidReason::BadPattern)
-        } else {
-            validate_name(&to_name)
         };
 
         items.push(RenameItem {
@@ -238,7 +229,10 @@ fn mark_collisions(items: &mut [RenameItem]) {
     use std::collections::HashMap;
     let mut seen: HashMap<(String, String), Vec<usize>> = HashMap::new();
     for (i, it) in items.iter().enumerate() {
-        if it.status.is_blocking() && it.status != RenameStatus::Collision {
+        // Invalid rows are already blocking; `Collision` is what this
+        // function assigns and `Exists` is assigned later, so at this
+        // point `is_blocking` means exactly "invalid".
+        if it.status.is_blocking() {
             continue;
         }
         let dir = parent_of(&it.from);
@@ -472,6 +466,71 @@ pub fn validate_name(name: &str) -> Option<InvalidReason> {
     None
 }
 
+// ---------- applying a plan ----------
+//
+// The two functions below are the only part of the rename path that
+// touches the disk. They live here rather than in the Tauri app because
+// `apps/freally-ui/src-tauri` is excluded from the cargo workspace, so
+// anything defined there cannot be reached by `cargo test --workspace` —
+// and a rollback rule that is only covered by a re-typed copy of itself
+// is not covered at all. The app keeps what it uniquely owns: the
+// provenance gate and the daemon RPC.
+
+/// Absolute destination for one row: the source's own parent joined with
+/// a validated bare name.
+///
+/// This is the last line of defence against a derived name escaping the
+/// directory it came from — see the module docs. It is deliberately not
+/// given the destination by its caller.
+pub fn destination_for(from: &str, to_name: &str) -> Result<PathBuf, RenameApplyError> {
+    if validate_name(to_name).is_some() {
+        return Err(RenameApplyError::InvalidName);
+    }
+    let parent = Path::new(from).parent().ok_or(RenameApplyError::NoParent)?;
+    let dest = parent.join(to_name);
+    // Joining a validated bare name onto the parent cannot escape it;
+    // assert the invariant rather than assume it.
+    if dest.parent() != Some(parent) {
+        return Err(RenameApplyError::EscapesDirectory);
+    }
+    Ok(dest)
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum RenameApplyError {
+    #[error("derived name is not a valid file name")]
+    InvalidName,
+    #[error("source path has no parent directory")]
+    NoParent,
+    #[error("derived name would leave the source directory")]
+    EscapesDirectory,
+    #[error("rename failed, batch rolled back: {0}")]
+    Failed(String),
+}
+
+/// Perform the moves, rolling back on the first failure.
+///
+/// A bulk rename that dies halfway leaves the user with a directory in
+/// two naming schemes and no record of which files moved. The rollback
+/// is best-effort — if it also fails there is nothing further to try —
+/// but it turns the common failure (one file locked by another process)
+/// into a no-op instead of a mess.
+pub fn perform_moves(moves: &[(PathBuf, PathBuf)]) -> Result<usize, RenameApplyError> {
+    let mut done: Vec<&(PathBuf, PathBuf)> = Vec::with_capacity(moves.len());
+    for pair in moves {
+        match std::fs::rename(&pair.0, &pair.1) {
+            Ok(()) => done.push(pair),
+            Err(e) => {
+                for (undo_from, undo_to) in done.iter().rev() {
+                    let _ = std::fs::rename(undo_to, undo_from);
+                }
+                return Err(RenameApplyError::Failed(e.to_string()));
+            }
+        }
+    }
+    Ok(done.len())
+}
+
 fn file_name_of(path: &str) -> String {
     let trimmed = path.trim_end_matches(['/', '\\']);
     match trimmed.rfind(['/', '\\']) {
@@ -555,7 +614,6 @@ mod tests {
             find: "img".into(),
             replace: "photo-{n:03}".into(),
             counter_start: 1,
-            counter_step: 1,
             ..rule()
         };
         let p = plan(
@@ -578,7 +636,6 @@ mod tests {
             find: "x".into(),
             replace: "{n}".into(),
             counter_start: 9,
-            counter_step: 1,
             ..rule()
         };
         let p = plan(&["/a/x.txt".into(), "/a/x2.txt".into()], &r);

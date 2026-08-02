@@ -206,7 +206,6 @@ pub fn run() {
             commands::rename::ops_undo,
             commands::rename::ops_redo,
             commands::rename::ops_list,
-            commands::rename::ops_trash_restore_supported,
             commands::volumes::volumes_recreate_journal,
             commands::volumes::volumes_reset_stream,
             commands::volumes::volumes_upgrade_fanotify,

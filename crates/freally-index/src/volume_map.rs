@@ -43,14 +43,53 @@ impl VolumeMap {
     }
 
     /// The volume id owning `path`, or `""` when nothing matches.
+    ///
+    /// Called once per file during a bootstrap scan — a million times on
+    /// a system volume — so the empty-map case (no daemon has installed
+    /// a table yet) returns before allocating anything, and the match
+    /// itself compares in place rather than building a normalized copy
+    /// of the whole path.
     pub fn resolve(&self, path: &Path) -> String {
-        let p = normalize(path);
+        if self.entries.is_empty() {
+            return String::new();
+        }
+        let raw = path.as_os_str().as_encoded_bytes();
         for (mount, id) in &self.entries {
-            if is_under(&p, mount) {
+            if is_under_bytes(raw, mount.as_bytes()) {
                 return id.clone();
             }
         }
         String::new()
+    }
+}
+
+/// `is_under` over raw path bytes, so `resolve` needs no allocation.
+///
+/// `mount` is already normalized (lower-case, forward slashes, no
+/// trailing separator); `path` is compared as it came in, folding ASCII
+/// case and treating either separator as a match. Non-ASCII case is not
+/// folded here — a mount point and the paths beneath it come from the
+/// same filesystem, so their casing already agrees.
+fn is_under_bytes(path: &[u8], mount: &[u8]) -> bool {
+    if mount == b"/" {
+        return path.first().is_some_and(|&b| b == b'/' || b == b'\\');
+    }
+    if path.len() < mount.len() {
+        return false;
+    }
+    let head = &path[..mount.len()];
+    let matches = head.iter().zip(mount).all(|(a, b)| {
+        let a = if *a == b'\\' { b'/' } else { *a };
+        a.eq_ignore_ascii_case(b)
+    });
+    if !matches {
+        return false;
+    }
+    // Whole components only: `/media/usb2` does not sit under
+    // `/media/usb`.
+    match path.get(mount.len()) {
+        None => true,
+        Some(&b) => b == b'/' || b == b'\\',
     }
 }
 
@@ -68,21 +107,6 @@ fn normalize(p: &Path) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-/// True when `path` is `mount` itself or sits beneath it. Compares whole
-/// components, so `/media/usb2` is not treated as living under
-/// `/media/usb`.
-fn is_under(path: &str, mount: &str) -> bool {
-    if mount == "/" {
-        return path.starts_with('/');
-    }
-    if path == mount {
-        return true;
-    }
-    path.len() > mount.len()
-        && path.starts_with(mount)
-        && path.as_bytes().get(mount.len()) == Some(&b'/')
 }
 
 #[cfg(test)]

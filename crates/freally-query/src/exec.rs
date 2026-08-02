@@ -727,42 +727,52 @@ pub trait VolumeCatalogs {
     fn resolve(&self, needle: &str) -> Vec<String>;
 }
 
+/// The registry used when a caller supplies none: a needle stands for
+/// itself, so `volume:win-d` matches that volume id directly.
+///
+/// This exists so the predicate has exactly one shape. Branching inside
+/// the evaluator on "was a registry wired?" would mean the CLI and the
+/// tests exercise a different `volume:` than the daemon ships — the
+/// branch that reaches users being the one with the least coverage.
+struct IdentityCatalogs;
+
+impl VolumeCatalogs for IdentityCatalogs {
+    fn resolve(&self, needle: &str) -> Vec<String> {
+        vec![needle.to_string()]
+    }
+}
+
 /// Every `volume:` needle in a query, mapped to the volume ids it
-/// resolved to. Absent from the map means no registry was available and
-/// the predicate falls back to matching the row's volume id directly.
-type VolumeNeedles = std::collections::HashMap<String, std::collections::HashSet<String>>;
+/// resolved to.
+type VolumeNeedles = std::collections::HashMap<String, Vec<String>>;
 
 /// Walk the AST once and pre-resolve each distinct `volume:` needle.
 fn resolve_volume_needles(
     root: &QueryNode,
     catalogs: Option<&dyn VolumeCatalogs>,
 ) -> VolumeNeedles {
+    let identity = IdentityCatalogs;
+    let catalogs: &dyn VolumeCatalogs = catalogs.unwrap_or(&identity);
     let mut out = VolumeNeedles::new();
-    let Some(catalogs) = catalogs else {
-        return out;
-    };
-    fn walk(node: &QueryNode, out: &mut Vec<String>) {
+    fn walk(node: &QueryNode, catalogs: &dyn VolumeCatalogs, out: &mut VolumeNeedles) {
         match node {
             QueryNode::Modifier(m) => {
                 if let ModifierKind::Volume(needle) = &m.kind {
-                    out.push(needle.clone());
+                    if !out.contains_key(needle) {
+                        out.insert(needle.clone(), catalogs.resolve(needle));
+                    }
                 }
             }
-            QueryNode::Not(inner) | QueryNode::Lens { inner, .. } => walk(inner, out),
+            QueryNode::Not(inner) | QueryNode::Lens { inner, .. } => walk(inner, catalogs, out),
             QueryNode::And(parts) | QueryNode::Or(parts) => {
                 for p in parts {
-                    walk(p, out);
+                    walk(p, catalogs, out);
                 }
             }
             QueryNode::Text(_) | QueryNode::QuickFilter(_) | QueryNode::True => {}
         }
     }
-    let mut needles = Vec::new();
-    walk(root, &mut needles);
-    for n in needles {
-        out.entry(n.clone())
-            .or_insert_with(|| catalogs.resolve(&n).into_iter().collect());
-    }
+    walk(root, catalogs, &mut out);
     out
 }
 
@@ -964,11 +974,15 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow, ctx: &EvalCtx<'_>) -> bool 
             if row.volume.is_empty() {
                 return false;
             }
+            // Always populated — an absent registry resolves through
+            // `IdentityCatalogs`, so there is one predicate rather than
+            // one per wiring. Compared case-insensitively because volume
+            // ids carry the platform's own casing (`win-C`) while the
+            // user types whatever they like; the id set is a handful of
+            // entries, so this beats lowercasing the row per candidate.
             match ctx.volumes.get(needle) {
-                Some(ids) => ids.contains(&row.volume),
-                // No catalog registry wired in (CLI, tests): match the
-                // volume id directly so `volume:win-d` still works.
-                None => row.volume.to_lowercase().contains(&needle.to_lowercase()),
+                Some(ids) => ids.iter().any(|id| id.eq_ignore_ascii_case(&row.volume)),
+                None => false,
             }
         }
         ModifierKind::Parent(needle) => row

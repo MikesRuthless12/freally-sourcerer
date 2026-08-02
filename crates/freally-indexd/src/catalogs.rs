@@ -58,6 +58,7 @@ impl CatalogRegistry {
     /// caller can log the transition rather than re-deriving it.
     pub fn reconcile(&mut self, detected: &[VolumeInfo], now_ms: u64) -> Vec<String> {
         let mut went_offline = Vec::new();
+        let mut present: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
 
         for v in detected {
             // A volume the OS reports as offline is mounted-but-unreadable
@@ -66,6 +67,7 @@ impl CatalogRegistry {
             if v.status == VolumeStatus::Offline {
                 continue;
             }
+            present.insert(v.id.as_str());
             self.catalogs
                 .entry(v.id.clone())
                 .and_modify(|c| {
@@ -86,11 +88,6 @@ impl CatalogRegistry {
                 });
         }
 
-        let present: std::collections::BTreeSet<&str> = detected
-            .iter()
-            .filter(|v| v.status != VolumeStatus::Offline)
-            .map(|v| v.id.as_str())
-            .collect();
         for c in self.catalogs.values_mut() {
             if c.online && !present.contains(c.id.as_str()) {
                 c.online = false;
