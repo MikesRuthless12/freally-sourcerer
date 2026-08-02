@@ -36,6 +36,14 @@ pub struct DaemonOptions {
     pub index_root: Option<PathBuf>,
     pub audio_cache_path: Option<PathBuf>,
     pub extractor_registry_root: Option<PathBuf>,
+    /// True when this daemon serves **every user on the machine** over one
+    /// shared endpoint — i.e. the Windows service, whose pipe grants
+    /// Authenticated Users and whose state lives in `%PROGRAMDATA%`.
+    ///
+    /// The per-user desktop daemon leaves this false: it binds a
+    /// SID-tagged pipe ACL'd to one user, so its state has exactly one
+    /// owner.
+    pub shared_multi_user: bool,
 }
 
 pub struct DaemonState {
@@ -57,6 +65,12 @@ pub struct DaemonState {
     /// Lives here rather than in the app process so it survives a
     /// restart, which is the whole point of "the last N operations".
     pub operations: RwLock<OperationJournal>,
+    /// See [`DaemonOptions::shared_multi_user`]. When set, the journal is
+    /// refused rather than shared — undo means "undo *my* last
+    /// operation", and one stack serving every user on the machine cannot
+    /// mean that. It would also let any local peer queue a rename that
+    /// another user's Ctrl+Z executes under their own account.
+    pub shared_multi_user: bool,
     pub config_dir: PathBuf,
 }
 
@@ -186,6 +200,7 @@ impl DaemonState {
             history: RwLock::new(history),
             catalogs: RwLock::new(catalogs),
             operations: RwLock::new(operations),
+            shared_multi_user: opts.shared_multi_user,
             config_dir,
         }))
     }

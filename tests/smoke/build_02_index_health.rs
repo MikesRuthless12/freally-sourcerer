@@ -67,6 +67,43 @@ async fn health_round_trips_and_is_empty_before_any_folder_is_watched() {
 }
 
 #[tokio::test]
+async fn a_shared_multi_user_daemon_refuses_the_undo_journal() {
+    // The Windows service binds one pipe granting Authenticated Users and
+    // keeps its state in %PROGRAMDATA%. A shared undo stack there would
+    // let any local peer record a rename that a *different* user's Ctrl+Z
+    // executes under their own account — the peer picks both halves of
+    // every pair, so the inverse is entirely theirs.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = DaemonOptions {
+        index_root: Some(tmp.path().join("idx")),
+        shared_multi_user: true,
+        ..Default::default()
+    };
+    let state = DaemonState::open(opts).unwrap();
+    let client = client_for(state);
+
+    for method in ["ops.list", "ops.record", "ops.set_undone", "ops.clear"] {
+        let res: Result<serde_json::Value, _> = client.call(method, json!(null)).await;
+        assert!(
+            res.is_err(),
+            "{method} must be refused on a shared multi-user daemon"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_per_user_daemon_still_has_a_working_journal() {
+    // The regression guard for the fix above: a normal desktop install
+    // must keep full undo.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let state = daemon(&tmp).await;
+    let client = client_for(state);
+
+    let listing: serde_json::Value = client.call("ops.list", json!(null)).await.unwrap();
+    assert!(listing.get("entries").is_some());
+}
+
+#[tokio::test]
 async fn watchers_follow_the_watched_folder_set() {
     let tmp = tempfile::TempDir::new().unwrap();
     let state = daemon(&tmp).await;
