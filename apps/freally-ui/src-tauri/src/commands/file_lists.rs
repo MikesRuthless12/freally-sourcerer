@@ -192,6 +192,9 @@ mod tests {
             kind: ext.to_uppercase(),
             score: 1.0,
             attrs: 0,
+            volume: String::new(),
+            volume_label: None,
+            volume_offline: false,
         }
     }
 

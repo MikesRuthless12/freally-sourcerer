@@ -13,6 +13,9 @@ export const COMMAND_IDS = [
   "file.exit",
 
   // Edit
+  "edit.undo",
+  "edit.redo",
+  "edit.bulk_rename",
   "edit.cut",
   "edit.copy",
   "edit.paste",

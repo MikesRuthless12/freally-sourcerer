@@ -109,6 +109,10 @@ impl Service for IndexdService {
                 "extractors.set_mode" => extractors_set_mode(&self, params).await,
                 "volumes.list" => volumes_list(&self).await,
                 "catalogs.list" => catalogs_list(&self).await,
+                "ops.list" => ops_list(&self).await,
+                "ops.record" => ops_record(&self, params).await,
+                "ops.set_undone" => ops_set_undone(&self, params).await,
+                "ops.clear" => ops_clear(&self).await,
                 "volumes.update" => volumes_update(&self, params).await,
                 "volumes.recreate_journal" => volumes_recreate_journal(&self, params).await,
                 "volumes.reset_stream" => volumes_reset_stream(&self, params).await,
@@ -629,6 +633,67 @@ async fn catalogs_list(svc: &IndexdService) -> Result<Value, RpcError> {
     svc.state.reconcile_catalogs().await;
     let dto = svc.state.catalogs.read().await.to_dto();
     Ok(serde_json::to_value(dto)?)
+}
+
+// ---------- operation journal (SRC-M16) ----------
+
+/// The undo stack, oldest first, plus what Ctrl+Z / Ctrl+Shift+Z would
+/// act on right now. The UI renders the history popover from this and
+/// enables its two shortcuts from `undo_id` / `redo_id` being present.
+async fn ops_list(svc: &IndexdService) -> Result<Value, RpcError> {
+    let j = svc.state.operations.read().await;
+    Ok(json!({
+        "entries": j.entries().cloned().collect::<Vec<_>>(),
+        "undo_id": j.next_undo().map(|e| e.id.clone()),
+        "redo_id": j.next_redo().map(|e| e.id.clone()),
+    }))
+}
+
+async fn ops_record(svc: &IndexdService, params: Value) -> Result<Value, RpcError> {
+    let entry: freally_rpc::OperationEntry = serde_json::from_value(params)?;
+    let id = entry.id.clone();
+    svc.state.operations.write().await.record(entry);
+    svc.state
+        .persist()
+        .await
+        .map_err(|e| RpcError::Other(e.to_string()))?;
+    Ok(json!({ "ok": true, "id": id }))
+}
+
+#[derive(Debug, Deserialize)]
+struct SetUndoneParams {
+    id: String,
+    undone: bool,
+}
+
+async fn ops_set_undone(svc: &IndexdService, params: Value) -> Result<Value, RpcError> {
+    let p: SetUndoneParams = serde_json::from_value(params)?;
+    let ok = svc
+        .state
+        .operations
+        .write()
+        .await
+        .set_undone(&p.id, p.undone);
+    if !ok {
+        // A stale UI asking about an entry that has fallen off the end
+        // of the journal is a no-op, not a crash — but it must not
+        // report success, or the client will believe the disk changed.
+        return Err(RpcError::Other("unknown operation id".into()));
+    }
+    svc.state
+        .persist()
+        .await
+        .map_err(|e| RpcError::Other(e.to_string()))?;
+    Ok(json!({ "ok": true }))
+}
+
+async fn ops_clear(svc: &IndexdService) -> Result<Value, RpcError> {
+    svc.state.operations.write().await.clear();
+    svc.state
+        .persist()
+        .await
+        .map_err(|e| RpcError::Other(e.to_string()))?;
+    Ok(json!({ "ok": true }))
 }
 
 async fn volumes_list(svc: &IndexdService) -> Result<Value, RpcError> {

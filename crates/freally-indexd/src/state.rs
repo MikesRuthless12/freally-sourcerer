@@ -24,7 +24,7 @@ use freally_audio::AudioCache;
 use freally_extractor_host::Registry as CustomExtractorRegistry;
 use freally_extractors::{Pipeline, PipelineSettings, extractors as ext};
 use freally_index::Index;
-use freally_rpc::{ExcludeRules, RescanSchedule, WatchedFolder};
+use freally_rpc::{ExcludeRules, OperationJournal, RescanSchedule, WatchedFolder};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -53,6 +53,10 @@ pub struct DaemonState {
     pub history: RwLock<HistoryConfig>,
     /// SRC-M14 — every device we have indexed, attached or not.
     pub catalogs: RwLock<CatalogRegistry>,
+    /// SRC-M16 — undo/redo stack for file operations Freally performed.
+    /// Lives here rather than in the app process so it survives a
+    /// restart, which is the whole point of "the last N operations".
+    pub operations: RwLock<OperationJournal>,
     pub config_dir: PathBuf,
 }
 
@@ -168,6 +172,7 @@ impl DaemonState {
         let network = load_or_default::<NetworkState>(&config_dir.join("network.json"));
         let history = load_or_default::<HistoryConfig>(&config_dir.join("history.json"));
         let catalogs = load_or_default::<CatalogRegistry>(&config_dir.join("catalogs.json"));
+        let operations = load_or_default::<OperationJournal>(&config_dir.join("operations.json"));
         Ok(Arc::new(Self {
             watchers: WatcherSupervisor::new(index.clone()),
             index,
@@ -180,6 +185,7 @@ impl DaemonState {
             network: RwLock::new(network),
             history: RwLock::new(history),
             catalogs: RwLock::new(catalogs),
+            operations: RwLock::new(operations),
             config_dir,
         }))
     }
@@ -251,6 +257,10 @@ impl DaemonState {
         write_json(
             &self.config_dir.join("catalogs.json"),
             &*self.catalogs.read().await,
+        )?;
+        write_json(
+            &self.config_dir.join("operations.json"),
+            &*self.operations.read().await,
         )?;
         Ok(())
     }

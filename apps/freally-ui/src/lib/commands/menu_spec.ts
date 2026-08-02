@@ -73,6 +73,11 @@ export const MENU_BAR: MenuRoot[] = [
     hint: "Contains commands for editing search results.",
     hintL10n: "menu-edit-hint",
     children: [
+      { kind: "item", id: "edit.undo", label: "Undo", l10n: "menu-edit-undo", accelerator: "Ctrl+Z" },
+      { kind: "item", id: "edit.redo", label: "Redo", l10n: "menu-edit-redo", accelerator: "Ctrl+Shift+Z" },
+      { kind: "separator" },
+      { kind: "item", id: "edit.bulk_rename", label: "Rename…", l10n: "menu-edit-bulk-rename", accelerator: "F2" },
+      { kind: "separator" },
       { kind: "item", id: "edit.cut", label: "Cut", l10n: "menu-edit-cut", accelerator: "Ctrl+X" },
       { kind: "item", id: "edit.copy", label: "Copy", l10n: "menu-edit-copy", accelerator: "Ctrl+C" },
       { kind: "item", id: "edit.paste", label: "Paste", l10n: "menu-edit-paste", accelerator: "Ctrl+V" },
