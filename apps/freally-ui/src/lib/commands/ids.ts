@@ -13,6 +13,9 @@ export const COMMAND_IDS = [
   "file.exit",
 
   // Edit
+  "edit.undo",
+  "edit.redo",
+  "edit.bulk_rename",
   "edit.cut",
   "edit.copy",
   "edit.paste",
@@ -78,6 +81,7 @@ export const COMMAND_IDS = [
   "search.match_whole_word",
   "search.match_path",
   "search.match_diacritics",
+  "search.match_phonetic",
   "search.enable_regex",
   "search.advanced",
   "search.within_results",
@@ -102,6 +106,7 @@ export const COMMAND_IDS = [
   "tools.disconnect_endpoint",
   "tools.file_list_editor",
   "tools.custom_extractor_manager",
+  "tools.index_health",
   "tools.verify_index",
   "tools.compact_index",
   "tools.rebuild_index",

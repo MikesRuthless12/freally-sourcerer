@@ -52,7 +52,7 @@ pub mod ffi;
 pub mod subscriber;
 
 pub use cursor::{CursorError, WatchBackend, WatchCursor};
-pub use event::{JournalError, JournalEvent};
+pub use event::{JournalError, JournalEvent, JournalPosition};
 
 #[cfg(target_os = "linux")]
 pub use subscriber::{JournalSubscriber, open, open_with_cursor_root};
@@ -101,6 +101,13 @@ impl JournalSubscriber {
             backend: WatchBackend::Inotify,
             bootstrap_complete: false,
             last_event_time_ns: 0,
+        }
+    }
+
+    pub fn position(&self) -> JournalPosition {
+        JournalPosition {
+            generation: 0,
+            offset: 0,
         }
     }
 }

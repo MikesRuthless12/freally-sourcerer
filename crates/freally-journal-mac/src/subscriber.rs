@@ -61,7 +61,7 @@ use futures::Stream;
 use futures::channel::mpsc;
 
 use crate::cursor::StreamCursor;
-use crate::event::{JournalError, JournalEvent};
+use crate::event::{JournalError, JournalEvent, JournalPosition};
 use crate::ffi::{
     RunLoopExit, cfstring_to_pathbuf, create_stream, device_id, paths_array_for, run_until_stopped,
     schedule_and_start, signal_stop, statfs_name, teardown_stream,
@@ -102,6 +102,15 @@ impl JournalSubscriber {
 
     pub fn cursor(&self) -> StreamCursor {
         self.cursor.lock().expect("cursor mutex poisoned").clone()
+    }
+
+    /// OS-agnostic view of `cursor()` for the daemon's watcher supervisor.
+    pub fn position(&self) -> JournalPosition {
+        let c = self.cursor.lock().expect("cursor mutex poisoned");
+        JournalPosition {
+            generation: c.device,
+            offset: c.last_event_id,
+        }
     }
 }
 

@@ -49,6 +49,59 @@ impl Query {
             root: Arc::new(root),
         }
     }
+
+    /// SRC-M11: the one literal term this query searches for, if it has
+    /// exactly one.
+    ///
+    /// A "did you mean" is only honest when there is a single thing to
+    /// correct. With two literals there is no way to know which one was
+    /// mistyped, and a query built from wildcards, regex, or modifiers
+    /// alone has no misspelling to fix — its emptiness is a real
+    /// answer. `None` in all those cases, and the caller offers nothing.
+    ///
+    /// Negated terms are deliberately not collected: correcting the
+    /// spelling of something the user asked to *exclude* would not add
+    /// results.
+    pub fn sole_literal_term(&self) -> Option<&str> {
+        let mut found: Option<&str> = None;
+        if collect_sole_literal(&self.root, &mut found, false) {
+            found
+        } else {
+            None
+        }
+    }
+}
+
+/// Walks the AST for literal terms. Returns false as soon as a second
+/// one turns up, so a compound query bails early.
+fn collect_sole_literal<'a>(
+    node: &'a QueryNode,
+    found: &mut Option<&'a str>,
+    negated: bool,
+) -> bool {
+    match node {
+        QueryNode::Text(TextPattern::Literal(s)) => {
+            if negated {
+                return true;
+            }
+            if found.is_some() {
+                return false;
+            }
+            *found = Some(s.as_str());
+            true
+        }
+        // Wildcards and regex are patterns the user wrote on purpose;
+        // there is nothing to spell-correct.
+        QueryNode::Text(_)
+        | QueryNode::Modifier(_)
+        | QueryNode::QuickFilter(_)
+        | QueryNode::True => true,
+        QueryNode::And(children) | QueryNode::Or(children) => children
+            .iter()
+            .all(|c| collect_sole_literal(c, found, negated)),
+        QueryNode::Not(inner) => collect_sole_literal(inner, found, !negated),
+        QueryNode::Lens { inner, .. } => collect_sole_literal(inner, found, negated),
+    }
 }
 
 impl std::fmt::Debug for Query {
@@ -173,6 +226,12 @@ pub enum ModifierKind {
     ChildCount { op: SizeOp, count: u64 },
     /// SRC-M08 `descendant-count:<10` — descendants at any depth.
     DescendantCount { op: SizeOp, count: u64 },
+    /// SRC-M14 `volume:orange` — the device a row was indexed from,
+    /// matched against a catalog's display name or its volume id. The
+    /// executor resolves the needle to volume ids through the daemon's
+    /// catalog registry before filtering, because the row carries the
+    /// id and the user types the name.
+    Volume(String),
     /// SRC-M07 `dupe:` / `name-dupe:` / `size-dupe:`. Set-shaped: a row
     /// only matches because *other* rows share its key, so the executor
     /// resolves it as a post-pass over the hydrated result set rather

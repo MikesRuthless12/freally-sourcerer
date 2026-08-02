@@ -24,19 +24,33 @@ use freally_audio::AudioCache;
 use freally_extractor_host::Registry as CustomExtractorRegistry;
 use freally_extractors::{Pipeline, PipelineSettings, extractors as ext};
 use freally_index::Index;
-use freally_rpc::{ExcludeRules, RescanSchedule, WatchedFolder};
+use freally_rpc::{ExcludeRules, OperationJournal, RescanSchedule, WatchedFolder};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+
+use crate::catalogs::CatalogRegistry;
+use crate::watcher::WatcherSupervisor;
 
 #[derive(Debug, Clone, Default)]
 pub struct DaemonOptions {
     pub index_root: Option<PathBuf>,
     pub audio_cache_path: Option<PathBuf>,
     pub extractor_registry_root: Option<PathBuf>,
+    /// True when this daemon serves **every user on the machine** over one
+    /// shared endpoint — i.e. the Windows service, whose pipe grants
+    /// Authenticated Users and whose state lives in `%PROGRAMDATA%`.
+    ///
+    /// The per-user desktop daemon leaves this false: it binds a
+    /// SID-tagged pipe ACL'd to one user, so its state has exactly one
+    /// owner.
+    pub shared_multi_user: bool,
 }
 
 pub struct DaemonState {
     pub index: Arc<Index>,
+    /// Live change journaling. Starts idle; `reconcile_watchers` brings it
+    /// in line with the watched-folder set at boot and on every change.
+    pub watchers: WatcherSupervisor,
     pub audio_cache: Arc<AudioCache>,
     pub pipeline: RwLock<Pipeline>,
     pub custom_extractors: RwLock<CustomExtractorRegistry>,
@@ -45,6 +59,18 @@ pub struct DaemonState {
     pub excludes: RwLock<ExcludeRules>,
     pub network: RwLock<NetworkState>,
     pub history: RwLock<HistoryConfig>,
+    /// SRC-M14 — every device we have indexed, attached or not.
+    pub catalogs: RwLock<CatalogRegistry>,
+    /// SRC-M16 — undo/redo stack for file operations Freally performed.
+    /// Lives here rather than in the app process so it survives a
+    /// restart, which is the whole point of "the last N operations".
+    pub operations: RwLock<OperationJournal>,
+    /// See [`DaemonOptions::shared_multi_user`]. When set, the journal is
+    /// refused rather than shared — undo means "undo *my* last
+    /// operation", and one stack serving every user on the machine cannot
+    /// mean that. It would also let any local peer queue a rename that
+    /// another user's Ctrl+Z executes under their own account.
+    pub shared_multi_user: bool,
     pub config_dir: PathBuf,
 }
 
@@ -159,7 +185,10 @@ impl DaemonState {
         let excludes = load_or_default::<ExcludeRules>(&config_dir.join("excludes.json"));
         let network = load_or_default::<NetworkState>(&config_dir.join("network.json"));
         let history = load_or_default::<HistoryConfig>(&config_dir.join("history.json"));
+        let catalogs = load_or_default::<CatalogRegistry>(&config_dir.join("catalogs.json"));
+        let operations = load_or_default::<OperationJournal>(&config_dir.join("operations.json"));
         Ok(Arc::new(Self {
+            watchers: WatcherSupervisor::new(index.clone()),
             index,
             audio_cache,
             pipeline: RwLock::new(pipeline),
@@ -169,8 +198,75 @@ impl DaemonState {
             excludes: RwLock::new(excludes),
             network: RwLock::new(network),
             history: RwLock::new(history),
+            catalogs: RwLock::new(catalogs),
+            operations: RwLock::new(operations),
+            shared_multi_user: opts.shared_multi_user,
             config_dir,
         }))
+    }
+
+    /// SRC-M14. Refresh the catalog registry from the mounted volumes
+    /// and install the mount-point table the index stamps rows with.
+    /// Idempotent; call at boot and whenever volumes may have changed.
+    /// Returns the detected volumes so a caller that also needs them —
+    /// `volumes.list` does — pays for one enumeration rather than two.
+    /// On Windows `detect()` walks every drive letter with blocking Win32
+    /// calls, which a disconnected network drive can stall for seconds.
+    pub async fn reconcile_catalogs(&self) -> Vec<freally_rpc::VolumeInfo> {
+        let detected = crate::volumes::detect();
+        let now = crate::watcher::now_ms();
+
+        let (went_offline, registry_changed) =
+            self.catalogs.write().await.reconcile(&detected, now);
+        for id in &went_offline {
+            // Rows stay in the index — that is the whole point of a
+            // catalog. Only the badge changes.
+            tracing::info!(volume = %id, "volume detached; retained as an offline catalog");
+        }
+
+        // Same predicate the registry uses. A mounted-but-unreadable
+        // volume (an empty card reader) has no catalog, so stamping rows
+        // with its id would produce hits that can never carry a badge or
+        // be reached by `volume:`.
+        // Rows are stamped with the *device* key, not the mount id, so a
+        // drive that returns on a different letter still answers
+        // `volume:` and still badges as itself.
+        self.index.set_volume_map(freally_index::VolumeMap::new(
+            detected
+                .iter()
+                .filter(|v| v.status != freally_rpc::VolumeStatus::Offline)
+                .map(|v| {
+                    (
+                        PathBuf::from(&v.mount_point),
+                        crate::catalogs::device_key(v).to_string(),
+                    )
+                }),
+        ));
+
+        // Persist whenever the registry changed at all, not only when
+        // something went offline. A device seen for the first time is
+        // exactly the record that must survive the next unplug, and
+        // relying on some later handler to persist it meant a quiet
+        // session could lose it.
+        if !went_offline.is_empty() || registry_changed {
+            if let Err(e) = self.persist().await {
+                tracing::warn!(error = %e, "persisting catalogs failed");
+            }
+        }
+        detected
+    }
+
+    /// Bring the live watchers in line with the current watched-folder
+    /// set. Idempotent; call after anything that adds or removes a folder.
+    pub async fn reconcile_watchers(&self) {
+        let paths: Vec<String> = self
+            .folders
+            .read()
+            .await
+            .iter()
+            .map(|f| f.path.clone())
+            .collect();
+        self.watchers.reconcile(&paths);
     }
 
     pub async fn persist(&self) -> anyhow::Result<()> {
@@ -193,6 +289,14 @@ impl DaemonState {
         write_json(
             &self.config_dir.join("history.json"),
             &*self.history.read().await,
+        )?;
+        write_json(
+            &self.config_dir.join("catalogs.json"),
+            &*self.catalogs.read().await,
+        )?;
+        write_json(
+            &self.config_dir.join("operations.json"),
+            &*self.operations.read().await,
         )?;
         Ok(())
     }
@@ -217,9 +321,22 @@ fn write_json<T: Serialize>(p: &std::path::Path, v: &T) -> anyhow::Result<()> {
     }
     let s = serde_json::to_string_pretty(v)?;
     // Tmp-rename so a crash mid-write can't truncate the file.
-    let tmp = p.with_extension("json.tmp");
+    //
+    // The tmp name is unique per call. The RPC server runs a task per
+    // request, so two handlers really can be inside `persist()` at once
+    // — and with a fixed `foo.json.tmp` they would write the same file
+    // and then one would rename a path the other had already consumed,
+    // failing the whole persist partway through. Worse, interleaved
+    // writes could leave a truncated file that `load_or_default`
+    // silently resets to defaults, losing every catalog the user had.
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = p.with_extension(format!("json.{}.{n}.tmp", std::process::id()));
     std::fs::write(&tmp, s)?;
-    std::fs::rename(&tmp, p)?;
+    if let Err(e) = std::fs::rename(&tmp, p) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(())
 }
 

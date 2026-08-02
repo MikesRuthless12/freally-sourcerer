@@ -57,6 +57,7 @@
 
 #![deny(rust_2018_idioms)]
 
+pub mod didyoumean;
 pub mod error;
 pub mod minhash;
 mod store;
@@ -69,6 +70,7 @@ use freally_journal::JournalEvent;
 use parking_lot::RwLock;
 use tracing::{debug, warn};
 
+pub use didyoumean::{Suggestion, best_suggestion, damerau_levenshtein_bounded, max_distance_for};
 pub use error::SimilarityError;
 pub use minhash::{BANDS, K, MinHashFamily, ROWS_PER_BAND};
 

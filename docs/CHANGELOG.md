@@ -536,6 +536,145 @@ makes the desktop app pleasant to run repeatedly during development.
 
 ---
 
+## [0.22.0] — Build 2 · Must-Have stable gate, slice 2 of 3 (2026-08-02)
+
+The second of the three Must-Have builds: SRC-M09 … SRC-M16.
+Cross-platform unless a per-OS note says otherwise. Full feature
+documentation is in `docs/documentation.html`.
+
+### Added
+
+**SRC-M09 — machine-readable CLI output.** `freally search` gains
+`--json`, `--ndjson` (one object per hit, streaming), `--csv`,
+`--fields` for column selection, `-0` for `xargs -0`, `--limit` /
+`--offset`, and meaningful exit codes (0 hits found, 1 none, 2 error).
+
+**SRC-M10 — shell completions.** `freally completions <shell>` prints
+completions for bash, zsh, fish and PowerShell, covering subcommands,
+flags, and — dynamically — the modifier keywords and saved-search names.
+
+**SRC-M11 — typo-tolerant "did you mean".** When the filename lens
+returns nothing, similarity candidates are re-ranked by bounded
+Damerau-Levenshtein distance and the closest is offered as a one-click
+correction.
+
+**SRC-M12 — CJK phonetic matching.** Typing `wenjian` or `wj` matches
+`文件`; romaji matches kana; lead jamo matches Hangul. Readings are
+indexed as auxiliary name keys and are opt-in via **Search → Match CJK
+Phonetics**. Every conversion is a table lookup or arithmetic — Hangul
+decomposition is pure arithmetic on the Unicode syllable block, kana is
+an in-tree table, and Han readings come from the `pinyin` crate.
+
+**Live change journaling.** The index now updates as files change,
+rather than only when a scan runs. Every OS subscriber already
+implemented `subscribe()` and `freally-index` already shipped the
+bounded `EventQueue`, but nothing had ever connected them: `Index::apply`
+and `EventQueue` were reachable only from benches and one unit test.
+`freally-indexd::watcher` is that pipeline — a producer thread draining
+the OS change stream into the queue, a consumer applying and committing
+batches. On Windows the USN journal is per-volume, so folders on one
+drive collapse onto a single watcher that filters by path prefix;
+FSEvents and inotify watch a subtree directly.
+
+*Why the producer drops rather than blocking:* blocking would not save
+the events — the OS-side buffer keeps filling while we wait, and when it
+overflows they are gone with no record. Dropping at our own boundary
+loses the same events but leaves a counted, timestamped ledger, which is
+what the advisor below reports on.
+
+**SRC-M13 — Index Health panel + rebuild advisor.** **Tools → Index
+maintenance → Index Health** reports, per watched location, the
+event → query-visible lag, a dropped-event ledger, the last change seen,
+and queue depth, plus rules-based advice with a one-click rebuild where
+a rebuild is the fix. Content-extraction backlog is reported as *not
+tracked* rather than as zero — the daemon runs no eager-extraction
+worker, and "0" would read as "idle".
+
+**SRC-M14 — offline removable-volume catalogs.** Unplugging a drive
+keeps its files searchable, and results from a detached device carry an
+*offline — Orange WD 4TB* badge. `volume:` filters by the name you know
+the drive as, or by its volume id. A drive that returns on a different
+letter or mount point is recognised as the same catalog.
+
+*Under the hood:* the `volume` column, its SQLite index and the Tantivy
+field all shipped in Phase 4, but the one row constructor on the ingest
+path hard-coded an empty string, so the entire column was dead. Rows are
+now stamped by longest-prefix match over the real mount table, which is
+the only thing that can tell a mount point from an ordinary directory.
+
+**SRC-M15 — bulk rename.** Select any number of results, press `F2`,
+and describe the change once: literal or regex find/replace with capture
+groups, `{n}` / `{n:03}` counters, case transforms, and a choice of
+renaming the stem or the whole name. A live table shows every
+before/after pair and flags rows that would collide with each other,
+overwrite an existing file, or produce a name the system will not
+accept. The batch is all-or-nothing, and a mid-batch failure rolls back.
+
+*Note:* the roadmap recorded single-file rename as already shipping. It
+had not — only *bookmark* rename existed — so this build adds the rename
+primitive as well as the bulk layer over it.
+
+**SRC-M16 — undo/redo for file operations.** `Ctrl+Z` reverses a rename
+or bulk rename, `Ctrl+Shift+Z` replays it, and the journal is persisted
+by the daemon so the last 50 operations survive a restart. A batch
+unwinds in reverse order, so a chain rename (`a→b`, `b→c`) undoes
+without colliding with itself.
+
+*Documented exception:* deletes are recorded in the history but have no
+undo. Freally deletes to the OS trash, and the only cross-platform
+restore API (`trash::os_limited`) is implemented for Windows and
+freedesktop Linux but **not macOS**. Rather than offer a button that
+fails after it is pressed, a delete carries a reason explaining that
+restoring is the operating system's job. Copy-to-folder and
+move-to-folder are not journaled because they do not yet perform a
+copy or a move.
+
+**Security shape of the write-side commands.** A rename has a
+destination, and unlike a source it was never in any result set — so
+under Build 1's rule that write-side IPC must not accept caller-chosen
+paths, the frontend never sends one. It sends the selected paths and the
+*rule*; the backend derives every name itself and re-derives them at
+apply time rather than trusting the preview, so a tampered preview table
+changes nothing. Derived names are rejected if they contain a path
+separator, are `.` or `..`, hold a character no platform accepts, would
+be silently rewritten by Windows (a trailing dot or space, which would
+make the applied name differ from the approved one), or match a reserved
+device name. The destination is then rebuilt from the source's own
+parent directory.
+
+**Tests.** `tests/smoke/build_02_index_health.rs`,
+`build_02_volume_catalogs.rs` and `build_02_rename_undo.rs` gate the new
+surfaces OS-agnostically; unit tests cover the rename engine, the
+operation journal, the advisor rules, event coalescing, lag accounting,
+the volume map, and the catalog registry.
+`apps/freally-ui/tests/unit/build_02.test.ts` covers the frontend wiring.
+
+**i18n.** 68 new keys across all 18 locales (782 total); `xtask
+i18n-lint` green.
+
+### Changed
+
+- `volume:` is a Freally-only modifier, so it is rejected under
+  strict-Everything mode alongside `similar:` and the audio family.
+- `freally-journal` exposes an OS-agnostic `JournalPosition`
+  (`generation` + `offset`) on all three subscribers, so the daemon can
+  detect a wrapped or recreated change stream without knowing the per-OS
+  cursor type.
+
+### Known gaps
+
+- `auto_remove_offline` remains a no-op. Implementing it literally means
+  purging an offline device's rows from the index; that is destructive,
+  outside SRC-M14's scope, and its default of `true` would have applied
+  to every existing install silently. Retention is what the feature
+  wants and what the daemon already did.
+- The four existing match-mode toggles (case, whole word, path,
+  diacritics) are still UI-only — the daemon builds `ExecOpts::default()`
+  and only SRC-M12's phonetic flag crosses the wire. Pre-dates Build 2;
+  wiring them would change what existing queries return.
+
+---
+
 ## [0.21.0] — Build 1 · Must-Have stable gate, slice 1 of 3 (2026-07-31)
 
 The first of the three Must-Have builds: SRC-M01 … SRC-M08.

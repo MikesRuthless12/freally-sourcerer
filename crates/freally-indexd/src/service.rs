@@ -101,12 +101,18 @@ impl Service for IndexdService {
                 "query.cancel" => query_cancel(&self, params).await,
                 "query.lens_timings" => query_lens_timings(&self, params).await,
                 "index.state" => index_state(&self).await,
+                "index.health" => index_health(&self).await,
                 "index.verify" => index_verify(&self).await,
                 "index.compact" => index_compact(&self).await,
                 "index.rebuild" => index_rebuild(&self).await,
                 "extractors.list" => extractors_list(&self).await,
                 "extractors.set_mode" => extractors_set_mode(&self, params).await,
                 "volumes.list" => volumes_list(&self).await,
+                "catalogs.list" => catalogs_list(&self).await,
+                "ops.list" => ops_list(&self).await,
+                "ops.record" => ops_record(&self, params).await,
+                "ops.set_undone" => ops_set_undone(&self, params).await,
+                "ops.clear" => ops_clear(&self).await,
                 "volumes.update" => volumes_update(&self, params).await,
                 "volumes.recreate_journal" => volumes_recreate_journal(&self, params).await,
                 "volumes.reset_stream" => volumes_reset_stream(&self, params).await,
@@ -158,6 +164,16 @@ struct QueryRunParams {
     strict_everything: bool,
     #[serde(default)]
     per_lens_limits: Option<freally_rpc::PerLensLimits>,
+    /// SRC-M12 — let latin/jamo terms match CJK names phonetically.
+    ///
+    /// Only this match-mode flag crosses the wire. The other four
+    /// (case / whole-word / path / diacritics) are still UI-local and
+    /// never reached the executor, which uses `ExecOpts::default()`;
+    /// sending them now would silently change what existing queries
+    /// return. That gap is real but pre-dates Build 2 and is left
+    /// alone deliberately.
+    #[serde(default)]
+    match_phonetic: bool,
 }
 
 async fn query_run(
@@ -178,19 +194,9 @@ async fn query_run(
 
     let svc_for_task = svc.clone();
     let handle_for_task = handle.clone();
-    let strict = p.strict_everything;
-    let limits = p.per_lens_limits;
     tokio::spawn(async move {
-        let timings = run_query_streaming(
-            svc_for_task.clone(),
-            &handle_for_task,
-            p.source,
-            strict,
-            limits,
-            cancel,
-            sink,
-        )
-        .await;
+        let timings =
+            run_query_streaming(svc_for_task.clone(), &handle_for_task, p, cancel, sink).await;
         if let Some(entry) = svc_for_task.handles.lock().await.get_mut(&handle_for_task) {
             entry.timings = timings;
         }
@@ -226,12 +232,16 @@ async fn query_lens_timings(svc: &IndexdService, params: Value) -> Result<Value,
 async fn run_query_streaming(
     svc: Arc<IndexdService>,
     handle: &str,
-    source: String,
-    strict_everything: bool,
-    per_lens_limits: Option<freally_rpc::PerLensLimits>,
+    p: QueryRunParams,
     cancel: Arc<AtomicBool>,
     sink: NotificationSink,
 ) -> LensTimings {
+    let QueryRunParams {
+        source,
+        strict_everything,
+        per_lens_limits,
+        match_phonetic,
+    } = p;
     let started = std::time::Instant::now();
     let mut timings = LensTimings::default();
     let lenses = [
@@ -247,6 +257,7 @@ async fn run_query_streaming(
         freally_query::ParseOpts::default()
     };
     let parsed = freally_query::parse_with(&source, parse_opts);
+    let mut total_hits = 0usize;
 
     for lens in lenses {
         if cancel.load(Ordering::Acquire) {
@@ -266,6 +277,7 @@ async fn run_query_streaming(
                     &svc.state,
                     query,
                     per_lens_limits.as_ref().map(|l| l.filename).unwrap_or(200),
+                    match_phonetic,
                 )
                 .await
             }
@@ -282,6 +294,7 @@ async fn run_query_streaming(
             LensId::Audio => timings.audio_ms = elapsed_ms,
             LensId::Similarity => timings.similarity_ms = elapsed_ms,
         }
+        total_hits += hits.len();
         let batch = QueryBatch {
             handle: handle.to_string(),
             lens,
@@ -300,10 +313,23 @@ async fn run_query_streaming(
             return timings;
         }
     }
+    // SRC-M11: only when the whole query came back empty. A search that
+    // matched something does not need correcting, and the candidate
+    // scan is not work worth doing on the success path.
+    let did_you_mean = if total_hits == 0 {
+        parsed
+            .as_ref()
+            .ok()
+            .and_then(|q| suggest_correction(&svc.state, q))
+    } else {
+        None
+    };
+
     timings.total_ms = started.elapsed().as_secs_f32() * 1000.0;
     let done = QueryDone {
         handle: handle.to_string(),
         timings,
+        did_you_mean,
     };
     let _ = sink
         .send(freally_rpc::Notification::new(
@@ -312,6 +338,77 @@ async fn run_query_streaming(
         ))
         .await;
     timings
+}
+
+/// How many trigrams a name must share with the typed term to be worth
+/// scoring. Two is enough to survive a single typo in a short word
+/// while still discarding names that merely share one common trigram.
+const SUGGEST_MIN_SHARED_TRIGRAMS: usize = 2;
+
+/// Ceiling on names scored for one suggestion. Edit distance is cheap
+/// per candidate but this runs while the user waits, so the scan is
+/// bounded rather than proportional to the index.
+const SUGGEST_CANDIDATE_CAP: usize = 2_000;
+
+/// SRC-M11 — propose a spelling correction for a query that found
+/// nothing.
+///
+/// Candidates come from shared-trigram overlap rather than the
+/// substring path, which by construction returns nothing for the typo
+/// that caused the empty result. Names are compared as stems: the user
+/// typed a word, not a filename, and leaving `.txt` attached would
+/// spend the whole edit budget on the extension.
+fn suggest_correction(
+    state: &crate::state::DaemonState,
+    query: &freally_query::Query,
+) -> Option<freally_rpc::DidYouMean> {
+    let typed = query.sole_literal_term()?;
+    if freally_similarity::max_distance_for(typed) == 0 {
+        return None;
+    }
+    // The rewrite below is a textual substitution, so it is only safe
+    // when the term appears once in the source. `path:report report`
+    // has one literal but two occurrences, and replacing the first
+    // would silently edit the modifier instead of the search term.
+    // Offering no suggestion beats offering a query the user did not
+    // ask for.
+    if query.source().matches(typed).count() != 1 {
+        return None;
+    }
+    let needle = typed.to_lowercase();
+
+    let mut stems: Vec<String> = Vec::new();
+    state.index.name_index().for_each_fuzzy_candidate(
+        &needle,
+        SUGGEST_MIN_SHARED_TRIGRAMS,
+        SUGGEST_CANDIDATE_CAP,
+        |_, name| {
+            // SRC-M12 stores a CJK row as `name<U+0001>reading`, and the
+            // candidate iterator yields that composite key. Suggesting it
+            // verbatim would put a control character and the pinyin into
+            // the user's search box.
+            let name = String::from_utf8_lossy(freally_index::phonetic::plain_name(name));
+            let stem = match name.rsplit_once('.') {
+                // A leading dot is a dotfile, not an extension.
+                Some((s, _)) if !s.is_empty() => s,
+                _ => name.as_ref(),
+            };
+            stems.push(stem.to_string());
+        },
+    );
+    stems.sort_unstable();
+    stems.dedup();
+
+    let best = freally_similarity::best_suggestion(typed, stems.iter().map(String::as_str))?;
+    // Replace only the term itself, so the surrounding modifiers,
+    // booleans and quoting survive verbatim.
+    let rewritten = query.source().replacen(typed, &best.term, 1);
+    Some(freally_rpc::DidYouMean {
+        typed: typed.to_string(),
+        suggested: best.term,
+        query: rewritten,
+        distance: best.distance as u32,
+    })
 }
 
 /// Run a parsed query through the real `freally-query` executor against
@@ -324,13 +421,28 @@ async fn filename_lens_hits(
     state: &DaemonState,
     query: &freally_query::Query,
     limit: u32,
+    match_phonetic: bool,
 ) -> (Vec<freally_rpc::QueryHit>, Vec<freally_rpc::HitGroup>) {
     let _ = handle;
     let opts = freally_query::ExecOpts {
         limit: limit as usize,
+        match_mode: freally_query::MatchMode {
+            match_phonetic,
+            ..Default::default()
+        },
         ..Default::default()
     };
-    let result = freally_query::execute(state.index.as_ref(), query, opts);
+    // SRC-M14: snapshot the registry once so `volume:` can be typed as a
+    // catalog name, and so every hit can carry its own badge.
+    let catalogs = state.catalogs.read().await.clone();
+    let result = freally_query::execute_with_catalogs(
+        state.index.as_ref(),
+        None,
+        None,
+        Some(&catalogs),
+        query,
+        opts,
+    );
     let (rows, groups) = match result {
         Ok(rs) => {
             // SRC-M07: read the clusters before `collect()` consumes
@@ -351,26 +463,35 @@ async fn filename_lens_hits(
     };
     let hits = rows
         .into_iter()
-        .map(|row| freally_rpc::QueryHit {
-            file_id: row.file_id.to_string(),
-            lens: LensId::Filename,
-            name: row.name,
-            path: row.path.to_string_lossy().into_owned(),
-            ext: row.ext.clone().unwrap_or_default(),
-            size: row.size,
-            // `row.mtime_ns` is signed; if a journal record carried a
-            // zero/unset FILETIME (some MFT bootstrap entries do), the
-            // stored value is a large negative i64. Casting that to u64
-            // directly wraps to ~1.8e19, which overflows JS's max Date
-            // (8.64e15) and renders as `NaN-NaN-NaN`. Clamp to 0 so the
-            // UI shows 1970-01-01 — surfaced through `formatDateMs`'s
-            // em-dash for "unknown timestamp" once the UI guards land.
-            modified_ms: (row.mtime_ns.max(0) / 1_000_000) as u64,
-            kind: row.ext.unwrap_or_else(|| "file".into()).to_uppercase(),
-            score: 1.0,
-            // Pass the FILE_ATTRIBUTE_* bitmask through to the UI so it
-            // can render folder icons (0x10 = FILE_ATTRIBUTE_DIRECTORY).
-            attrs: row.attrs as u32,
+        .map(|row| {
+            let (volume_label, volume_offline) = match catalogs.badge(&row.volume) {
+                Some((name, offline)) => (Some(name.to_string()), offline),
+                None => (None, false),
+            };
+            freally_rpc::QueryHit {
+                file_id: row.file_id.to_string(),
+                lens: LensId::Filename,
+                name: row.name,
+                path: row.path.to_string_lossy().into_owned(),
+                ext: row.ext.clone().unwrap_or_default(),
+                size: row.size,
+                // `row.mtime_ns` is signed; if a journal record carried a
+                // zero/unset FILETIME (some MFT bootstrap entries do), the
+                // stored value is a large negative i64. Casting that to u64
+                // directly wraps to ~1.8e19, which overflows JS's max Date
+                // (8.64e15) and renders as `NaN-NaN-NaN`. Clamp to 0 so the
+                // UI shows 1970-01-01 — surfaced through `formatDateMs`'s
+                // em-dash for "unknown timestamp" once the UI guards land.
+                modified_ms: (row.mtime_ns.max(0) / 1_000_000) as u64,
+                kind: row.ext.unwrap_or_else(|| "file".into()).to_uppercase(),
+                score: 1.0,
+                // Pass the FILE_ATTRIBUTE_* bitmask through to the UI so it
+                // can render folder icons (0x10 = FILE_ATTRIBUTE_DIRECTORY).
+                attrs: row.attrs as u32,
+                volume: row.volume,
+                volume_label,
+                volume_offline,
+            }
         })
         .collect();
     (hits, groups)
@@ -393,6 +514,19 @@ async fn index_state(svc: &IndexdService) -> Result<Value, RpcError> {
     Ok(serde_json::to_value(st)?)
 }
 
+/// SRC-M13. Reads live watcher counters plus the detected volume list;
+/// touches no locks the ingest path holds, so it stays cheap enough for
+/// the panel to poll.
+async fn index_health(svc: &IndexdService) -> Result<Value, RpcError> {
+    let snapshots = svc.state.watchers.snapshot();
+    let catalogs = svc.state.catalogs.read().await;
+    Ok(serde_json::to_value(crate::health::build(
+        snapshots,
+        &catalogs,
+        &svc.state.index.volume_map(),
+    ))?)
+}
+
 async fn index_verify(_svc: &IndexdService) -> Result<Value, RpcError> {
     // The Phase 4 index already runs corruption detection on open; an
     // explicit verify rebuilds the manifest checksum table.
@@ -407,10 +541,16 @@ async fn index_compact(_svc: &IndexdService) -> Result<Value, RpcError> {
 }
 
 async fn index_rebuild(svc: &IndexdService) -> Result<Value, RpcError> {
+    svc.state.reconcile_catalogs().await;
     let folders = svc.state.folders.read().await.clone();
     tracing::info!(count = folders.len(), "index.rebuild received");
     for f in folders {
         let scan_path = std::path::PathBuf::from(&f.path);
+        // The scan stamps every row with whatever volume map is installed,
+        // so refresh it first — otherwise a drive plugged in since boot is
+        // indexed with no volume, or worse, with the id of whatever used to
+        // hold that drive letter.
+        svc.state.reconcile_catalogs().await;
         crate::scanner::spawn_scan(svc.state.index.clone(), &scan_path);
     }
     Ok(json!({ "ok": true }))
@@ -499,9 +639,120 @@ async fn extractors_set_mode(svc: &IndexdService, params: Value) -> Result<Value
 
 // ---------- volumes ----------
 
+/// SRC-M14 — every device we have indexed, attached or not. Reconciles
+/// first so a drive plugged in since the last call shows as online.
+async fn catalogs_list(svc: &IndexdService) -> Result<Value, RpcError> {
+    svc.state.reconcile_catalogs().await;
+    let dto = svc.state.catalogs.read().await.to_dto();
+    Ok(serde_json::to_value(dto)?)
+}
+
+// ---------- operation journal (SRC-M16) ----------
+
+/// Refuse the journal outright when one daemon serves every user on the
+/// machine.
+///
+/// The Windows service binds a single pipe that grants Authenticated
+/// Users and keeps its state in `%PROGRAMDATA%`, so a shared journal
+/// would let any local peer record a rename that a *different* user's
+/// Ctrl+Z then executes under that user's own account — the peer chooses
+/// both halves of every pair, so the inverse is entirely theirs.
+///
+/// Partitioning would need a per-connection identity the RPC layer does
+/// not carry today. Refusing is the honest alternative rather than the
+/// lesser one: "undo my last operation" has no meaning over a stack
+/// shared by everyone, so there is no correct behaviour being withheld.
+/// The per-user desktop daemon — what a normal install runs — is
+/// unaffected and keeps full undo.
+fn deny_if_shared(svc: &IndexdService) -> Result<(), RpcError> {
+    if svc.state.shared_multi_user {
+        return Err(RpcError::Remote {
+            code: codes::INVALID_REQUEST,
+            message: "the operation journal is unavailable on a shared multi-user daemon".into(),
+            data: None,
+        });
+    }
+    Ok(())
+}
+
+/// The undo stack, oldest first, plus what Ctrl+Z / Ctrl+Shift+Z would
+/// act on right now. The UI renders the history popover from this and
+/// enables its two shortcuts from `undo_id` / `redo_id` being present.
+async fn ops_list(svc: &IndexdService) -> Result<Value, RpcError> {
+    deny_if_shared(svc)?;
+    let j = svc.state.operations.read().await;
+    Ok(json!({
+        "entries": j.entries().cloned().collect::<Vec<_>>(),
+        "undo_id": j.next_undo().map(|e| e.id.clone()),
+        "redo_id": j.next_redo().map(|e| e.id.clone()),
+    }))
+}
+
+async fn ops_record(svc: &IndexdService, params: Value) -> Result<Value, RpcError> {
+    deny_if_shared(svc)?;
+    let entry: freally_rpc::OperationEntry = serde_json::from_value(params)?;
+    // Refuse anything that is not the shape this app produces, at the
+    // boundary rather than at replay time. The code that executes the
+    // journal deliberately skips `validate_name` (an undo restores a name
+    // that already existed on disk), so if the shape is not pinned here it
+    // is not pinned anywhere.
+    entry.validate_shape().map_err(|e| RpcError::Remote {
+        code: codes::INVALID_PARAMS,
+        message: e.to_string(),
+        data: None,
+    })?;
+    let id = entry.id.clone();
+    svc.state.operations.write().await.record(entry);
+    svc.state
+        .persist()
+        .await
+        .map_err(|e| RpcError::Other(e.to_string()))?;
+    Ok(json!({ "ok": true, "id": id }))
+}
+
+#[derive(Debug, Deserialize)]
+struct SetUndoneParams {
+    id: String,
+    undone: bool,
+}
+
+async fn ops_set_undone(svc: &IndexdService, params: Value) -> Result<Value, RpcError> {
+    deny_if_shared(svc)?;
+    let p: SetUndoneParams = serde_json::from_value(params)?;
+    let ok = svc
+        .state
+        .operations
+        .write()
+        .await
+        .set_undone(&p.id, p.undone);
+    if !ok {
+        // A stale UI asking about an entry that has fallen off the end
+        // of the journal is a no-op, not a crash — but it must not
+        // report success, or the client will believe the disk changed.
+        return Err(RpcError::Other("unknown operation id".into()));
+    }
+    svc.state
+        .persist()
+        .await
+        .map_err(|e| RpcError::Other(e.to_string()))?;
+    Ok(json!({ "ok": true }))
+}
+
+async fn ops_clear(svc: &IndexdService) -> Result<Value, RpcError> {
+    deny_if_shared(svc)?;
+    svc.state.operations.write().await.clear();
+    svc.state
+        .persist()
+        .await
+        .map_err(|e| RpcError::Other(e.to_string()))?;
+    Ok(json!({ "ok": true }))
+}
+
 async fn volumes_list(svc: &IndexdService) -> Result<Value, RpcError> {
+    // The UI polls this whenever the volumes panel is open, which makes
+    // it the natural place to notice a drive being plugged or unplugged.
+    let detected = svc.state.reconcile_catalogs().await;
     let cfg = svc.state.volumes.read().await.clone();
-    let detected = crate::volumes::detect();
     let with_overrides: Vec<VolumeInfo> = detected
         .into_iter()
         .map(|mut v| {
@@ -651,6 +902,7 @@ async fn folders_add(svc: &IndexdService, params: Value) -> Result<Value, RpcErr
         .await
         .map_err(|e| RpcError::Other(e.to_string()))?;
     crate::scanner::spawn_scan(svc.state.index.clone(), &scan_path);
+    svc.state.reconcile_watchers().await;
     Ok(json!({ "ok": true }))
 }
 
@@ -668,6 +920,7 @@ async fn folders_remove(svc: &IndexdService, params: Value) -> Result<Value, Rpc
         .persist()
         .await
         .map_err(|e| RpcError::Other(e.to_string()))?;
+    svc.state.reconcile_watchers().await;
     Ok(json!({ "ok": true }))
 }
 
@@ -684,6 +937,7 @@ async fn folders_update(svc: &IndexdService, params: Value) -> Result<Value, Rpc
         .persist()
         .await
         .map_err(|e| RpcError::Other(e.to_string()))?;
+    svc.state.reconcile_watchers().await;
     Ok(json!({ "ok": true }))
 }
 
@@ -703,6 +957,7 @@ async fn folders_rescan(svc: &IndexdService, params: Value) -> Result<Value, Rpc
 }
 
 async fn folders_rescan_all(svc: &IndexdService) -> Result<Value, RpcError> {
+    svc.state.reconcile_catalogs().await;
     let folders = svc.state.folders.read().await.clone();
     tracing::info!(count = folders.len(), "folders.rescan_all received");
     for f in folders {

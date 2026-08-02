@@ -27,9 +27,11 @@ pub mod error;
 pub mod location;
 pub mod manifest;
 pub mod name_index;
+pub mod phonetic;
 pub mod pipeline;
 pub mod schema;
 pub mod store;
+pub mod volume_map;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -52,6 +54,7 @@ pub use location::{default_index_root, service_index_root};
 pub use manifest::Manifest;
 pub use pipeline::{DEFAULT_CAPACITY, EventQueue};
 pub use store::FileRow;
+pub use volume_map::VolumeMap;
 
 /// Tantivy writer heap. Bumped to 256 MiB so the bulk-bootstrap path
 /// can ingest a full NTFS MFT walk (~1M files) without forcing
@@ -81,6 +84,10 @@ pub struct Index {
     /// Memoized directory shape, tagged with the `applied_events` count
     /// it was derived at. See [`Index::dir_stats`].
     dir_stats: Mutex<Option<(u64, Arc<dirstats::DirStats>)>>,
+    /// SRC-M14. Mount-point table used to stamp each row's volume id.
+    /// Empty until `freally-indexd` installs one, which resolves every
+    /// path to `""` — the pre-M14 behaviour.
+    volume_map: Mutex<Arc<VolumeMap>>,
 }
 
 impl Index {
@@ -118,10 +125,25 @@ impl Index {
             name_index: name_idx,
             manifest: Mutex::new(manifest),
             dir_stats: Mutex::new(None),
+            volume_map: Mutex::new(Arc::new(VolumeMap::default())),
         });
 
         s.recover_if_needed()?;
         Ok(s)
+    }
+
+    /// SRC-M14. Install the mount-point table used to stamp each row's
+    /// volume id. `freally-indexd` calls this at boot and whenever the
+    /// set of mounted volumes changes; rows written before a map is
+    /// installed keep an empty volume until they are re-scanned.
+    pub fn set_volume_map(&self, map: VolumeMap) {
+        *self.volume_map.lock() = Arc::new(map);
+    }
+
+    /// Cheap clone of the current map, so a long ingest loop reads the
+    /// lock once instead of per event.
+    pub fn volume_map(&self) -> Arc<VolumeMap> {
+        self.volume_map.lock().clone()
     }
 
     /// Convenience: open at the per-OS default index root.
@@ -227,6 +249,9 @@ impl Index {
             return Ok(());
         }
         let writer = self.writer.lock();
+        // Read the map once for the whole batch — a full-volume bootstrap
+        // runs this loop a million times.
+        let volumes = self.volume_map();
         for ev in events {
             if let JournalEvent::Create {
                 path,
@@ -242,6 +267,7 @@ impl Index {
                     clamp_i64(*mtime_ns),
                     clamp_i64(*ctime_ns),
                     *attrs as u64,
+                    &volumes,
                 );
                 let path_str = row.path.to_string_lossy().into_owned();
                 writer.add_document(doc!(
@@ -393,6 +419,7 @@ impl Index {
             clamp_i64(mtime_ns),
             clamp_i64(ctime_ns),
             attrs as u64,
+            &self.volume_map(),
         );
         let path_str = row.path.to_string_lossy().into_owned();
         // Tantivy: delete-then-add to keep the index in sync if a Create
@@ -720,7 +747,14 @@ fn doc_to_file_row(doc: &tantivy::TantivyDocument, fields: &schema::Fields) -> O
     })
 }
 
-fn path_to_row(path: &Path, size: u64, mtime_ns: i64, ctime_ns: i64, attrs: u64) -> FileRow {
+fn path_to_row(
+    path: &Path,
+    size: u64,
+    mtime_ns: i64,
+    ctime_ns: i64,
+    attrs: u64,
+    volumes: &VolumeMap,
+) -> FileRow {
     let name = file_name_str(path);
     let lower = name.to_lowercase();
     let ext = file_ext_lower(path);
@@ -734,7 +768,7 @@ fn path_to_row(path: &Path, size: u64, mtime_ns: i64, ctime_ns: i64, attrs: u64)
         mtime_ns,
         ctime_ns,
         attrs,
-        volume: String::new(),
+        volume: volumes.resolve(path),
     }
 }
 

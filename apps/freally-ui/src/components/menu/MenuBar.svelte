@@ -58,6 +58,7 @@
     if (id === "search.match_whole_word") return searchOptsStore.get("match_whole_word");
     if (id === "search.match_path") return searchOptsStore.get("match_path");
     if (id === "search.match_diacritics") return searchOptsStore.get("match_diacritics");
+    if (id === "search.match_phonetic") return searchOptsStore.get("match_phonetic");
     if (id === "search.enable_regex") return searchOptsStore.get("enable_regex");
     if (id === "view.theme.system") return settingsStore.state.theme === "system";
     if (id === "view.theme.light") return settingsStore.state.theme === "light";

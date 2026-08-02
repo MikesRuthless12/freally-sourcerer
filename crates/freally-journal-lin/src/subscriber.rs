@@ -60,7 +60,7 @@ use futures::Stream;
 use futures::channel::mpsc;
 
 use crate::cursor::{WatchBackend, WatchCursor};
-use crate::event::{JournalError, JournalEvent};
+use crate::event::{JournalError, JournalEvent, JournalPosition};
 use crate::ffi::{
     FanotifyEventIter, FanotifyFd, InotifyEventIter, InotifyFd, ParsedInotifyEvent, device_id,
     statfs_name, walk_getdents64,
@@ -96,6 +96,15 @@ impl JournalSubscriber {
 
     pub fn cursor(&self) -> WatchCursor {
         self.cursor.lock().expect("cursor mutex poisoned").clone()
+    }
+
+    /// OS-agnostic view of `cursor()` for the daemon's watcher supervisor.
+    pub fn position(&self) -> JournalPosition {
+        let c = self.cursor.lock().expect("cursor mutex poisoned");
+        JournalPosition {
+            generation: c.device,
+            offset: c.last_event_time_ns.max(0) as u64,
+        }
     }
 }
 

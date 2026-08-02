@@ -59,6 +59,27 @@ impl JournalEvent {
     }
 }
 
+/// OS-agnostic snapshot of where a subscriber currently sits in its
+/// change stream. Mirrored by the macOS and Linux crates so the daemon's
+/// watcher supervisor can detect a journal recreate / wrap without
+/// knowing the per-OS cursor type.
+///
+/// `generation` identifies the stream itself — a change means the OS
+/// threw away the old stream, so any events between the two are lost and
+/// the index needs a rebuild. `offset` is the monotonic position within
+/// that stream; it going *backwards* under a stable generation means the
+/// stream wrapped and we were reseated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JournalPosition {
+    /// Windows: the USN journal id. macOS: the BSD device id. Linux: the
+    /// `st_dev` of the watched root.
+    pub generation: u64,
+    /// Windows: `NextUsn`. macOS: the last FSEvents event id. Linux: the
+    /// wall-clock nanoseconds of the last emitted event (advisory — the
+    /// inotify/fanotify backends have no resumable cursor).
+    pub offset: u64,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum JournalError {
     #[error("volume path is not a Windows drive root (expected e.g. `C:\\`): {0}")]

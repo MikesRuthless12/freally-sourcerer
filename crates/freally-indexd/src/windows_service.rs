@@ -232,6 +232,9 @@ async fn run_service_daemon() -> Result<()> {
 
     let opts = DaemonOptions {
         index_root: Some(index_root),
+        // One daemon, one pipe, every user on the machine — so the
+        // per-user undo journal is refused rather than shared.
+        shared_multi_user: true,
         ..Default::default()
     };
     let state: Arc<DaemonState> = DaemonState::open(opts)?;
@@ -261,6 +264,15 @@ async fn run_service_daemon() -> Result<()> {
     // launch until much later (or ever, if Freally is being used
     // exclusively via its CLI / HTTP endpoint).
     {
+        // Catalogs first, and watchers second, exactly as `spawn_at`
+        // does. This path does not go through `spawn_at`, so without
+        // these the service would bootstrap a full-volume scan against
+        // an empty volume map — stamping every row with no volume,
+        // permanently, until a rescan — and would never start live
+        // journaling at all.
+        state.reconcile_catalogs().await;
+        state.reconcile_watchers().await;
+
         let folders = state.folders.read().await.clone();
         if folders.is_empty() {
             tracing::info!("service: no folders configured yet; waiting for IPC");
@@ -287,6 +299,7 @@ async fn run_service_daemon() -> Result<()> {
     }
 
     server_handle.abort();
+    state.watchers.shutdown();
     let _ = state.persist().await;
     tracing::info!("service: clean shutdown");
     Ok(())

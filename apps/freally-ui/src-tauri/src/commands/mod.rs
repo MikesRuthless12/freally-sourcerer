@@ -26,6 +26,7 @@ pub mod index_state;
 pub mod known_paths;
 pub mod network;
 pub mod query;
+pub mod rename;
 pub mod settings;
 pub mod shell_verbs;
 pub mod volumes;

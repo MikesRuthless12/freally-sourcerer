@@ -73,6 +73,11 @@ export const MENU_BAR: MenuRoot[] = [
     hint: "Contains commands for editing search results.",
     hintL10n: "menu-edit-hint",
     children: [
+      { kind: "item", id: "edit.undo", label: "Undo", l10n: "menu-edit-undo", accelerator: "Ctrl+Z" },
+      { kind: "item", id: "edit.redo", label: "Redo", l10n: "menu-edit-redo", accelerator: "Ctrl+Shift+Z" },
+      { kind: "separator" },
+      { kind: "item", id: "edit.bulk_rename", label: "Rename…", l10n: "menu-edit-bulk-rename", accelerator: "F2" },
+      { kind: "separator" },
       { kind: "item", id: "edit.cut", label: "Cut", l10n: "menu-edit-cut", accelerator: "Ctrl+X" },
       { kind: "item", id: "edit.copy", label: "Copy", l10n: "menu-edit-copy", accelerator: "Ctrl+C" },
       { kind: "item", id: "edit.paste", label: "Paste", l10n: "menu-edit-paste", accelerator: "Ctrl+V" },
@@ -212,6 +217,7 @@ export const MENU_BAR: MenuRoot[] = [
       { kind: "item", id: "search.match_whole_word", label: "Match Whole Word", l10n: "menu-search-match-whole-word", accelerator: "Ctrl+B", checkable: true },
       { kind: "item", id: "search.match_path", label: "Match Path", l10n: "menu-search-match-path", accelerator: "Ctrl+U", checkable: true },
       { kind: "item", id: "search.match_diacritics", label: "Match Diacritics", l10n: "menu-search-match-diacritics", accelerator: "Ctrl+M", checkable: true },
+      { kind: "item", id: "search.match_phonetic", label: "Match CJK Phonetics", l10n: "menu-search-match-phonetic", checkable: true },
       { kind: "item", id: "search.enable_regex", label: "Enable Regex", l10n: "menu-search-enable-regex", accelerator: "Ctrl+R", checkable: true },
       { kind: "item", id: "search.advanced", label: "Advanced Search…", l10n: "menu-search-advanced" },
       { kind: "item", id: "search.within_results", label: "Search Within Results", l10n: "menu-search-within-results", accelerator: "Ctrl+Shift+F" },
@@ -257,6 +263,7 @@ export const MENU_BAR: MenuRoot[] = [
         hint: "Index maintenance tools.",
         hintL10n: "menu-tools-index-maintenance-hint",
         children: [
+          { kind: "item", id: "tools.index_health", label: "Index Health…", l10n: "menu-tools-index-health" },
           { kind: "item", id: "tools.verify_index", label: "Verify Index…", l10n: "menu-tools-verify-index" },
           { kind: "item", id: "tools.compact_index", label: "Compact Index…", l10n: "menu-tools-compact-index" },
           { kind: "item", id: "tools.rebuild_index", label: "Force Rebuild Index…", l10n: "menu-tools-rebuild-index" }

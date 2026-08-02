@@ -172,6 +172,7 @@ pub enum ModifierDetail {
     Ext { extensions: Vec<String> },
     Attrib { letters: String },
     Path { needle: String },
+    Volume { needle: String },
     Parent { needle: String },
     Child { needle: String },
     Similar { needle: String },
@@ -492,6 +493,7 @@ fn modifier_name(kind: &ModifierKind) -> &'static str {
         ModifierKind::Ext(_) => "ext",
         ModifierKind::Attrib(_) => "attrib",
         ModifierKind::Path(_) => "path",
+        ModifierKind::Volume(_) => "volume",
         ModifierKind::Parent(_) => "parent",
         ModifierKind::Child(_) => "child",
         ModifierKind::Similar(_) => "similar",
@@ -576,6 +578,7 @@ impl From<&ModifierKind> for ModifierDetail {
                 ModifierDetail::Attrib { letters }
             }
             ModifierKind::Path(s) => ModifierDetail::Path { needle: s.clone() },
+            ModifierKind::Volume(s) => ModifierDetail::Volume { needle: s.clone() },
             ModifierKind::Parent(s) => ModifierDetail::Parent { needle: s.clone() },
             ModifierKind::Child(s) => ModifierDetail::Child { needle: s.clone() },
             ModifierKind::Similar(s) => ModifierDetail::Similar { needle: s.clone() },

@@ -18,7 +18,7 @@ use futures::Stream;
 use futures::channel::mpsc;
 
 use crate::cursor::VolumeCursor;
-use crate::event::{JournalError, JournalEvent};
+use crate::event::{JournalError, JournalEvent, JournalPosition};
 use crate::ffi::{
     JournalState, ParsedUsnRecord, UsnRecordIter, VolumeHandle, enum_usn_data, query_usn_journal,
     read_usn_journal, resolve_path_by_frn, volume_info,
@@ -51,6 +51,15 @@ impl JournalSubscriber {
 
     pub fn cursor(&self) -> VolumeCursor {
         self.cursor.lock().expect("cursor mutex poisoned").clone()
+    }
+
+    /// OS-agnostic view of `cursor()` for the daemon's watcher supervisor.
+    pub fn position(&self) -> JournalPosition {
+        let c = self.cursor.lock().expect("cursor mutex poisoned");
+        JournalPosition {
+            generation: c.journal_id,
+            offset: c.next_usn.max(0) as u64,
+        }
     }
 }
 
@@ -192,6 +201,32 @@ impl JournalSubscriber {
             .expect("spawn subscribe thread");
 
         rx
+    }
+}
+
+/// Size + mtime for a live `Create` / `Modify`.
+///
+/// A USN record carries attributes and one timestamp but **not** the file
+/// size, so emitting `size: 0` — as this path used to — would zero out
+/// whatever the bootstrap walk had indexed correctly: saving a 4 MB
+/// spreadsheet would drop its Size column to 0 B and take it out of
+/// `size:>1mb`. `bootstrap_thread` already pays one `stat` per file for
+/// exactly this reason; the live path has to as well.
+///
+/// Falls back to the record's own timestamp when the file is already
+/// gone by the time we look — a create-then-delete inside one batch.
+fn live_size_and_mtime(path: &Path, record_filetime: i64) -> (u64, i128) {
+    match std::fs::metadata(path) {
+        Ok(m) => {
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as i128)
+                .unwrap_or_else(|| filetime_to_unix_ns(record_filetime));
+            (m.len(), mtime)
+        }
+        Err(_) => (0, filetime_to_unix_ns(record_filetime)),
     }
 }
 
@@ -447,10 +482,11 @@ fn handle_record(
             if rec.is_directory() {
                 return None;
             }
+            let (size, mtime_ns) = live_size_and_mtime(&path, rec.timestamp_filetime);
             Some(JournalEvent::Create {
                 path,
-                size: 0,
-                mtime_ns: filetime_to_unix_ns(rec.timestamp_filetime),
+                size,
+                mtime_ns,
                 ctime_ns: filetime_to_unix_ns(rec.timestamp_filetime),
                 attrs: rec.file_attributes,
             })
@@ -460,10 +496,11 @@ fn handle_record(
                 return None;
             }
             let path = path?;
+            let (size, mtime_ns) = live_size_and_mtime(&path, rec.timestamp_filetime);
             Some(JournalEvent::Modify {
                 path,
-                size: 0,
-                mtime_ns: filetime_to_unix_ns(rec.timestamp_filetime),
+                size,
+                mtime_ns,
                 attrs: rec.file_attributes,
             })
         }

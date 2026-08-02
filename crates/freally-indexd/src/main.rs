@@ -135,6 +135,10 @@ fn run_foreground(index_root: Option<String>, socket: Option<String>) -> Result<
         // tokio::signal; on Windows we let Ctrl-C bubble through the
         // service control plane.
         let _ = handle.await;
+        // Stop live journaling before persisting: the consumer commits
+        // whatever it has pending on the way out, so dropping the
+        // process without this abandons applied-but-uncommitted events.
+        state.watchers.shutdown();
         let _ = state.persist().await;
         Ok::<(), anyhow::Error>(())
     })?;

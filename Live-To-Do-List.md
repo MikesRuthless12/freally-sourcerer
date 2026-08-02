@@ -12,18 +12,43 @@ machine.
 
 ## ✅ Playwright confirmed these render
 
-> **Not yet populated.** The Playwright harness was scaffolded on 2026-07-19 and
-> has **never actually run** against this app. Populate this section from the
-> first real `pnpm test:e2e` run — list each spec/screenshot that passed. Do not
-> pre-check items. The scaffolded specs cover (pending that first run):
->
-> - [ ] Main window: menu bar, search bar, quick-filter chips, grouped lens results, status bar (`01-main-results`)
-> - [ ] Typed query re-runs the search (`02-search-query`)
-> - [ ] Settings dialog opens via Ctrl+, (`03-settings-dialog`)
-> - [ ] About dialog opens via Ctrl+F1 (`04-about-dialog`)
-> - [ ] Organize Bookmarks dialog with listed bookmarks (`05-organize-bookmarks`)
-> - [ ] Connect-to-FTP-Server dialog via Tools menu (`06-connect-endpoint`)
-> - [ ] First-run wizard for a fresh install (`07-first-run-wizard`)
+**Populated 2026-08-02 (Build 2) from the first run this harness has ever
+completed** — scaffolded 2026-07-19, first green today. `8 passed, 1 skipped`,
+with the screenshots in `apps/freally-ui/e2e/screenshots/`. Each box below is
+ticked only because its spec actually passed and its PNG exists.
+
+Run it with `pnpm build && PW_CHANNEL=msedge pnpm test:e2e` from
+`apps/freally-ui`.
+
+- [x] Main window: menu bar, search bar, quick-filter chips, grouped lens results, status bar (`01-main-results`)
+- [x] Typed query re-runs the search (`02-search-query`)
+- [x] Settings dialog opens via Ctrl+, (`03-settings-dialog`)
+- [x] About dialog opens via Ctrl+F1 (`04-about-dialog`)
+- [x] Organize Bookmarks dialog with listed bookmarks (`05-organize-bookmarks`)
+- [x] Connect-to-FTP-Server dialog via Tools menu (`06-connect-endpoint`)
+- [x] First-run wizard for a fresh install (`07-first-run-wizard`)
+- [x] Bulk Rename dialog: preview table renders `Will rename` / `Unchanged` / collision, Apply disabled while blocked (`09-bulk-rename`) — SRC-M15
+- [ ] **Index Health panel** (`08-index-health`) — SRC-M13. Marked `test.fixme`;
+      the panel is fine, the *spec* cannot drive the one submenu in the menu
+      bar. It opens on `mouseenter` and closes on `mouseleave`, so the item is
+      found and reported visible and then detaches before the next call.
+      Six approaches failed the same way (real click, hover-then-click,
+      synthetic `mouseenter`, keyboard `Enter`, keyboard `ArrowRight`,
+      direct `mouse.move`). Left failing-visibly rather than forced green.
+      Revisit if the menu ever gains a click-to-pin submenu — which would
+      help trackpad users too.
+
+**Why `PW_CHANNEL`.** Playwright's own Chromium could not be installed here:
+this project pins build 1217, the machine has a *partial* 1217 (missing
+`chrome.exe`, from the 2026-08-01 crash), and `playwright install` is blocked
+by the machine-global `ms-playwright` lock — an unrelated repo's download held
+it for over an hour, and force-removing it would have corrupted that download.
+`PW_CHANNEL=msedge` runs against system-installed Edge instead, which is also
+*better fidelity*: Tauri renders in WebView2 on Windows, which is Edge. The
+variable is unset by default so CI keeps its pinned Chromium.
+
+GitHub CI does **not** run this harness (no Playwright step in
+`.github/workflows/ci.yml`), so it gates nothing — it is a local gallery.
 
 ## ☐ Human drills — features Playwright cannot verify
 

@@ -157,6 +157,7 @@ pub fn run() {
             commands::query::query_lens_timings,
             // Daemon-routed index controls.
             commands::index_state::index_state,
+            commands::index_state::index_health,
             commands::index_state::index_verify,
             commands::index_state::index_compact,
             commands::index_state::index_rebuild,
@@ -199,6 +200,12 @@ pub fn run() {
             // Phase 12 daemon-routed Settings → Indexes panels.
             commands::volumes::volumes_list,
             commands::volumes::volumes_update,
+            commands::volumes::catalogs_list,
+            commands::rename::files_rename_preview,
+            commands::rename::files_rename_apply,
+            commands::rename::ops_undo,
+            commands::rename::ops_redo,
+            commands::rename::ops_list,
             commands::volumes::volumes_recreate_journal,
             commands::volumes::volumes_reset_stream,
             commands::volumes::volumes_upgrade_fanotify,
