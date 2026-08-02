@@ -850,3 +850,4 @@ settings-custom-commands-program = Chương trình
 settings-custom-commands-args = Đối số
 settings-custom-commands-extensions = Chỉ cho các phần mở rộng
 settings-custom-commands-add = Thêm lệnh
+did-you-mean-label = Có phải bạn muốn tìm

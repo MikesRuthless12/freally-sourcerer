@@ -354,7 +354,11 @@ where
 // ---------- CSV primitives ---------------------------------------------
 
 /// Append one RFC-4180 field, quoting only when it has to.
-fn write_csv_field(out: &mut String, field: &str) {
+///
+/// Public because SRC-M09's `freally search --csv` writes user-selected
+/// columns rather than this module's fixed ones, and a second quoter
+/// would be a second place for the escaping to drift.
+pub fn write_csv_field(out: &mut String, field: &str) {
     if field.contains([',', '"', '\r', '\n']) {
         out.push('"');
         for c in field.chars() {

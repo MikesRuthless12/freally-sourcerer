@@ -850,3 +850,4 @@ settings-custom-commands-program = प्रोग्राम
 settings-custom-commands-args = तर्क
 settings-custom-commands-extensions = केवल इन एक्सटेंशन के लिए
 settings-custom-commands-add = कमांड जोड़ें
+did-you-mean-label = क्या आपका मतलब था

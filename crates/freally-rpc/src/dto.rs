@@ -104,10 +104,33 @@ pub struct QueryBatch {
     pub groups: Vec<HitGroup>,
 }
 
+/// SRC-M11 — a spelling correction offered when a search found nothing.
+///
+/// Carries the rewritten query rather than only the corrected word so
+/// accepting the suggestion is one click: the UI runs `query` as-is
+/// instead of re-deriving where in the source the term sat.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DidYouMean {
+    /// The term as the user typed it.
+    pub typed: String,
+    /// The indexed name to suggest instead, in its on-disk casing.
+    pub suggested: String,
+    /// The original query with `typed` replaced by `suggested`.
+    pub query: String,
+    /// Edit distance between the two, so the UI can choose to present a
+    /// 1-edit correction more confidently than a 3-edit one.
+    pub distance: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryDone {
     pub handle: String,
     pub timings: LensTimings,
+    /// Present only when every lens came back empty and a plausible
+    /// correction exists. `#[serde(default)]` keeps pre-Build-2 daemons
+    /// and recorded fixtures readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub did_you_mean: Option<DidYouMean>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

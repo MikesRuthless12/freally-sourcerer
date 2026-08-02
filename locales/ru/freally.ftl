@@ -850,3 +850,4 @@ settings-custom-commands-program = Программа
 settings-custom-commands-args = Аргументы
 settings-custom-commands-extensions = Только для расширений
 settings-custom-commands-add = Добавить команду
+did-you-mean-label = Возможно, вы имели в виду

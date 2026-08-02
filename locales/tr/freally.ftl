@@ -850,3 +850,4 @@ settings-custom-commands-program = Program
 settings-custom-commands-args = Argümanlar
 settings-custom-commands-extensions = Yalnızca şu uzantılar için
 settings-custom-commands-add = Komut ekle
+did-you-mean-label = Şunu mu demek istediniz

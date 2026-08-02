@@ -7,6 +7,9 @@
 //! - `freally search --strict-everything "<query>"` — voidtools-
 //!   Everything-syntax-only mode; rejects Freally extensions (audio
 //!   modifiers, similar:, audio:/content: lens prefixes).
+//! - `freally search --json|--ndjson|--csv|-0` — SRC-M09 machine-
+//!   readable output, with `--fields` / `--limit` / `--offset` and an
+//!   exit code that reports whether anything matched. See [`output`].
 //! - `freally index status` — prints the daemon's IndexState.
 //! - `freally index pause` / `resume` — daemon-side controls.
 //! - `freally index add-root <path>` / `rm-root <path>` — adds /
@@ -18,12 +21,18 @@
 //! Connect-target: per-OS default socket path. Override with
 //! `--socket <path>`.
 
+mod completions;
+mod output;
+
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use freally_query::{ParseOpts, parse_to_report};
 use freally_rpc::{Client, SocketPath, default_socket_path};
+
+use output::{EXIT_ERROR, EXIT_HITS, Field, Format, Writer};
 
 #[derive(Parser, Debug)]
 #[command(name = "freally", version, about = "Freally — one search, every source, every OS.", long_about = None)]
@@ -44,10 +53,14 @@ enum Command {
         /// Everything-syntax-compatible queries.
         #[arg(long)]
         strict_everything: bool,
-        /// Print parse output as JSON instead of evaluating.
+        /// Print parse output as JSON instead of evaluating. Takes
+        /// precedence over the output-format flags below.
         #[arg(long)]
         parse_only: bool,
+        #[command(flatten)]
+        output: OutputArgs,
         /// The query string.
+        #[arg(add = completions::query_value_candidates())]
         query: String,
     },
     /// Inspect or control the running indexer.
@@ -62,6 +75,60 @@ enum Command {
     },
     /// Switch the running app's theme.
     Theme { choice: ThemeChoice },
+    /// Print the shell-completion registration stub for <SHELL>.
+    Completions { shell: completions::Shell },
+}
+
+/// SRC-M09 output control. The four format flags share one group, so
+/// clap rejects `--json --csv` rather than silently letting one win.
+#[derive(Args, Debug)]
+struct OutputArgs {
+    /// Emit a single JSON document: `{ hits, count, timings }`.
+    #[arg(long, group = "output_format")]
+    json: bool,
+    /// Emit one JSON object per hit, streaming.
+    #[arg(long, group = "output_format")]
+    ndjson: bool,
+    /// Emit RFC-4180 CSV with a header row.
+    #[arg(long, group = "output_format")]
+    csv: bool,
+    /// Emit NUL-separated paths, for `xargs -0`.
+    #[arg(short = '0', long = "print0", group = "output_format")]
+    print0: bool,
+    /// Columns to emit, comma-separated. Defaults to every column.
+    /// Ignored by `-0`, which is paths only.
+    #[arg(long, value_delimiter = ',')]
+    fields: Vec<Field>,
+    /// Stop after this many hits.
+    #[arg(long)]
+    limit: Option<u64>,
+    /// Skip this many hits first.
+    #[arg(long, default_value_t = 0)]
+    offset: u64,
+}
+
+impl OutputArgs {
+    fn format(&self) -> Format {
+        if self.json {
+            Format::Json
+        } else if self.ndjson {
+            Format::Ndjson
+        } else if self.csv {
+            Format::Csv
+        } else if self.print0 {
+            Format::Null
+        } else {
+            Format::Human
+        }
+    }
+
+    fn fields(&self) -> Vec<Field> {
+        if self.fields.is_empty() {
+            Field::ALL.to_vec()
+        } else {
+            self.fields.clone()
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -90,13 +157,34 @@ enum ThemeChoice {
     Dark,
 }
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
     init_tracing();
+    // SRC-M10: when a shell invokes us to complete a word it sets
+    // `COMPLETE=<shell>`. That call answers with candidates and exits
+    // here, before argument parsing — a half-typed query is not a
+    // valid command line and must never reach the parser.
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     let cli = Cli::parse();
-    let rt = tokio::runtime::Builder::new_multi_thread()
+    // Every failure path below reports SRC-M09's `EXIT_ERROR`, so a
+    // caller can tell "no matches" from "did not run" without parsing
+    // stderr.
+    let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()?;
-    rt.block_on(async move { run(cli).await })
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("freally: {e}");
+            return ExitCode::from(EXIT_ERROR);
+        }
+    };
+    match rt.block_on(async move { run(cli).await }) {
+        Ok(code) => ExitCode::from(code),
+        Err(e) => {
+            eprintln!("freally: {e:#}");
+            ExitCode::from(EXIT_ERROR)
+        }
+    }
 }
 
 fn init_tracing() {
@@ -109,7 +197,9 @@ fn init_tracing() {
         .try_init();
 }
 
-async fn run(cli: Cli) -> Result<()> {
+/// Returns the process exit code. Only `search` distinguishes
+/// hits-from-no-hits; the control commands succeed or return `Err`.
+async fn run(cli: Cli) -> Result<u8> {
     let socket = match cli.socket {
         Some(s) => parse_socket_arg(&s),
         None => default_socket_path(),
@@ -118,11 +208,16 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Search {
             strict_everything,
             parse_only,
+            output,
             query,
-        } => cmd_search(&socket, strict_everything, parse_only, &query).await,
-        Command::Index { sub } => cmd_index(&socket, sub).await,
-        Command::Bookmark { sub } => cmd_bookmark(sub).await,
-        Command::Theme { choice } => cmd_theme(&socket, choice).await,
+        } => cmd_search(&socket, strict_everything, parse_only, &output, &query).await,
+        Command::Index { sub } => cmd_index(&socket, sub).await.map(|()| EXIT_HITS),
+        Command::Bookmark { sub } => cmd_bookmark(sub).await.map(|()| EXIT_HITS),
+        Command::Theme { choice } => cmd_theme(&socket, choice).await.map(|()| EXIT_HITS),
+        Command::Completions { shell } => {
+            completions::print(shell, &mut std::io::stdout().lock())?;
+            Ok(EXIT_HITS)
+        }
     }
 }
 
@@ -138,8 +233,9 @@ async fn cmd_search(
     socket: &SocketPath,
     strict_everything: bool,
     parse_only: bool,
+    output: &OutputArgs,
     source: &str,
-) -> Result<()> {
+) -> Result<u8> {
     let opts = if strict_everything {
         ParseOpts::strict()
     } else {
@@ -160,7 +256,7 @@ async fn cmd_search(
     if parse_only {
         let json = serde_json::to_string_pretty(&report)?;
         println!("{json}");
-        return Ok(());
+        return Ok(EXIT_HITS);
     }
 
     let client = Client::connect(socket.clone())
@@ -175,9 +271,22 @@ async fn cmd_search(
         .await?;
     let target_handle = handle.handle.clone();
 
-    println!("# Query: {source}");
+    let format = output.format();
+    // The banner is commentary, not data — it would corrupt every
+    // machine format, so only the human one gets it.
+    if format == Format::Human {
+        println!("# Query: {source}");
+    }
+    let mut writer = Writer::new(
+        std::io::stdout().lock(),
+        format,
+        output.fields(),
+        output.offset,
+        output.limit,
+    );
+
+    let mut timings = freally_rpc::LensTimings::default();
     let mut done = false;
-    let mut total_hits = 0;
     while !done {
         let n = match notifications.next().await {
             Some(n) => n,
@@ -190,11 +299,12 @@ async fn cmd_search(
                 if batch.handle != target_handle {
                     continue;
                 }
-                if !batch.hits.is_empty() {
-                    println!("\n[{:?}]", batch.lens);
-                    for h in &batch.hits {
-                        println!("  {} — {}", h.name, h.path);
-                        total_hits += 1;
+                for h in &batch.hits {
+                    // `--limit` stops the drain here rather than
+                    // formatting rows that would be discarded.
+                    if !writer.push(h)? {
+                        done = true;
+                        break;
                     }
                 }
             }
@@ -204,21 +314,14 @@ async fn cmd_search(
                 if d.handle != target_handle {
                     continue;
                 }
-                println!(
-                    "\n# {} hit(s); filename {}ms · content {}ms · audio {}ms · similarity {}ms · total {}ms",
-                    total_hits,
-                    d.timings.filename_ms,
-                    d.timings.content_ms,
-                    d.timings.audio_ms,
-                    d.timings.similarity_ms,
-                    d.timings.total_ms
-                );
+                timings = d.timings;
                 done = true;
             }
             _ => {}
         }
     }
-    Ok(())
+    writer.finish(&timings)?;
+    Ok(writer.exit_code())
 }
 
 async fn cmd_index(socket: &SocketPath, sub: IndexCommand) -> Result<()> {

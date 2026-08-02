@@ -13,6 +13,7 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as ipcQuery from "../ipc/query";
 import type {
+  DidYouMean,
   HitGroup,
   LensId,
   LensTimings,
@@ -42,6 +43,10 @@ class ResultsStore {
   batches = $state<QueryBatch[]>([]);
   timings = $state<LensTimings | null>(null);
   lastQueryMs = $state(0);
+  /** SRC-M11 — set only when a query matched nothing and the daemon
+   *  found a plausible correction. Cleared at the start of every run so
+   *  a stale suggestion never outlives the search that produced it. */
+  didYouMean = $state<DidYouMean | null>(null);
   private seq = 0;
   private batchUnlisten: UnlistenFn | null = null;
   private doneUnlisten: UnlistenFn | null = null;
@@ -84,6 +89,7 @@ class ResultsStore {
         if (!cur || cur.handle !== done.handle) return;
         this.timings = done.timings;
         this.lastQueryMs = Math.round(performance.now() - cur.startedAt);
+        this.didYouMean = done.did_you_mean ?? null;
         this.running = null;
       });
     }
@@ -91,6 +97,10 @@ class ResultsStore {
 
   async run(source: string) {
     const my = ++this.seq;
+    // Drop the previous suggestion before anything else: it belongs to
+    // the query being replaced, and leaving it up while the new one
+    // runs would offer a correction for a term no longer on screen.
+    this.didYouMean = null;
     // SRC-M03: an imported file list catalogues a volume the daemon
     // has never indexed, so it answers its own queries. Cancel any
     // in-flight daemon work first — a stale batch arriving afterwards

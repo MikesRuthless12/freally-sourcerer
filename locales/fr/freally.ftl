@@ -850,3 +850,4 @@ settings-custom-commands-program = Programme
 settings-custom-commands-args = Arguments
 settings-custom-commands-extensions = Uniquement pour les extensions
 settings-custom-commands-add = Ajouter une commande
+did-you-mean-label = Vouliez-vous dire

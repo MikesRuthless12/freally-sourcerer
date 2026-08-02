@@ -26,7 +26,7 @@
 //! load/flush. The Phase-5 query side will reuse the same maps without
 //! changes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -262,6 +262,86 @@ impl NameIndex {
         }
     }
 
+    /// SRC-M11: yield `(file_id, name_lower_bytes)` for rows that share
+    /// at least `min_shared` trigrams with `q_lower`, up to `cap` rows.
+    ///
+    /// This is [`for_each_candidate_named`](Self::for_each_candidate_named)'s
+    /// tolerant sibling, and it exists because that one cannot answer
+    /// the question "did they mean…?". Substring search intersects
+    /// every trigram of the needle, so a single typo introduces one
+    /// trigram the target lacks and the intersection collapses to
+    /// nothing — which is precisely the case where a correction is
+    /// worth offering. Counting shared trigrams instead of requiring
+    /// all of them keeps a one-edit neighbour in the candidate set.
+    ///
+    /// Only ever called on the zero-hit path, so the work is bounded by
+    /// `cap` and paid once, when the user is already looking at an
+    /// empty result list.
+    ///
+    /// A needle shorter than three bytes has no trigrams and yields
+    /// nothing: at that length every name in the index is a
+    /// "candidate", and correcting a two-character term is guesswork.
+    pub fn for_each_fuzzy_candidate<F>(
+        &self,
+        q_lower: &str,
+        min_shared: usize,
+        cap: usize,
+        mut f: F,
+    ) where
+        F: FnMut(u64, &[u8]),
+    {
+        let bytes = q_lower.as_bytes();
+        if bytes.len() < 3 || min_shared == 0 {
+            return;
+        }
+        let inner = self.inner.read();
+        // Count how many of the needle's trigrams each row carries.
+        // Distinct trigrams only — a repeated trigram in the needle
+        // would otherwise let one row's single match count twice.
+        let mut seen_trigrams: HashSet<[u8; 3]> = HashSet::new();
+        let mut shared: HashMap<u32, usize> = HashMap::new();
+        for w in bytes.windows(3) {
+            let key = [w[0], w[1], w[2]];
+            if !seen_trigrams.insert(key) {
+                continue;
+            }
+            let Some(postings) = inner.trigrams.get(&key) else {
+                continue;
+            };
+            let mut last: Option<u32> = None;
+            for &row in postings {
+                // Postings are append-only until flush, so a row can
+                // appear more than once for the same trigram.
+                if last == Some(row) {
+                    continue;
+                }
+                last = Some(row);
+                *shared.entry(row).or_insert(0) += 1;
+            }
+        }
+        let mut emitted = 0usize;
+        // Sort by descending overlap so `cap` keeps the most promising
+        // rows rather than whichever the hash map happened to yield
+        // first — and so the candidate set is deterministic.
+        let mut ranked: Vec<(u32, usize)> = shared
+            .into_iter()
+            .filter(|&(_, n)| n >= min_shared)
+            .collect();
+        ranked.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        for (row, _) in ranked {
+            if let Some(&fid) = inner.file_ids.get(row as usize)
+                && fid != u64::MAX
+                && let Some(name) = name_bytes(&inner, row)
+            {
+                f(fid, name);
+                emitted += 1;
+                if cap != 0 && emitted >= cap {
+                    return;
+                }
+            }
+        }
+    }
+
     /// Phase-5 fallback path for queries with no trigram seed (regex,
     /// pure-modifier, or wildcard like `*.txt` whose static body is
     /// shorter than three bytes). Walks every live row in `RowId`
@@ -453,4 +533,91 @@ fn tmp_path(path: &Path) -> PathBuf {
     let mut s = path.as_os_str().to_owned();
     s.push(".tmp");
     PathBuf::from(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn index_with(names: &[&str]) -> (tempfile::TempDir, NameIndex) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ni = NameIndex::open(dir.path()).expect("open");
+        for (i, n) in names.iter().enumerate() {
+            ni.upsert(i as u64, &n.to_lowercase()).expect("upsert");
+        }
+        (dir, ni)
+    }
+
+    fn fuzzy(ni: &NameIndex, q: &str, min_shared: usize) -> Vec<String> {
+        let mut out = Vec::new();
+        ni.for_each_fuzzy_candidate(q, min_shared, 32, |_, name| {
+            out.push(String::from_utf8_lossy(name).to_string());
+        });
+        out
+    }
+
+    #[test]
+    fn a_typo_finds_no_substring_candidate_but_does_find_a_fuzzy_one() {
+        let (_d, ni) = index_with(&["freally", "unrelated"]);
+        // The substring path intersects every trigram, so the stray
+        // `lll` in the typo collapses it to nothing. That failure is
+        // exactly what SRC-M11 exists to rescue.
+        let mut strict = Vec::new();
+        ni.for_each_candidate_named("freallly", 32, |_, n| {
+            strict.push(String::from_utf8_lossy(n).to_string())
+        });
+        assert!(
+            strict.is_empty(),
+            "substring path unexpectedly matched: {strict:?}"
+        );
+
+        let loose = fuzzy(&ni, "freallly", 3);
+        assert!(loose.contains(&"freally".to_string()), "got {loose:?}");
+    }
+
+    #[test]
+    fn candidates_are_ordered_by_shared_trigram_count() {
+        let (_d, ni) = index_with(&["quarterly-report", "quarterly-budget", "zzzzzz"]);
+        let out = fuzzy(&ni, "quarterly-reprot", 3);
+        assert_eq!(
+            out.first().map(String::as_str),
+            Some("quarterly-report"),
+            "closest name should rank first, got {out:?}"
+        );
+        assert!(!out.contains(&"zzzzzz".to_string()));
+    }
+
+    #[test]
+    fn the_cap_bounds_the_candidate_set() {
+        let names: Vec<String> = (0..50).map(|i| format!("report-{i:02}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let (_d, ni) = index_with(&refs);
+        let mut n = 0usize;
+        ni.for_each_fuzzy_candidate("report", 3, 5, |_, _| n += 1);
+        assert_eq!(n, 5);
+    }
+
+    #[test]
+    fn a_needle_shorter_than_a_trigram_yields_nothing() {
+        let (_d, ni) = index_with(&["freally"]);
+        assert!(fuzzy(&ni, "fr", 1).is_empty());
+        assert!(fuzzy(&ni, "", 1).is_empty());
+    }
+
+    #[test]
+    fn a_removed_row_is_never_offered() {
+        let (_d, ni) = index_with(&["freally", "freallz"]);
+        ni.remove(0).expect("remove");
+        let out = fuzzy(&ni, "freallly", 3);
+        assert!(!out.contains(&"freally".to_string()), "got {out:?}");
+    }
+
+    #[test]
+    fn raising_min_shared_narrows_the_set() {
+        let (_d, ni) = index_with(&["quarterly-report", "quarterly-budget"]);
+        let loose = fuzzy(&ni, "quarterly-report", 3).len();
+        let tight = fuzzy(&ni, "quarterly-report", 12).len();
+        assert!(tight <= loose, "loose={loose} tight={tight}");
+        assert!(tight >= 1, "the exact name must still qualify");
+    }
 }
