@@ -84,7 +84,9 @@ fn fresh_id() -> String {
     format!("bm-{counter}-{salt:08x}")
 }
 
-fn now_ms() -> u64 {
+/// Unix milliseconds. Shared with `commands::rename`, which stamps the
+/// operation journal with the same clock.
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)

@@ -1593,7 +1593,7 @@ dependencies = [
 
 [[package]]
 name = "freally-audio"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "ebur128",
  "parking_lot",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "freally-extractors"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "blake3",
  "calamine",
@@ -1664,12 +1664,13 @@ dependencies = [
 
 [[package]]
 name = "freally-index"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "blake3",
  "freally-journal",
  "memmap2",
  "parking_lot",
+ "pinyin",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1680,18 +1681,19 @@ dependencies = [
 
 [[package]]
 name = "freally-journal"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "freally-journal-lin",
  "freally-journal-mac",
  "freally-journal-win",
+ "futures",
  "serde",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "freally-journal-lin"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "futures",
  "libc",
@@ -1703,7 +1705,7 @@ dependencies = [
 
 [[package]]
 name = "freally-journal-mac"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "core-foundation",
  "core-foundation-sys",
@@ -1718,7 +1720,7 @@ dependencies = [
 
 [[package]]
 name = "freally-journal-win"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "futures",
  "serde",
@@ -1730,7 +1732,7 @@ dependencies = [
 
 [[package]]
 name = "freally-query"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "freally-audio",
  "freally-index",
@@ -1746,11 +1748,12 @@ dependencies = [
 
 [[package]]
 name = "freally-rpc"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "futures",
  "libc",
+ "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1761,7 +1764,7 @@ dependencies = [
 
 [[package]]
 name = "freally-similarity"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "blake3",
  "freally-journal",
@@ -3772,6 +3775,12 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "pinyin"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e225f595052d9c46045755be4b8d7950b6d9f3c33e0c0b74ba58f11bbfa8c64b"
 
 [[package]]
 name = "piper"

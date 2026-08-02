@@ -29,6 +29,38 @@ use freally_rpc::{Client, ClientHandle, SocketPath, default_socket_path};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::OnceCell;
 
+/// Register every path in a `query:batch` notification as a daemon-attested
+/// [`Provenance::QueryHit`](crate::commands::known_paths::Provenance).
+///
+/// This is the **only** writer of that level, and it runs here — in Rust,
+/// on the notification stream — precisely so nothing reachable from the
+/// webview can mint it. Without it the level is vacuous: the registry
+/// then only ever holds what the frontend asserted about itself, and the
+/// gate on the destructive commands means nothing.
+///
+/// It is also what makes those commands work at all. Every gated command
+/// verifies against this registry, so with no writer they reject every
+/// row the user can actually see.
+fn register_hit_paths(app: &AppHandle, method: &str, payload: &serde_json::Value) {
+    if method != "query:batch" {
+        return;
+    }
+    let Some(known) = app.try_state::<crate::commands::known_paths::KnownPaths>() else {
+        return;
+    };
+    // `QueryBatch { handle, lens, hits: [QueryHit { path, .. }] }` — take
+    // the paths and nothing else; a malformed payload registers nothing
+    // rather than failing the emit that follows.
+    let Some(hits) = payload.get("hits").and_then(|h| h.as_array()) else {
+        return;
+    };
+    known.add_many(
+        hits.iter()
+            .filter_map(|h| h.get("path").and_then(|p| p.as_str()))
+            .map(str::to_string),
+    );
+}
+
 pub struct Daemon {
     pub client: ClientHandle,
     /// Held so the sidecar process is killed when the Tauri app exits.
@@ -75,6 +107,7 @@ impl Daemon {
                 let notif_join = runtime.spawn(async move {
                     while let Some(n) = stream.next().await {
                         let payload = n.params.unwrap_or(serde_json::Value::Null);
+                        register_hit_paths(&app_for_emit2, &n.method, &payload);
                         if let Err(e) = app_for_emit2.emit(&n.method, payload) {
                             tracing::warn!(method = %n.method, error = %e, "tauri emit failed");
                         }
@@ -145,6 +178,7 @@ impl Daemon {
             let notif_join = tokio::spawn(async move {
                 while let Some(n) = stream.next().await {
                     let payload = n.params.unwrap_or(serde_json::Value::Null);
+                    register_hit_paths(&app, &n.method, &payload);
                     if let Err(e) = app.emit(&n.method, payload) {
                         tracing::warn!(method = %n.method, error = %e, "tauri emit failed");
                     }

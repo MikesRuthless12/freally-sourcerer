@@ -77,6 +77,9 @@ pub fn selectivity_rank(node: &QueryNode) -> u8 {
             ModifierKind::Date(_) => 22,
             ModifierKind::Attrib(_) => 24,
             ModifierKind::Path(_) | ModifierKind::Parent(_) => 30,
+            // SRC-M14: a string compare on an already-hydrated column,
+            // and highly selective — one device out of all of them.
+            ModifierKind::Volume(_) => 25,
             // SRC-M08: a hash lookup into the pre-built `DirStats` —
             // the build is per-query, the lookup itself is cheap.
             ModifierKind::Empty(_)

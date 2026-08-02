@@ -35,6 +35,19 @@ pub struct QueryHit {
     /// fixtures readable without re-serialization.
     #[serde(default)]
     pub attrs: u32,
+    /// SRC-M14. Volume id this row was indexed from. Empty for rows
+    /// written before M14, and for paths outside any known mount point.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub volume: String,
+    /// Catalog display name for `volume`, when one is known. Sent with
+    /// the hit rather than looked up client-side so a result row can
+    /// render its own badge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_label: Option<String>,
+    /// True when the device this row came from is not currently
+    /// attached — what the "offline — Orange WD 4TB" badge keys off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub volume_offline: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -104,10 +117,33 @@ pub struct QueryBatch {
     pub groups: Vec<HitGroup>,
 }
 
+/// SRC-M11 — a spelling correction offered when a search found nothing.
+///
+/// Carries the rewritten query rather than only the corrected word so
+/// accepting the suggestion is one click: the UI runs `query` as-is
+/// instead of re-deriving where in the source the term sat.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DidYouMean {
+    /// The term as the user typed it.
+    pub typed: String,
+    /// The indexed name to suggest instead, in its on-disk casing.
+    pub suggested: String,
+    /// The original query with `typed` replaced by `suggested`.
+    pub query: String,
+    /// Edit distance between the two, so the UI can choose to present a
+    /// 1-edit correction more confidently than a 3-edit one.
+    pub distance: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryDone {
     pub handle: String,
     pub timings: LensTimings,
+    /// Present only when every lens came back empty and a plausible
+    /// correction exists. `#[serde(default)]` keeps pre-Build-2 daemons
+    /// and recorded fixtures readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub did_you_mean: Option<DidYouMean>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +161,117 @@ pub struct IndexState {
     pub files_indexed: u64,
     pub files_total: u64,
     pub message: String,
+}
+
+/// SRC-M14 — one device Freally has indexed, attached or not.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogInfo {
+    /// Volume id stamped onto this device's rows; what `volume:` matches.
+    pub id: String,
+    pub name: String,
+    /// Where it was mounted when last seen — display only, since a
+    /// removable device can return on a different mount point.
+    pub mount_point: String,
+    pub fs_kind: String,
+    pub first_seen_ms: u64,
+    pub last_seen_ms: u64,
+    pub online: bool,
+}
+
+/// SRC-M13 — everything the Index Health panel renders.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexHealth {
+    pub volumes: Vec<VolumeHealth>,
+    /// Pending eager content extractions. `None` means the daemon does
+    /// not run an eager-extraction worker, so there is no backlog to
+    /// report — distinct from `Some(0)`, which means "worker idle".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_backlog: Option<u64>,
+    pub advisories: Vec<HealthAdvisory>,
+}
+
+/// Live-journaling health for one watched root.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VolumeHealth {
+    /// The root the change stream is opened on — a drive root on
+    /// Windows, the watched directory on macOS / Linux.
+    pub root: String,
+    /// Volume label when the root maps onto a detected volume.
+    pub label: String,
+    /// False when the OS refused a change stream here; the root is still
+    /// searchable from its last scan, it just will not self-update.
+    pub monitoring: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
+    pub events_seen: u64,
+    pub events_applied: u64,
+    /// Events refused because the queue was full — each is a hole in the
+    /// index that only a rescan can fill.
+    pub events_dropped: u64,
+    pub events_coalesced: u64,
+    /// Unix ms; 0 means "never".
+    pub last_event_ms: u64,
+    pub last_drop_ms: u64,
+    pub last_apply_ms: u64,
+    /// event → query-visible latency of the last committed batch.
+    pub last_lag_ms: u64,
+    pub max_lag_ms: u64,
+    pub queue_depth: u64,
+    pub queue_capacity: u64,
+    /// The OS discarded the change stream we were reading (a wrapped USN
+    /// journal, a recreated FSEvents stream). Events in the gap are lost.
+    pub stream_reset: bool,
+}
+
+/// One rule the advisor fired. The daemon sends a stable `id` and a
+/// single number rather than a sentence, so the UI renders it through
+/// Fluent in the user's locale.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthAdvisory {
+    pub id: AdvisoryId,
+    pub severity: AdvisorySeverity,
+    /// The root this concerns; `None` for index-wide advisories.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    /// The one figure the rule's message interpolates — dropped events,
+    /// lag in ms, queue depth. 0 when the rule needs no number.
+    pub count: u64,
+    pub fix: AdvisoryFix,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisoryId {
+    /// The change stream was discarded and re-seated; the index missed
+    /// everything in the gap.
+    JournalStreamReset,
+    /// Events were dropped at our queue boundary under load.
+    EventsDropped,
+    /// No change stream on this root — scans only.
+    NotMonitoring,
+    /// Changes are taking a long time to become searchable.
+    HighLag,
+    /// The queue is close to full, so drops are imminent.
+    QueueSaturated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AdvisorySeverity {
+    Info,
+    Warning,
+    Critical,
+}
+
+/// The one-click action that resolves an advisory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisoryFix {
+    /// Nothing the app can do unattended — the panel explains instead.
+    None,
+    /// Re-scan every watched folder, which fills whatever holes the
+    /// dropped or missed events left.
+    RebuildIndex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,7 +295,21 @@ pub struct ExtractorInfo {
 /// `fs_kind`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolumeInfo {
+    /// Where the volume is *mounted*, canonicalized — `win-E`,
+    /// `lin-_media_me_USB`. Stable for as long as the mount is, which is
+    /// what per-volume settings in `volumes.json` are keyed on.
     pub id: String,
+    /// Which physical *device* this is — the NTFS volume serial, the
+    /// Linux filesystem UUID, the macOS volume label.
+    ///
+    /// Deliberately separate from `id`, because a drive letter is not an
+    /// identity: unplug one drive from `E:` and plug in another, and the
+    /// mount id is identical while the device is not. SRC-M14 stamps
+    /// rows and keys catalogs on *this*, so "which drive was that file
+    /// on?" survives the letter being reused. Empty when the platform
+    /// cannot tell us, in which case callers fall back to `id`.
+    #[serde(default)]
+    pub device_id: String,
     pub label: String,
     pub mount_point: String,
     pub fs_kind: String,

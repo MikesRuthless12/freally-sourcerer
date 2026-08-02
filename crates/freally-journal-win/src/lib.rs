@@ -31,7 +31,7 @@ pub mod ffi;
 pub mod subscriber;
 
 pub use cursor::{CursorError, VolumeCursor};
-pub use event::{JournalError, JournalEvent};
+pub use event::{JournalError, JournalEvent, JournalPosition};
 
 #[cfg(windows)]
 pub use subscriber::{JournalSubscriber, open, open_with_cursor_root};
@@ -55,5 +55,11 @@ impl JournalSubscriber {
     }
     pub fn subscribe(&self) -> impl futures::Stream<Item = JournalEvent> + Send + 'static {
         futures::stream::empty()
+    }
+    pub fn position(&self) -> JournalPosition {
+        JournalPosition {
+            generation: 0,
+            offset: 0,
+        }
     }
 }

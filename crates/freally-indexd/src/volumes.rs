@@ -64,8 +64,19 @@ pub fn detect() -> Vec<VolumeInfo> {
         let used = total.saturating_sub(free);
 
         let id = format!("win-{letter}");
+        // The NTFS volume serial travels with the device, so a drive
+        // that comes back on a different letter is still the same
+        // catalog — and a *different* drive that inherits this letter is
+        // correctly a different one. `GetVolumeInformationW` above
+        // already read it; it used to be discarded.
+        let device_id = if serial == 0 {
+            String::new()
+        } else {
+            format!("wvol-{serial:08x}")
+        };
         out.push(VolumeInfo {
             id,
+            device_id,
             label: if label.is_empty() {
                 format!("{letter}:")
             } else {
@@ -118,8 +129,21 @@ pub fn detect() -> Vec<VolumeInfo> {
         let label = entry.file_name().to_string_lossy().to_string();
         let (used, total) = read_statvfs(&path);
         let id = format!("mac-{}", label.replace('/', "_"));
+        // macOS mounts removable media at `/Volumes/<volume label>`, so
+        // the mount point already carries the device's own name rather
+        // than a reusable slot like a drive letter. That makes it a
+        // usable device key; the residual weakness is two drives sharing
+        // a label, which is far narrower than letter reuse. A real
+        // filesystem UUID needs `getattrlist(ATTR_VOL_UUID)` and is
+        // SRC-N69's business.
+        let device_id = if label.is_empty() {
+            String::new()
+        } else {
+            format!("mvol-{}", label.replace('/', "_"))
+        };
         out.push(VolumeInfo {
             id,
+            device_id,
             label,
             mount_point: mount,
             fs_kind: "apfs".into(),
@@ -149,6 +173,7 @@ pub fn detect() -> Vec<VolumeInfo> {
         Ok(s) => s,
         Err(_) => return out,
     };
+    let uuid_by_device = read_uuid_map();
     for line in raw.lines() {
         let mut cols = line.split_whitespace();
         let device = match cols.next() {
@@ -193,8 +218,16 @@ pub fn detect() -> Vec<VolumeInfo> {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| device.to_string());
         let id = format!("lin-{}", mount.replace('/', "_"));
+        // The filesystem UUID is the device's own identity; the mount
+        // point is just where it happens to be attached, and
+        // `/media/<user>/<label>` is as reusable as a drive letter.
+        let device_id = uuid_by_device
+            .get(canonical_device(device).as_str())
+            .map(|u| format!("lvol-{u}"))
+            .unwrap_or_default();
         out.push(VolumeInfo {
             id,
+            device_id,
             label,
             mount_point: mount.to_string(),
             fs_kind: fs_type.to_string(),
@@ -239,6 +272,36 @@ fn read_statvfs(path: &std::path::Path) -> (u64, u64) {
     let free = sb.f_bavail as u64 * block;
     let used = total.saturating_sub(free);
     (used, total)
+}
+
+/// `/dev/disk/by-uuid` is a directory of symlinks named by filesystem
+/// UUID pointing at device nodes, so reading it once gives the whole
+/// device-node → UUID table. Absent on systems without udev, in which
+/// case every device_id falls back to empty and callers use the mount id.
+#[cfg(target_os = "linux")]
+fn read_uuid_map() -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    let Ok(entries) = std::fs::read_dir("/dev/disk/by-uuid") else {
+        return out;
+    };
+    for e in entries.flatten() {
+        let Some(uuid) = e.file_name().to_str().map(|s| s.to_string()) else {
+            continue;
+        };
+        if let Ok(target) = std::fs::canonicalize(e.path()) {
+            out.insert(target.to_string_lossy().into_owned(), uuid);
+        }
+    }
+    out
+}
+
+/// `/proc/mounts` may list a device by a `/dev/disk/by-*` alias; resolve
+/// it to the same real node the UUID table is keyed on.
+#[cfg(target_os = "linux")]
+fn canonical_device(device: &str) -> String {
+    std::fs::canonicalize(device)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| device.to_string())
 }
 
 #[cfg(all(not(windows), not(target_os = "macos"), not(target_os = "linux")))]

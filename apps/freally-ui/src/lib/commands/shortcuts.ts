@@ -65,6 +65,13 @@ export const BINDINGS: Binding[] = [
   // specifies; Organize Filters moves to Ctrl+Shift+O, which was free.
   { shortcut: { key: "f", mod: true, shift: true }, command: "search.within_results" },
   { shortcut: { key: "o", mod: true, shift: true }, command: "search.organize_filters" },
+  // SRC-M16 undo/redo for file operations. Nothing else claimed Ctrl+Z;
+  // the search box is a plain input, so the browser still handles text
+  // undo inside it and these only fire on the results surface.
+  { shortcut: { key: "z", mod: true }, command: "edit.undo" },
+  { shortcut: { key: "z", mod: true, shift: true }, command: "edit.redo" },
+  // SRC-M15 bulk rename — F2 is the platform convention for rename.
+  { shortcut: { key: "F2" }, command: "edit.bulk_rename" },
   // Bookmarks
   { shortcut: { key: "d", mod: true }, command: "bookmarks.add" },
   { shortcut: { key: "b", mod: true, shift: true }, command: "bookmarks.organize" },

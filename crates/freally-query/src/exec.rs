@@ -177,6 +177,9 @@ fn needs_hydration(node: &QueryNode) -> bool {
             | ModifierKind::ChildCount { .. }
             | ModifierKind::DescendantCount { .. }
             | ModifierKind::Dupe(_) => true,
+            // SRC-M14: the volume id lives on the SQLite row, not in
+            // the name buffer.
+            ModifierKind::Volume(_) => true,
             ModifierKind::Reserved { .. } => true,
         },
         // Quick filter shortcuts to `ext:` so it doesn't need full
@@ -270,6 +273,27 @@ pub fn execute_with_audio(
     q: &Query,
     opts: ExecOpts,
 ) -> Result<ResultSet, QueryError> {
+    execute_with_catalogs(idx, similarity, audio, None, q, opts)
+}
+
+/// SRC-M14 entry point. Adds the catalog registry so `volume:` can be
+/// written the way a person thinks about a drive — `volume:orange` for
+/// "Orange WD 4TB" — instead of only as the internal volume id.
+///
+/// Without a registry the modifier still works, matching the needle
+/// against the row's volume id directly; that is the shape the CLI and
+/// the test harnesses use.
+pub fn execute_with_catalogs(
+    idx: &Index,
+    similarity: Option<&SimilarityIndex>,
+    audio: Option<&dyn AudioAttributesProvider>,
+    catalogs: Option<&dyn VolumeCatalogs>,
+    q: &Query,
+    opts: ExecOpts,
+) -> Result<ResultSet, QueryError> {
+    // Resolved once per query, not per row: a needle maps to the same
+    // handful of volume ids for every candidate.
+    let volumes = resolve_volume_needles(q.root(), catalogs);
     validate_supported(q)?;
     // Phase 10: optimize the AST before planning so the executor's
     // AND iter().all() short-circuit picks up the cheap predicates
@@ -282,7 +306,7 @@ pub fn execute_with_audio(
         return Err(QueryError::AudioProviderUnavailable);
     }
     if let Some(needle) = top_level_similar(q.root()) {
-        return execute_similar(idx, similarity, audio, q, &opts, needle);
+        return execute_similar(idx, similarity, audio, q, &opts, needle, &volumes);
     }
     if has_similar_anywhere(q.root()) {
         // Phase 6 only routes Similar in the root or as a direct child
@@ -351,21 +375,26 @@ pub fn execute_with_audio(
 
     if use_seed {
         idx.name_index()
-            .for_each_candidate_named(&plan.seed, cap, |fid, name| {
+            .for_each_candidate_named(&plan.seed, cap, |fid, key| {
                 stats.candidates += 1;
-                if skip_name_filter || evaluator.matches(name) {
+                // The stored key may carry SRC-M12 readings; only the
+                // name half is the row's identity, so that is what
+                // sorting and hydration see.
+                let (name, phonetic) = split_phonetic(key);
+                if skip_name_filter || evaluator.matches(name, phonetic) {
                     survivors_ids.push(fid);
                     survivors_names.push(String::from_utf8_lossy(name).into_owned());
                 }
             });
     } else {
         let mut emitted = 0usize;
-        idx.name_index().for_each_live(|fid, name| {
+        idx.name_index().for_each_live(|fid, key| {
             stats.candidates += 1;
             if emitted >= cap {
                 return false;
             }
-            if skip_name_filter || evaluator.matches(name) {
+            let (name, phonetic) = split_phonetic(key);
+            if skip_name_filter || evaluator.matches(name, phonetic) {
                 survivors_ids.push(fid);
                 survivors_names.push(String::from_utf8_lossy(name).into_owned());
                 emitted += 1;
@@ -397,6 +426,7 @@ pub fn execute_with_audio(
             audio,
             needs_audio,
             &dirs,
+            &volumes,
         )?;
     }
 
@@ -665,9 +695,85 @@ impl<'a> NameEvaluator<'a> {
     /// Name-side eval. The bytes are the lowercased filename from the
     /// name index. Modifiers that need SQLite return true (the full
     /// pass filters them out later).
-    fn matches(&self, name_lower: &[u8]) -> bool {
-        eval_name(self.root, name_lower, &self.opts.match_mode)
+    ///
+    /// `phonetic` carries SRC-M12's readings for a CJK name. Only text
+    /// predicates consult it — `ext:` and the quick filters read the
+    /// name alone, because `文件.txt`'s reading has no extension and
+    /// matching one against it would be nonsense.
+    fn matches(&self, name_lower: &[u8], phonetic: Option<&[u8]>) -> bool {
+        eval_name(self.root, name_lower, phonetic, &self.opts.match_mode)
     }
+}
+
+/// Split a stored name-index key into `(name, phonetic)`.
+///
+/// SRC-M12 stores CJK names as `name` + separator + readings; every
+/// other name is returned unchanged with `None`.
+fn split_phonetic(key: &[u8]) -> (&[u8], Option<&[u8]>) {
+    const SEP: u8 = freally_index::phonetic::PHONETIC_SEP as u8;
+    match key.iter().position(|&b| b == SEP) {
+        Some(i) => (&key[..i], Some(&key[i + 1..])),
+        None => (key, None),
+    }
+}
+
+/// SRC-M14. Supplies the executor with the volume ids a user-typed
+/// `volume:` needle refers to. Implemented by `freally-indexd` over its
+/// catalog registry; the executor never learns what a catalog is.
+pub trait VolumeCatalogs {
+    /// Volume ids whose catalog name or id matches `needle`. An empty
+    /// result means "no catalog matches", which is a query that
+    /// legitimately returns nothing.
+    fn resolve(&self, needle: &str) -> Vec<String>;
+}
+
+/// The registry used when a caller supplies none: a needle stands for
+/// itself, so `volume:win-d` matches that volume id directly.
+///
+/// This exists so the predicate has exactly one shape. Branching inside
+/// the evaluator on "was a registry wired?" would mean the CLI and the
+/// tests exercise a different `volume:` than the daemon ships — the
+/// branch that reaches users being the one with the least coverage.
+struct IdentityCatalogs;
+
+impl VolumeCatalogs for IdentityCatalogs {
+    fn resolve(&self, needle: &str) -> Vec<String> {
+        vec![needle.to_string()]
+    }
+}
+
+/// Every `volume:` needle in a query, mapped to the volume ids it
+/// resolved to.
+type VolumeNeedles = std::collections::HashMap<String, Vec<String>>;
+
+/// Walk the AST once and pre-resolve each distinct `volume:` needle.
+fn resolve_volume_needles(
+    root: &QueryNode,
+    catalogs: Option<&dyn VolumeCatalogs>,
+) -> VolumeNeedles {
+    let identity = IdentityCatalogs;
+    let catalogs: &dyn VolumeCatalogs = catalogs.unwrap_or(&identity);
+    let mut out = VolumeNeedles::new();
+    fn walk(node: &QueryNode, catalogs: &dyn VolumeCatalogs, out: &mut VolumeNeedles) {
+        match node {
+            QueryNode::Modifier(m) => {
+                if let ModifierKind::Volume(needle) = &m.kind {
+                    if !out.contains_key(needle) {
+                        out.insert(needle.clone(), catalogs.resolve(needle));
+                    }
+                }
+            }
+            QueryNode::Not(inner) | QueryNode::Lens { inner, .. } => walk(inner, catalogs, out),
+            QueryNode::And(parts) | QueryNode::Or(parts) => {
+                for p in parts {
+                    walk(p, catalogs, out);
+                }
+            }
+            QueryNode::Text(_) | QueryNode::QuickFilter(_) | QueryNode::True => {}
+        }
+    }
+    walk(root, catalogs, &mut out);
+    out
 }
 
 /// Apply the post-hydration predicate filter, including (when
@@ -679,6 +785,7 @@ fn filter_with_audio(
     audio: Option<&dyn AudioAttributesProvider>,
     needs_audio: bool,
     dirs: &DirStats,
+    volumes: &VolumeNeedles,
 ) -> Result<Vec<FileRow>, QueryError> {
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
@@ -696,11 +803,18 @@ fn filter_with_audio(
         } else {
             None
         };
+        let phonetic = if mm.match_phonetic {
+            freally_index::phonetic::phonetic_keys(&r.name_lower)
+        } else {
+            None
+        };
         let ctx = EvalCtx {
             mm,
             path_lower: path_lower.as_deref(),
             audio: attrs.as_ref(),
             dirs,
+            volumes,
+            phonetic: phonetic.as_deref(),
         };
         if eval_full(root, &r, &ctx) {
             out.push(r);
@@ -720,6 +834,17 @@ struct EvalCtx<'a> {
     path_lower: Option<&'a str>,
     audio: Option<&'a AudioAttributes>,
     dirs: &'a DirStats,
+    /// SRC-M12 readings for the row's name, when the toggle is on and
+    /// the name holds CJK.
+    ///
+    /// Derived per row here rather than read from the name index: this
+    /// pass works from hydrated SQLite records, whose `name_lower` is
+    /// the bare name. Without it the hydrated pass would re-test the
+    /// text predicate against a name the reading matched and throw the
+    /// row away again.
+    phonetic: Option<&'a str>,
+    /// SRC-M14 `volume:` needles already resolved to volume ids.
+    volumes: &'a VolumeNeedles,
 }
 
 /// Can this subtree be decided from the name buffer alone?
@@ -739,19 +864,30 @@ fn name_decidable(node: &QueryNode) -> bool {
     }
 }
 
-fn eval_name(node: &QueryNode, name_lower: &[u8], mm: &MatchMode) -> bool {
+fn eval_name(node: &QueryNode, name_lower: &[u8], phonetic: Option<&[u8]>, mm: &MatchMode) -> bool {
+    // SRC-M12: a text predicate matches if either the name or its
+    // phonetic reading satisfies it. Gated on the toggle, so with the
+    // setting off the readings sitting in the index are inert and
+    // matching is byte-identical to pre-Build-2.
+    let phon =
+        |mm: &MatchMode| -> Option<&[u8]> { if mm.match_phonetic { phonetic } else { None } };
     match node {
         QueryNode::True => true,
-        QueryNode::Text(p) => match_text(p, name_lower, mm),
+        QueryNode::Text(p) => {
+            match_text(p, name_lower, mm) || phon(mm).is_some_and(|ph| match_text(p, ph, mm))
+        }
         // A negation we cannot decide here must not reject the row —
         // `!size:>1mb`, `!empty:folder`, `NOT lufs:<-14` all need the
         // hydrated pass to answer.
         QueryNode::Not(inner) if !name_decidable(inner) => true,
-        QueryNode::Not(inner) => !eval_name(inner, name_lower, mm),
-        QueryNode::And(parts) => parts.iter().all(|p| eval_name(p, name_lower, mm)),
-        QueryNode::Or(parts) => parts.iter().any(|p| eval_name(p, name_lower, mm)),
+        QueryNode::Not(inner) => !eval_name(inner, name_lower, phonetic, mm),
+        QueryNode::And(parts) => parts.iter().all(|p| eval_name(p, name_lower, phonetic, mm)),
+        QueryNode::Or(parts) => parts.iter().any(|p| eval_name(p, name_lower, phonetic, mm)),
         QueryNode::Modifier(m) => match &m.kind {
-            ModifierKind::Child(needle) => substring_match(name_lower, needle, mm),
+            ModifierKind::Child(needle) => {
+                substring_match(name_lower, needle, mm)
+                    || phon(mm).is_some_and(|ph| substring_match(ph, needle, mm))
+            }
             // Modifiers we can pre-filter by extension/name from the
             // lowercase name buffer. They still re-evaluate at the
             // full-record stage when hydration reads the canonical
@@ -762,7 +898,7 @@ fn eval_name(node: &QueryNode, name_lower: &[u8], mm: &MatchMode) -> bool {
             _ => true,
         },
         QueryNode::QuickFilter(qf) => name_has_any_ext(name_lower, qf.extensions()),
-        QueryNode::Lens { inner, .. } => eval_name(inner, name_lower, mm),
+        QueryNode::Lens { inner, .. } => eval_name(inner, name_lower, phonetic, mm),
     }
 }
 
@@ -772,6 +908,9 @@ fn eval_full(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
         QueryNode::Text(p) => {
             let target = ctx.path_lower.unwrap_or(row.name_lower.as_str());
             match_text(p, target.as_bytes(), ctx.mm)
+                || ctx
+                    .phonetic
+                    .is_some_and(|ph| match_text(p, ph.as_bytes(), ctx.mm))
         }
         QueryNode::Not(inner) => !eval_full(inner, row, ctx),
         QueryNode::And(parts) => parts.iter().all(|p| eval_full(p, row, ctx)),
@@ -825,6 +964,26 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow, ctx: &EvalCtx<'_>) -> bool 
         ModifierKind::Path(needle) => {
             let p = row.path.to_string_lossy().to_lowercase();
             p.contains(&needle.to_lowercase())
+        }
+        // SRC-M14. A row with no volume can never belong to a catalog,
+        // so it never matches — including rows indexed before M14,
+        // whose volume is empty. Those need a rescan to become
+        // filterable, which is exactly what an empty badge tells the
+        // user.
+        ModifierKind::Volume(needle) => {
+            if row.volume.is_empty() {
+                return false;
+            }
+            // Always populated — an absent registry resolves through
+            // `IdentityCatalogs`, so there is one predicate rather than
+            // one per wiring. Compared case-insensitively because volume
+            // ids carry the platform's own casing (`win-C`) while the
+            // user types whatever they like; the id set is a handful of
+            // entries, so this beats lowercasing the row per candidate.
+            match ctx.volumes.get(needle) {
+                Some(ids) => ids.iter().any(|id| id.eq_ignore_ascii_case(&row.volume)),
+                None => false,
+            }
         }
         ModifierKind::Parent(needle) => row
             .path
@@ -1207,6 +1366,7 @@ fn execute_similar(
     q: &Query,
     opts: &ExecOpts,
     needle: &str,
+    volumes: &VolumeNeedles,
 ) -> Result<ResultSet, QueryError> {
     let sim = similarity.ok_or(QueryError::SimilarityIndexUnavailable)?;
     let cap = if opts.candidate_cap == 0 {
@@ -1252,11 +1412,18 @@ fn execute_similar(
         } else {
             None
         };
+        let phonetic = if opts.match_mode.match_phonetic {
+            freally_index::phonetic::phonetic_keys(&r.name_lower)
+        } else {
+            None
+        };
         let ctx = EvalCtx {
             mm: &opts.match_mode,
             path_lower: path_lower.as_deref(),
             audio: attrs.as_ref(),
             dirs: &dirs,
+            phonetic: phonetic.as_deref(),
+            volumes,
         };
         if similarity_row_matches(q.root(), &r, &ctx) {
             filtered.push(r);

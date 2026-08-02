@@ -35,7 +35,7 @@ pub mod ffi;
 pub mod subscriber;
 
 pub use cursor::{CursorError, StreamCursor};
-pub use event::{JournalError, JournalEvent};
+pub use event::{JournalError, JournalEvent, JournalPosition};
 
 #[cfg(target_os = "macos")]
 pub use subscriber::{JournalSubscriber, open, open_with_cursor_root};
@@ -83,6 +83,13 @@ impl JournalSubscriber {
             last_event_id: 0,
             fs_name: String::new(),
             bootstrap_complete: false,
+        }
+    }
+
+    pub fn position(&self) -> JournalPosition {
+        JournalPosition {
+            generation: 0,
+            offset: 0,
         }
     }
 }

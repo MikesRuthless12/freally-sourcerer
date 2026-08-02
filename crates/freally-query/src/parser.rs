@@ -539,6 +539,7 @@ fn parse_modifier(
                 | "samplerate"
                 | "silence"
                 | "dr"
+                | "volume"
         );
         if freally_only {
             return Err(ParseError::StrictEverythingViolation {
@@ -554,6 +555,19 @@ fn parse_modifier(
         "ext" => parse_ext(value),
         "attrib" | "attr" | "attributes" => parse_attrib(value, key)?,
         "path" => ModifierKind::Path(value.to_string()),
+        // SRC-M14. Empty is rejected rather than silently matching
+        // everything: `volume:` with nothing after it is a half-typed
+        // query, and answering it with the whole index hides the typo.
+        "volume" => {
+            if value.trim().is_empty() {
+                return Err(ParseError::InvalidModifierValue {
+                    name: key.to_string(),
+                    value: value.to_string(),
+                    reason: "volume: requires a catalog name or volume id".into(),
+                });
+            }
+            ModifierKind::Volume(value.to_string())
+        }
         "parent" | "folder" => ModifierKind::Parent(value.to_string()),
         "child" | "name" => ModifierKind::Child(value.to_string()),
         "similar" => {

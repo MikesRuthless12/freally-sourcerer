@@ -90,6 +90,104 @@ export interface QueryHit {
    *  used by ResultRow to render a folder icon. Optional for backward
    *  compat with older daemon responses. */
   attrs?: number;
+  /** SRC-M14. Volume id this row was indexed from. Absent for rows
+   *  indexed before M14 and for paths outside any known mount point. */
+  volume?: string;
+  /** Catalog display name for `volume`, when one is known. */
+  volume_label?: string;
+  /** True when the device this row came from is not currently attached —
+   *  what the "offline — Orange WD 4TB" badge keys off. */
+  volume_offline?: boolean;
+}
+
+// ---- bulk rename (SRC-M15) ----
+
+export type NamePart = "stem" | "full";
+export type CaseTransform = "none" | "lower" | "upper" | "title";
+
+export interface RenameRule {
+  find: string;
+  replace: string;
+  use_regex: boolean;
+  ignore_case: boolean;
+  case: CaseTransform;
+  part: NamePart;
+  counter_start: number;
+  counter_step: number;
+}
+
+export type RenameStatus = "ok" | "unchanged" | "invalid" | "collision" | "exists";
+
+export type InvalidReason =
+  | "empty"
+  | "path_separator"
+  | "dot_name"
+  | "forbidden_character"
+  | "reserved_name"
+  | "bad_pattern";
+
+export interface RenameItem {
+  from: string;
+  from_name: string;
+  to_name: string;
+  status: RenameStatus;
+  reason?: InvalidReason;
+}
+
+export interface RenamePreview {
+  items: RenameItem[];
+  will_apply: number;
+  /** True when any row would collide, overwrite, or is invalid. Apply is
+   *  refused by the backend in this state, not merely disabled here. */
+  blocked: boolean;
+}
+
+export interface RenameOutcome {
+  renamed: number;
+  operation_id?: string;
+}
+
+// ---- undo / redo (SRC-M16) ----
+
+export type OperationKind = "rename" | "bulk_rename" | "delete";
+export type NotUndoable = "trash_restore_unsupported" | "source_changed";
+
+export interface OperationItem {
+  from: string;
+  to: string;
+}
+
+export interface OperationEntry {
+  id: string;
+  kind: OperationKind;
+  at_ms: number;
+  items: OperationItem[];
+  undone: boolean;
+  undoable: boolean;
+  not_undoable_reason?: NotUndoable;
+}
+
+export interface OperationListing {
+  entries: OperationEntry[];
+  /** What Ctrl+Z would act on; absent when there is nothing to undo. */
+  undo_id?: string | null;
+  redo_id?: string | null;
+}
+
+export interface UndoOutcome {
+  moved: number;
+  id: string;
+}
+
+/** SRC-M14 — one device Freally has indexed, attached or not. */
+export interface CatalogInfo {
+  id: string;
+  name: string;
+  mount_point: string;
+  fs_kind: string;
+  first_seen_ms: number;
+  last_seen_ms: number;
+  online: boolean;
 }
 
 export interface LensTimings {
@@ -166,9 +264,23 @@ export interface QueryBatch {
   groups?: HitGroup[];
 }
 
+/** A spelling correction for a query that matched nothing (SRC-M11).
+ *  Mirrors `freally_rpc::dto::DidYouMean`. `query` is the original
+ *  source with `typed` swapped for `suggested`, so accepting the
+ *  suggestion is a single run with no re-parsing on this side. */
+export interface DidYouMean {
+  typed: string;
+  suggested: string;
+  query: string;
+  distance: number;
+}
+
 export interface QueryDone {
   handle: string;
   timings: LensTimings;
+  /** Absent on pre-Build-2 daemons, and whenever the query matched
+   *  something or no plausible correction exists. */
+  did_you_mean?: DidYouMean;
 }
 
 // ---- index.state ----
@@ -180,6 +292,54 @@ export interface IndexState {
   files_indexed: number;
   files_total: number;
   message: string;
+}
+
+// ---- index health (SRC-M13) ----
+
+export type AdvisoryId =
+  | "journal_stream_reset"
+  | "events_dropped"
+  | "not_monitoring"
+  | "high_lag"
+  | "queue_saturated";
+
+export type AdvisorySeverity = "info" | "warning" | "critical";
+
+export type AdvisoryFix = "none" | "rebuild_index";
+
+export interface HealthAdvisory {
+  id: AdvisoryId;
+  severity: AdvisorySeverity;
+  root?: string;
+  count: number;
+  fix: AdvisoryFix;
+}
+
+export interface VolumeHealth {
+  root: string;
+  label: string;
+  monitoring: boolean;
+  unavailable_reason?: string;
+  events_seen: number;
+  events_applied: number;
+  events_dropped: number;
+  events_coalesced: number;
+  /** Unix ms; 0 means never. */
+  last_event_ms: number;
+  last_drop_ms: number;
+  last_apply_ms: number;
+  last_lag_ms: number;
+  max_lag_ms: number;
+  queue_depth: number;
+  queue_capacity: number;
+  stream_reset: boolean;
+}
+
+export interface IndexHealth {
+  volumes: VolumeHealth[];
+  /** Absent when the daemon runs no eager-extraction worker. */
+  extraction_backlog?: number;
+  advisories: HealthAdvisory[];
 }
 
 // ---- bookmarks ----
@@ -224,6 +384,10 @@ export interface SearchOpts {
   match_whole_word: boolean;
   match_path: boolean;
   match_diacritics: boolean;
+  /** SRC-M12 — `wenjian` matches `文件`, romaji matches kana, lead
+   *  jamo matches Hangul. Off by default: it widens what a query can
+   *  hit, so it is opt-in like Match Diacritics beside it. */
+  match_phonetic: boolean;
   enable_regex: boolean;
 }
 
@@ -549,7 +713,14 @@ export interface PreviewPayload {
 export type VolumeStatus = "indexed" | "indexing" | "paused" | "offline" | "error";
 
 export interface VolumeInfo {
+  /** Where the volume is mounted — reusable, and what per-volume
+   *  settings are keyed on. */
   id: string;
+  /** Which physical device this is (serial / filesystem UUID / volume
+   *  label). SRC-M14 keys catalogs on this so a drive that returns on a
+   *  different letter is still the same catalog. Empty when the platform
+   *  cannot tell. */
+  device_id?: string;
   label: string;
   mount_point: string;
   fs_kind: string;

@@ -31,6 +31,7 @@ pub mod ast;
 pub mod cache;
 pub mod error;
 pub mod exec;
+pub mod keywords;
 pub mod optimizer;
 pub mod opts;
 pub mod parser;
@@ -44,8 +45,10 @@ pub use ast::{
 pub use cache::PlanCache;
 pub use error::{ParseError, QueryError};
 pub use exec::{
-    DupeGroup, ExecPlan, ExecStats, Hit, ResultSet, execute, execute_with, execute_with_audio,
+    DupeGroup, ExecPlan, ExecStats, Hit, ResultSet, VolumeCatalogs, execute, execute_with,
+    execute_with_audio, execute_with_catalogs,
 };
+pub use keywords::{MODIFIER_KEYS, QUICK_FILTER_KEYS};
 pub use optimizer::{is_audio_only_route, is_similarity_route, optimize, selectivity_rank};
 pub use opts::{ExecOpts, MatchMode, SortField, SortOrder, SortSpec};
 pub use parser::{ParseOpts, parse, parse_with};

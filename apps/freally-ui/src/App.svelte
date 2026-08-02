@@ -10,6 +10,8 @@
   import FirstRunWizard from "./components/wizard/FirstRunWizard.svelte";
   import OrganizeBookmarksDialog from "./components/bookmarks/OrganizeBookmarksDialog.svelte";
   import AboutDialog from "./components/dialogs/AboutDialog.svelte";
+  import BulkRenameDialog from "./components/dialogs/BulkRenameDialog.svelte";
+  import IndexHealthDialog from "./components/dialogs/IndexHealthDialog.svelte";
   import MoreFreallyAppsDialog from "./components/dialogs/MoreFreallyAppsDialog.svelte";
   import ConnectEndpointDialog from "./components/dialogs/ConnectEndpointDialog.svelte";
   import SettingsDialog from "./components/settings/SettingsDialog.svelte";
@@ -77,6 +79,14 @@
 />
 <ConnectEndpointDialog
   open={dialogsStore.active === "connect_endpoint"}
+  onClose={() => dialogsStore.close()}
+/>
+<BulkRenameDialog
+  open={dialogsStore.active === "bulk_rename"}
+  onClose={() => dialogsStore.close()}
+/>
+<IndexHealthDialog
+  open={dialogsStore.active === "index_health"}
   onClose={() => dialogsStore.close()}
 />
 <MoreFreallyAppsDialog

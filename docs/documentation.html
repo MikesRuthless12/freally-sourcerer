@@ -153,6 +153,9 @@
           <a href="#filters">Quick Filters</a>
           <a href="#bookmarks">Bookmarks</a>
           <a href="#results">Working with Results</a>
+          <a href="#bulk-rename">Renaming in Bulk</a>
+          <a href="#offline-drives">Unplugged Drives</a>
+          <a href="#index-health">Index Health</a>
           <a href="#file-lists">File Lists &amp; Export</a>
           <a href="#preview">Preview Pane</a>
           <a href="#hotkey">Global Hotkey</a>
@@ -262,6 +265,7 @@
               <tr><td>empty:</td><td>Zero-byte files and childless folders. <code>empty:file</code> and <code>empty:folder</code> scope it; <code>empty:roots</code> reports the top of each folder chain that holds no files at any depth.</td><td><code>empty:roots</code></td></tr>
               <tr><td>child-count:N</td><td>Folders with N direct children (supports &lt;, &lt;=, &gt;, &gt;=, =)</td><td><code>child-count:&gt;500</code></td></tr>
               <tr><td>descendant-count:N</td><td>Folders with N descendants at any depth</td><td><code>descendant-count:&lt;10</code></td></tr>
+              <tr><td>volume:name</td><td>Files indexed from one device, matched by the drive's name or its volume id. Works for drives that are not currently plugged in.</td><td><code>volume:orange</code></td></tr>
             </tbody>
           </table>
 
@@ -318,6 +322,46 @@
             <li><strong>Advanced copy:</strong> right-click for <strong>Copy contents</strong> (a text file's body), <strong>Copy as file</strong> (the file itself, so pasting into a file manager copies it), and <strong>Copy path list</strong> with a choice of quoting — one per line, quoted, space-separated, or shell-escaped.</li>
             <li><strong>Open a terminal here:</strong> right-click and choose <strong>Open terminal here</strong> to launch your terminal in the file's folder.</li>
             <li><strong>Run a custom command:</strong> commands you define in <strong>Settings → General → Custom Commands</strong> appear at the bottom of the right-click menu. Arguments accept <code>{path}</code>, <code>{dir}</code>, <code>{name}</code>, <code>{stem}</code> and <code>{ext}</code>, and each becomes one argument — never a shell line, so a filename with <code>&amp;&amp;</code> in it is inert.</li>
+            <li><strong>Rename a batch:</strong> select any number of results and press <code>F2</code> (or <strong>Edit → Rename…</strong>). See <a href="#bulk-rename">Renaming in bulk</a>.</li>
+            <li><strong>Undo a rename:</strong> <code>Ctrl+Z</code> puts the files back; <code>Ctrl+Shift+Z</code> redoes it. The history survives closing the app.</li>
+          </ol>
+        </section>
+
+        <!-- Bulk rename -->
+        <section id="bulk-rename">
+          <h2>Renaming in Bulk</h2>
+          <p class="section-intro">Select the results you want, press <code>F2</code>, and describe the change once. Freally shows you every before-and-after pair before anything touches the disk.</p>
+          <ol>
+            <li><strong>Find and replace.</strong> Type what to look for and what to replace it with. Tick <strong>Regular expression</strong> to use a pattern, and <code>$1</code>, <code>$2</code>… in the replacement to insert what it captured.</li>
+            <li><strong>Number the files.</strong> Put <code>{n}</code> in the replacement for a counter, or <code>{n:03}</code> to pad it to a fixed width. Numbering follows the order the files appear in the preview.</li>
+            <li><strong>Change the case</strong> with the Case menu, and choose whether the rule applies to the name without its extension or to the whole file name. The default leaves extensions alone, so a rule cannot silently change a file's type.</li>
+            <li><strong>Read the preview.</strong> Rows that would clash with each other, overwrite an existing file, or produce a name the system will not accept are highlighted and explained.</li>
+            <li><strong>Apply.</strong> Rename is refused while any row is highlighted — the batch is all-or-nothing, so you never end up with half a folder renamed.</li>
+          </ol>
+          <div class="tip"><strong>Made a mistake?</strong> <code>Ctrl+Z</code> undoes the whole batch in one step, even after restarting Freally. Freally remembers the last 50 operations.</div>
+          <div class="tip"><strong>Deletes are different.</strong> Freally sends deleted files to your Trash / Recycle Bin, and restoring them is your operating system's job — so a delete shows in the history but has no <code>Ctrl+Z</code>. Restore it from the Trash instead.</div>
+        </section>
+
+        <!-- Offline drives -->
+        <section id="offline-drives">
+          <h2>Unplugged Drives</h2>
+          <p class="section-intro">When you unplug an external drive, everything Freally indexed on it stays searchable. Results from a detached device carry an <strong>offline</strong> badge naming the drive, so "which drive was that file on?" is answered by the result row itself.</p>
+          <ol>
+            <li><strong>Search across every drive</strong> as usual. Hits from a drive that is not connected appear with a badge like <em>offline — Orange WD 4TB</em>.</li>
+            <li><strong>Search one drive</strong> with <code>volume:</code> — <code>volume:orange</code> matches the drive you know as "Orange WD 4TB". Part of the name is enough, and it is not case-sensitive.</li>
+            <li><strong>Reconnect the drive</strong> and the badge disappears on the next search. A drive that comes back on a different letter or mount point is still recognised as the same one.</li>
+          </ol>
+        </section>
+
+        <!-- Index health -->
+        <section id="index-health">
+          <h2>Index Health</h2>
+          <p class="section-intro"><strong>Tools → Index maintenance → Index Health</strong> shows, for each place Freally is watching, how quickly changes on disk are reaching your results — and tells you when something needs fixing.</p>
+          <ol>
+            <li><strong>Lag</strong> is the time between a file changing on disk and that change appearing in search results.</li>
+            <li><strong>Status</strong> is <em>Live</em> when Freally is tracking changes as they happen, or <em>Scan only</em> when the system will not let it — in which case results update when the folder is rescanned. Hover for the reason.</li>
+            <li><strong>Dropped</strong> counts changes that arrived faster than they could be indexed. Anything above zero means the index is missing something.</li>
+            <li><strong>Advice</strong> appears above the table when something is wrong, with a one-click <strong>Rebuild index</strong> where a rebuild is the fix.</li>
           </ol>
         </section>
 

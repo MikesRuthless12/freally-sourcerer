@@ -32,6 +32,11 @@ fn hit(name: &str, path: &str, ext: &str, size: u64, attrs: u32) -> QueryHit {
         kind: ext.to_uppercase(),
         score: 1.0,
         attrs,
+        // SRC-M14 fields: an EFU file list has no notion of a source
+        // device, so the interop fixture leaves them unset.
+        volume: String::new(),
+        volume_label: None,
+        volume_offline: false,
     }
 }
 

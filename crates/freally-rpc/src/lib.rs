@@ -35,7 +35,9 @@ pub mod error;
 pub mod filelist;
 pub mod frame;
 pub mod jsonrpc;
+pub mod ops;
 pub mod path;
+pub mod rename;
 pub mod server;
 pub mod service;
 pub mod transport;
@@ -51,8 +53,16 @@ pub use frame::{FrameError, FrameReader, FrameWriter, MAX_FRAME_BYTES};
 pub use jsonrpc::{
     ErrorObject, JSONRPC_VERSION, Notification, Request, RequestId, Response, ResponseEnvelope,
 };
+pub use ops::{
+    NotUndoable, OperationEntry, OperationItem, OperationJournal, OperationKind,
+    trash_restore_supported,
+};
 pub use path::{SocketPath, default_socket_path};
 #[cfg(windows)]
 pub use path::{service_pipe_name, service_sddl};
+pub use rename::{
+    CaseTransform, InvalidReason, NamePart, RenameApplyError, RenameItem, RenamePlan, RenameRule,
+    RenameStatus, destination_for, perform_moves, plan as plan_rename,
+};
 pub use server::{Server, ServerConfig};
 pub use service::{NotificationSink, Service};

@@ -18,10 +18,13 @@ use crate::preview;
 /// layer (supply-chain on a frontend dep) asking the backend to act on
 /// arbitrary filesystem paths.
 ///
-/// These commands all *read*, so a search hit is enough. The write-side
-/// commands ask for [`Provenance::UserChosen`] instead.
+/// These commands all *read*, so the weakest grant is enough — the
+/// preview pane and Go To both name a path the user just picked in a
+/// JS-opened dialog. Destructive commands ask for [`Provenance::QueryHit`]
+/// (daemon-attested) and content-writing ones for
+/// [`Provenance::UserChosen`].
 fn verify_path(path: &str, known: &KnownPaths) -> Result<(), String> {
-    known.verify(path, Provenance::QueryHit).map(|_| ())
+    known.verify(path, Provenance::FrontendAsserted).map(|_| ())
 }
 
 /// Largest payload any command will put on the OS clipboard. Past this,
@@ -111,9 +114,12 @@ pub fn files_copy_name(
 
 #[tauri::command]
 pub fn files_delete(paths: Vec<String>, known: State<'_, KnownPaths>) -> Result<(), String> {
-    for p in &paths {
-        verify_path(p, &known)?;
-    }
+    // Destructive, so it demands a **daemon-attested** hit rather than the
+    // read gate above. `files_whitelist_user_chosen` is reachable from the
+    // webview with an arbitrary string, so accepting the weaker level here
+    // would let a compromised frontend dependency trash any path it names,
+    // with no user interaction.
+    known.verify_all(&paths, Provenance::QueryHit)?;
     // Sends to OS trash / recycle bin (recoverable). UI confirms before
     // calling. The `trash` crate routes to the right native API on each
     // OS — Recycle Bin on Windows, Trash on macOS, ~/.local/share/Trash
@@ -263,5 +269,5 @@ pub fn files_copy_text(text: String, app: AppHandle) -> Result<(), String> {
 /// dialog the *backend* ran and whose result it read directly.
 #[tauri::command]
 pub fn files_whitelist_user_chosen(path: String, known: State<'_, KnownPaths>) {
-    known.add(&path);
+    known.add_frontend_asserted(&path);
 }

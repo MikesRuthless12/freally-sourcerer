@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DidYouMeanStrip from "./DidYouMeanStrip.svelte";
   import LensSection from "./LensSection.svelte";
   import PreviewPane from "../preview/PreviewPane.svelte";
   import { resultsStore } from "../../lib/stores/results.svelte";
@@ -37,6 +38,7 @@
         <p>{t("parse-error-empty")}</p>
       </div>
     {:else}
+      <DidYouMeanStrip />
       {#each order as lens (lens)}
         {@const view = resultsStore.viewForLens(lens)}
         <LensSection

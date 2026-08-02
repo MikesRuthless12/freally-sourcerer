@@ -10,17 +10,20 @@
 
 #[cfg(windows)]
 pub use freally_journal_win::{
-    JournalError, JournalEvent, JournalSubscriber, VolumeCursor, open, open_with_cursor_root,
+    JournalError, JournalEvent, JournalPosition, JournalSubscriber, VolumeCursor, open,
+    open_with_cursor_root,
 };
 
 #[cfg(target_os = "macos")]
 pub use freally_journal_mac::{
-    JournalError, JournalEvent, JournalSubscriber, StreamCursor, open, open_with_cursor_root,
+    JournalError, JournalEvent, JournalPosition, JournalSubscriber, StreamCursor, open,
+    open_with_cursor_root,
 };
 
 #[cfg(target_os = "linux")]
 pub use freally_journal_lin::{
-    JournalError, JournalEvent, JournalSubscriber, WatchCursor, open, open_with_cursor_root,
+    JournalError, JournalEvent, JournalPosition, JournalSubscriber, WatchCursor, open,
+    open_with_cursor_root,
 };
 
 #[cfg(all(not(windows), not(target_os = "macos"), not(target_os = "linux")))]
@@ -63,7 +66,26 @@ mod portable_stub {
         Unimplemented,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct JournalPosition {
+        pub generation: u64,
+        pub offset: u64,
+    }
+
     pub struct JournalSubscriber;
+
+    impl JournalSubscriber {
+        pub fn subscribe(&self) -> impl futures::Stream<Item = JournalEvent> + Send + 'static {
+            futures::stream::empty()
+        }
+
+        pub fn position(&self) -> JournalPosition {
+            JournalPosition {
+                generation: 0,
+                offset: 0,
+            }
+        }
+    }
 
     pub fn open(_root: &Path) -> Result<JournalSubscriber, JournalError> {
         Err(JournalError::Unimplemented)
@@ -71,7 +93,7 @@ mod portable_stub {
 }
 
 #[cfg(all(not(windows), not(target_os = "macos"), not(target_os = "linux")))]
-pub use portable_stub::{JournalError, JournalEvent, JournalSubscriber, open};
+pub use portable_stub::{JournalError, JournalEvent, JournalPosition, JournalSubscriber, open};
 
 #[cfg(test)]
 mod tests {
