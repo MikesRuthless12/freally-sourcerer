@@ -27,9 +27,11 @@
 //! applied. Partially-applied bulk renames are the failure mode people
 //! actually get hurt by.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use freally_rpc::rename::{RenameItem, RenameRule, RenameStatus, validate_name};
+use freally_rpc::rename::{
+    RenameItem, RenameRule, RenameStatus, destination_for, perform_moves,
+};
 use serde::Serialize;
 use tauri::State;
 
@@ -45,29 +47,6 @@ pub struct RenamePreview {
     pub items: Vec<RenameItem>,
     pub will_apply: usize,
     pub blocked: bool,
-}
-
-/// Derive the destination for one row and check it is legal. Returns the
-/// absolute destination path.
-///
-/// This is the one place a destination path is constructed, and it is
-/// built from the *source's* parent — never from anything the caller
-/// sent.
-fn destination_for(from: &str, to_name: &str) -> Result<PathBuf, String> {
-    if validate_name(to_name).is_some() {
-        return Err("derived name is not a valid file name".into());
-    }
-    let src = Path::new(from);
-    let parent = src
-        .parent()
-        .ok_or_else(|| "source path has no parent directory".to_string())?;
-    let dest = parent.join(to_name);
-    // Belt and braces: joining a validated bare name onto the parent
-    // cannot escape it, but assert the invariant rather than assume it.
-    if dest.parent() != Some(parent) {
-        return Err("derived name would leave the source directory".into());
-    }
-    Ok(dest)
 }
 
 /// Build the preview table. Pure planning plus one `exists` check per
@@ -139,7 +118,7 @@ pub fn files_rename_apply(
     // that cannot fully succeed does not half-succeed.
     let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
     for item in plan.items.iter().filter(|i| i.status.will_apply()) {
-        let dest = destination_for(&item.from, &item.to_name)?;
+        let dest = destination_for(&item.from, &item.to_name).map_err(|e| e.to_string())?;
         if dest.exists() {
             return Err("a destination already exists; nothing was changed".into());
         }
@@ -152,8 +131,8 @@ pub fn files_rename_apply(
         });
     }
 
-    let done = perform_moves(&moves)?;
-    let items: Vec<freally_rpc::OperationItem> = done
+    let renamed = perform_moves(&moves).map_err(|e| e.to_string())?;
+    let items: Vec<freally_rpc::OperationItem> = moves
         .iter()
         .map(|(from, to)| freally_rpc::OperationItem {
             from: from.to_string_lossy().into_owned(),
@@ -164,44 +143,21 @@ pub fn files_rename_apply(
     // Renamed files are legitimate targets for follow-up operations
     // (including the undo), so grant them the same provenance their
     // sources had.
-    for (_, to) in &done {
+    for (_, to) in &moves {
         known.add(&to.to_string_lossy());
     }
 
-    let kind = if done.len() == 1 {
+    let kind = if renamed == 1 {
         freally_rpc::OperationKind::Rename
     } else {
         freally_rpc::OperationKind::BulkRename
     };
-    let operation_id = record_operation(kind, items, true, None);
+    let operation_id = record_operation(kind, items);
 
     Ok(RenameOutcome {
-        renamed: done.len(),
+        renamed,
         operation_id,
     })
-}
-
-/// Perform the moves, rolling back on the first failure.
-///
-/// A bulk rename that dies halfway leaves the user with a directory in
-/// two different naming schemes and no record of which files moved. The
-/// rollback is best-effort — if it also fails there is nothing further
-/// to try — but it turns the common failure (one file locked by another
-/// process) into a no-op instead of a mess.
-fn perform_moves(moves: &[(PathBuf, PathBuf)]) -> Result<Vec<(PathBuf, PathBuf)>, String> {
-    let mut done: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(moves.len());
-    for (from, to) in moves {
-        match std::fs::rename(from, to) {
-            Ok(()) => done.push((from.clone(), to.clone())),
-            Err(e) => {
-                for (undo_from, undo_to) in done.iter().rev() {
-                    let _ = std::fs::rename(undo_to, undo_from);
-                }
-                return Err(format!("rename failed, batch rolled back: {e}"));
-            }
-        }
-    }
-    Ok(done)
 }
 
 /// Push an entry onto the daemon's journal. A failure here is logged and
@@ -211,8 +167,6 @@ fn perform_moves(moves: &[(PathBuf, PathBuf)]) -> Result<Vec<(PathBuf, PathBuf)>
 fn record_operation(
     kind: freally_rpc::OperationKind,
     items: Vec<freally_rpc::OperationItem>,
-    undoable: bool,
-    reason: Option<freally_rpc::NotUndoable>,
 ) -> Option<String> {
     let id = format!(
         "op-{}",
@@ -224,11 +178,13 @@ fn record_operation(
     let entry = freally_rpc::OperationEntry {
         id: id.clone(),
         kind,
-        at_ms: now_ms(),
+        at_ms: super::bookmarks::now_ms(),
         items,
         undone: false,
-        undoable,
-        not_undoable_reason: reason,
+        // Renames are always invertible. A delete would not be, but
+        // deletes are not journaled - see the module docs on M16.
+        undoable: true,
+        not_undoable_reason: None,
     };
     let daemon = daemon::get()?;
     match serde_json::to_value(&entry) {
@@ -241,13 +197,6 @@ fn record_operation(
         },
         Err(_) => None,
     }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 /// Undo or redo one journal entry.
@@ -292,7 +241,7 @@ fn apply_journal_entry(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .ok_or_else(|| "journal entry has no destination name".to_string())?;
-        let dest = destination_for(&p.from, &name)?;
+        let dest = destination_for(&p.from, &name).map_err(|e| e.to_string())?;
         if from.parent() != to.parent() {
             return Err("journal entry crosses directories".into());
         }
@@ -305,11 +254,11 @@ fn apply_journal_entry(
         moves.push((from, dest));
     }
 
-    let done = perform_moves(&moves)?;
-    for (_, to) in &done {
+    let moved = perform_moves(&moves).map_err(|e| e.to_string())?;
+    for (_, to) in &moves {
         known.add(&to.to_string_lossy());
     }
-    Ok(done.len())
+    Ok(moved)
 }
 
 #[derive(Debug, Serialize)]
@@ -368,13 +317,6 @@ pub fn ops_list() -> Result<serde_json::Value, String> {
     daemon
         .call("ops.list", serde_json::Value::Null)
         .map_err(|e| e.to_string())
-}
-
-/// Whether this build can restore from the OS trash, so the UI can say
-/// why a delete has no undo instead of showing a button that fails.
-#[tauri::command]
-pub fn ops_trash_restore_supported() -> bool {
-    freally_rpc::trash_restore_supported()
 }
 
 #[cfg(test)]

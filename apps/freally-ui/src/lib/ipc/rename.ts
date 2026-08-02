@@ -5,7 +5,7 @@
 // the preview shows is a display of the backend's own plan rather than
 // an instruction it trusts.
 
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./client";
 import type {
   OperationListing,
   RenamePreview,
@@ -15,25 +15,21 @@ import type {
 } from "./types";
 
 export function preview(paths: string[], rule: RenameRule): Promise<RenamePreview> {
-  return invoke<RenamePreview>("files_rename_preview", { paths, rule });
+  return call<RenamePreview>("files_rename_preview", { paths, rule });
 }
 
 export function apply(paths: string[], rule: RenameRule): Promise<RenameOutcome> {
-  return invoke<RenameOutcome>("files_rename_apply", { paths, rule });
+  return call<RenameOutcome>("files_rename_apply", { paths, rule });
 }
 
 export function opsList(): Promise<OperationListing> {
-  return invoke<OperationListing>("ops_list");
+  return call<OperationListing>("ops_list");
 }
 
 export function undo(id: string): Promise<UndoOutcome> {
-  return invoke<UndoOutcome>("ops_undo", { id });
+  return call<UndoOutcome>("ops_undo", { id });
 }
 
 export function redo(id: string): Promise<UndoOutcome> {
-  return invoke<UndoOutcome>("ops_redo", { id });
-}
-
-export function trashRestoreSupported(): Promise<boolean> {
-  return invoke<boolean>("ops_trash_restore_supported");
+  return call<UndoOutcome>("ops_redo", { id });
 }

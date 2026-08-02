@@ -256,4 +256,24 @@
     justify-content: flex-end;
     margin-top: 16px;
   }
+  /* Matches the other dialogs' footer buttons. */
+  footer button,
+  .fix {
+    padding: 6px 18px;
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .fix {
+    padding: 4px 12px;
+    font-size: 12px;
+  }
+  footer button:disabled,
+  .fix:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 </style>

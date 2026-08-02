@@ -383,7 +383,11 @@ fn suggest_correction(
         SUGGEST_MIN_SHARED_TRIGRAMS,
         SUGGEST_CANDIDATE_CAP,
         |_, name| {
-            let name = String::from_utf8_lossy(name);
+            // SRC-M12 stores a CJK row as `name<U+0001>reading`, and the
+            // candidate iterator yields that composite key. Suggesting it
+            // verbatim would put a control character and the pinyin into
+            // the user's search box.
+            let name = String::from_utf8_lossy(freally_index::phonetic::plain_name(name));
             let stem = match name.rsplit_once('.') {
                 // A leading dot is a dotfile, not an extension.
                 Some((s, _)) if !s.is_empty() => s,
@@ -515,9 +519,11 @@ async fn index_state(svc: &IndexdService) -> Result<Value, RpcError> {
 /// the panel to poll.
 async fn index_health(svc: &IndexdService) -> Result<Value, RpcError> {
     let snapshots = svc.state.watchers.snapshot();
-    let volumes = crate::volumes::detect();
+    let catalogs = svc.state.catalogs.read().await;
     Ok(serde_json::to_value(crate::health::build(
-        snapshots, &volumes,
+        snapshots,
+        &catalogs,
+        &svc.state.index.volume_map(),
     ))?)
 }
 
@@ -699,9 +705,8 @@ async fn ops_clear(svc: &IndexdService) -> Result<Value, RpcError> {
 async fn volumes_list(svc: &IndexdService) -> Result<Value, RpcError> {
     // The UI polls this whenever the volumes panel is open, which makes
     // it the natural place to notice a drive being plugged or unplugged.
-    svc.state.reconcile_catalogs().await;
+    let detected = svc.state.reconcile_catalogs().await;
     let cfg = svc.state.volumes.read().await.clone();
-    let detected = crate::volumes::detect();
     let with_overrides: Vec<VolumeInfo> = detected
         .into_iter()
         .map(|mut v| {

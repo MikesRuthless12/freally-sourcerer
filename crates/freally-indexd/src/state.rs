@@ -193,12 +193,13 @@ impl DaemonState {
     /// SRC-M14. Refresh the catalog registry from the mounted volumes
     /// and install the mount-point table the index stamps rows with.
     /// Idempotent; call at boot and whenever volumes may have changed.
-    pub async fn reconcile_catalogs(&self) {
+    /// Returns the detected volumes so a caller that also needs them —
+    /// `volumes.list` does — pays for one enumeration rather than two.
+    /// On Windows `detect()` walks every drive letter with blocking Win32
+    /// calls, which a disconnected network drive can stall for seconds.
+    pub async fn reconcile_catalogs(&self) -> Vec<freally_rpc::VolumeInfo> {
         let detected = crate::volumes::detect();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+        let now = crate::watcher::now_ms();
 
         let went_offline = self.catalogs.write().await.reconcile(&detected, now);
         for id in &went_offline {
@@ -218,6 +219,7 @@ impl DaemonState {
                 tracing::warn!(error = %e, "persisting catalogs failed");
             }
         }
+        detected
     }
 
     /// Bring the live watchers in line with the current watched-folder

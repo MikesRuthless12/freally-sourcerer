@@ -56,6 +56,11 @@ const APPLY_BATCH: usize = 4_096;
 /// stop flag.
 const CONSUMER_POLL: Duration = Duration::from_millis(250);
 
+/// Longest a batch waits before being published. Bounds the
+/// event → query-visible lag during a sustained burst, where the queue
+/// never drains and the "burst died down" condition never fires.
+const COMMIT_INTERVAL: Duration = Duration::from_millis(1_000);
+
 /// What a single watcher is doing right now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WatcherState {
@@ -173,8 +178,6 @@ struct VolumeWatcher {
 /// watched-folder set.
 pub struct WatcherSupervisor {
     index: Arc<Index>,
-    /// Redirects cursor persistence in tests.
-    cursor_root: Option<PathBuf>,
     watchers: Mutex<BTreeMap<PathBuf, VolumeWatcher>>,
 }
 
@@ -182,16 +185,6 @@ impl WatcherSupervisor {
     pub fn new(index: Arc<Index>) -> Self {
         Self {
             index,
-            cursor_root: None,
-            watchers: Mutex::new(BTreeMap::new()),
-        }
-    }
-
-    /// Test hook: keep cursor files inside a scratch directory.
-    pub fn with_cursor_root(index: Arc<Index>, cursor_root: PathBuf) -> Self {
-        Self {
-            index,
-            cursor_root: Some(cursor_root),
             watchers: Mutex::new(BTreeMap::new()),
         }
     }
@@ -214,7 +207,16 @@ impl WatcherSupervisor {
 
         for (root, prefixes) in wanted {
             match live.get_mut(&root) {
-                Some(w) => w.prefixes = prefixes,
+                // The producer thread captured its prefix list at spawn,
+                // so a changed list only takes effect on a fresh
+                // watcher. Restarting is cheap and only happens when the
+                // folder set actually changed — assigning the field
+                // in place would silently keep filtering on the old one.
+                Some(w) if w.prefixes != prefixes => {
+                    w.shutdown();
+                    *w = self.start_watcher(root, prefixes);
+                }
+                Some(_) => {}
                 None => {
                     let w = self.start_watcher(root.clone(), prefixes);
                     live.insert(root, w);
@@ -275,10 +277,7 @@ impl WatcherSupervisor {
         let metrics = Arc::new(WatcherMetrics::default());
         let stop = Arc::new(AtomicBool::new(false));
 
-        let opened = match &self.cursor_root {
-            Some(cr) => freally_journal::open_with_cursor_root(&root, cr),
-            None => freally_journal::open(&root),
-        };
+        let opened = freally_journal::open(&root);
         let (state, subscriber, opened_generation) = match opened {
             Ok(sub) => {
                 let sub = Arc::new(sub);
@@ -388,29 +387,69 @@ fn spawn_consumer(
     std::thread::Builder::new()
         .name("freally-indexd/journal-consumer".into())
         .spawn(move || {
+            // Applied but not yet committed. `apply` is cheap; `commit`
+            // is a Tantivy commit plus a full re-serialize of the name
+            // index, so committing once per drained batch would rewrite
+            // the whole index every time a single log line was written.
+            let mut pending_applied: u64 = 0;
+            let mut pending_coalesced: u64 = 0;
+            let mut last_commit = std::time::Instant::now();
+
             loop {
                 if stop.load(Ordering::Relaxed) {
+                    // Deferring the commit means shutdown can arrive with
+                    // work already handed to the writer but not yet
+                    // published. Committing here is what keeps "applied"
+                    // and "durable" the same set — dropping out of the
+                    // loop would silently lose everything since the last
+                    // commit.
+                    if pending_applied > 0 {
+                        match index.commit() {
+                            Ok(()) => metrics.note_applied(pending_applied, pending_coalesced),
+                            Err(e) => {
+                                warn!(root = %root.display(), error = %e,
+                                    "final commit failed; changes since the last commit are lost")
+                            }
+                        }
+                    }
                     break;
                 }
-                if !queue.wait_for_events(CONSUMER_POLL) {
+                if queue.wait_for_events(CONSUMER_POLL) {
+                    let batch = queue.drain(APPLY_BATCH);
+                    if !batch.is_empty() {
+                        let raw = batch.len() as u64;
+                        let events = coalesce(batch);
+                        pending_coalesced += raw - events.len() as u64;
+                        match index.apply(&events) {
+                            Ok(()) => pending_applied += events.len() as u64,
+                            Err(e) => {
+                                warn!(root = %root.display(), error = %e, "apply failed; batch lost")
+                            }
+                        }
+                    }
+                }
+
+                // Publish either when enough has piled up to be worth a
+                // commit, or when the burst has died down. Either way the
+                // wait is bounded by COMMIT_INTERVAL, so a lone change
+                // still becomes searchable promptly.
+                if pending_applied == 0 {
                     continue;
                 }
-                let batch = queue.drain(APPLY_BATCH);
-                if batch.is_empty() {
-                    continue;
-                }
-                let raw = batch.len() as u64;
-                let events = coalesce(batch);
-                let coalesced = raw - events.len() as u64;
-                if let Err(e) = index.apply(&events) {
-                    warn!(root = %root.display(), error = %e, "apply failed; batch lost");
+                let due = pending_applied >= APPLY_BATCH as u64
+                    || last_commit.elapsed() >= COMMIT_INTERVAL
+                    || queue.is_empty();
+                if !due {
                     continue;
                 }
                 if let Err(e) = index.commit() {
                     warn!(root = %root.display(), error = %e, "commit failed; batch not yet visible");
                     continue;
                 }
-                metrics.note_applied(events.len() as u64, coalesced);
+                last_commit = std::time::Instant::now();
+                metrics.note_applied(pending_applied, pending_coalesced);
+                pending_applied = 0;
+                pending_coalesced = 0;
             }
             info!(root = %root.display(), "journal consumer exited");
         })
@@ -426,25 +465,26 @@ fn spawn_consumer(
 /// the index — they pass through untouched and act as barriers, so a
 /// modify before a delete is never folded past it.
 fn coalesce(batch: Vec<JournalEvent>) -> Vec<JournalEvent> {
-    // Last index at which each path had a foldable event, valid only back
-    // to that path's most recent barrier.
-    let mut last_foldable: std::collections::HashMap<PathBuf, usize> =
-        std::collections::HashMap::new();
     let mut keep = vec![true; batch.len()];
-
-    for (i, ev) in batch.iter().enumerate() {
-        match ev {
-            JournalEvent::Modify { path, .. } | JournalEvent::AttrChange { path, .. } => {
-                if let Some(prev) = last_foldable.insert(path.clone(), i) {
-                    keep[prev] = false;
+    {
+        // Keys borrow from `batch`, so folding costs no allocation — the
+        // scope ends before `batch` is consumed below.
+        let mut last_foldable: std::collections::HashMap<&Path, usize> =
+            std::collections::HashMap::new();
+        for (i, ev) in batch.iter().enumerate() {
+            match ev {
+                JournalEvent::Modify { path, .. } | JournalEvent::AttrChange { path, .. } => {
+                    if let Some(prev) = last_foldable.insert(path.as_path(), i) {
+                        keep[prev] = false;
+                    }
                 }
-            }
-            JournalEvent::Create { path, .. } | JournalEvent::Delete { path } => {
-                last_foldable.remove(path);
-            }
-            JournalEvent::Rename { old_path, new_path } => {
-                last_foldable.remove(old_path);
-                last_foldable.remove(new_path);
+                JournalEvent::Create { path, .. } | JournalEvent::Delete { path } => {
+                    last_foldable.remove(path.as_path());
+                }
+                JournalEvent::Rename { old_path, new_path } => {
+                    last_foldable.remove(old_path.as_path());
+                    last_foldable.remove(new_path.as_path());
+                }
             }
         }
     }
@@ -462,17 +502,25 @@ fn matches_prefixes(event: &JournalEvent, prefixes: &[String]) -> bool {
     if prefixes.is_empty() {
         return true;
     }
-    let paths: [&Path; 2] = match event {
+    // On Windows one watcher covers a whole volume, so this runs for
+    // every USN record on the drive — including the vast majority that
+    // are filtered out. Compare in place rather than lowercasing a copy
+    // of each path first.
+    let under_any = |p: &Path| {
+        let bytes = p.as_os_str().as_encoded_bytes();
+        prefixes.iter().any(|pre| {
+            bytes.len() >= pre.len() && bytes[..pre.len()].eq_ignore_ascii_case(pre.as_bytes())
+        })
+    };
+    match event {
         JournalEvent::Create { path, .. }
         | JournalEvent::Modify { path, .. }
         | JournalEvent::Delete { path }
-        | JournalEvent::AttrChange { path, .. } => [path, path],
-        JournalEvent::Rename { old_path, new_path } => [old_path, new_path],
-    };
-    paths.iter().any(|p| {
-        let lower = p.to_string_lossy().to_lowercase();
-        prefixes.iter().any(|pre| lower.starts_with(pre))
-    })
+        | JournalEvent::AttrChange { path, .. } => under_any(path),
+        // A rename *out* of the tree still matters: the old path has to
+        // be removed from the index.
+        JournalEvent::Rename { old_path, new_path } => under_any(old_path) || under_any(new_path),
+    }
 }
 
 /// Map watched folders onto the roots a subscriber can actually be opened
@@ -492,7 +540,7 @@ fn watch_roots(folders: &[String]) -> BTreeMap<PathBuf, Vec<String>> {
         #[cfg(windows)]
         {
             if let Some(vol) = volume_root_of(Path::new(f)) {
-                let mut prefix = f.to_lowercase();
+                let mut prefix = f.clone();
                 if !prefix.ends_with('\\') && !prefix.ends_with('/') {
                     prefix.push('\\');
                 }
@@ -515,7 +563,7 @@ fn volume_root_of(p: &Path) -> Option<PathBuf> {
         .then(|| PathBuf::from(format!("{}:\\", b[0].to_ascii_uppercase() as char)))
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -657,7 +705,7 @@ mod tests {
         ]);
         assert_eq!(roots.len(), 2);
         assert_eq!(roots[&PathBuf::from("C:\\")].len(), 2);
-        assert!(roots[&PathBuf::from("C:\\")].contains(&"c:\\users\\me\\documents\\".to_string()));
+        assert!(roots[&PathBuf::from("C:\\")].contains(&"C:\\Users\\Me\\Documents\\".to_string()));
         assert_eq!(roots[&PathBuf::from("D:\\")].len(), 1);
     }
 

@@ -61,8 +61,8 @@ pub use path::{SocketPath, default_socket_path};
 #[cfg(windows)]
 pub use path::{service_pipe_name, service_sddl};
 pub use rename::{
-    CaseTransform, InvalidReason, NamePart, RenameItem, RenamePlan, RenameRule, RenameStatus,
-    plan as plan_rename,
+    CaseTransform, InvalidReason, NamePart, RenameApplyError, RenameItem, RenamePlan, RenameRule,
+    RenameStatus, destination_for, perform_moves, plan as plan_rename,
 };
 pub use server::{Server, ServerConfig};
 pub use service::{NotificationSink, Service};

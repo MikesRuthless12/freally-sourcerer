@@ -6,11 +6,11 @@
 //! filesystem, moves the files it said it would and nothing else, and
 //! that the journal's inverse puts them back exactly.
 //!
-//! The move/rollback logic here mirrors `commands::rename` in the Tauri
-//! app, which cannot be reached from the workspace test runner
-//! (`src-tauri` is excluded from the workspace). The invariants it
-//! asserts — all-or-nothing, no clobber, exact inverse — are the ones
-//! worth pinning wherever they can run.
+//! `destination_for` and `perform_moves` are the real functions the Tauri
+//! command calls, not copies of them — they live in `freally-rpc` for
+//! exactly that reason, since `src-tauri` is excluded from the workspace
+//! and anything defined there is unreachable from `cargo test
+//! --workspace`.
 //!
 //! Gates:
 //!   1. A clean batch renames every file and leaves the directory with
@@ -25,7 +25,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use freally_rpc::rename::{RenameRule, plan};
+use freally_rpc::rename::{RenameRule, destination_for, perform_moves, plan};
 use freally_rpc::{OperationEntry, OperationItem, OperationJournal, OperationKind};
 
 fn touch(dir: &Path, name: &str) -> String {
@@ -42,29 +42,6 @@ fn names_in(dir: &Path) -> BTreeSet<String> {
         .collect()
 }
 
-/// Mirrors the destination rule the Tauri command enforces: a bare name
-/// joined onto the *source's* own parent.
-fn destination_for(from: &str, to_name: &str) -> PathBuf {
-    Path::new(from).parent().unwrap().join(to_name)
-}
-
-/// Mirrors `commands::rename::perform_moves`.
-fn perform_moves(moves: &[(PathBuf, PathBuf)]) -> Result<usize, String> {
-    let mut done: Vec<(PathBuf, PathBuf)> = Vec::new();
-    for (from, to) in moves {
-        match std::fs::rename(from, to) {
-            Ok(()) => done.push((from.clone(), to.clone())),
-            Err(e) => {
-                for (uf, ut) in done.iter().rev() {
-                    let _ = std::fs::rename(ut, uf);
-                }
-                return Err(e.to_string());
-            }
-        }
-    }
-    Ok(done.len())
-}
-
 fn moves_for(paths: &[String], rule: &RenameRule) -> Result<Vec<(PathBuf, PathBuf)>, String> {
     let p = plan(paths, rule);
     if p.has_blocking() {
@@ -72,7 +49,7 @@ fn moves_for(paths: &[String], rule: &RenameRule) -> Result<Vec<(PathBuf, PathBu
     }
     let mut out = Vec::new();
     for item in p.items.iter().filter(|i| i.status.will_apply()) {
-        let dest = destination_for(&item.from, &item.to_name);
+        let dest = destination_for(&item.from, &item.to_name).map_err(|e| e.to_string())?;
         if dest.exists() {
             return Err("destination exists".into());
         }
@@ -93,7 +70,6 @@ fn a_clean_batch_renames_every_file_and_touches_nothing_else() {
         find: "img".into(),
         replace: "photo-{n:02}-".into(),
         counter_start: 1,
-        counter_step: 1,
         ..Default::default()
     };
 

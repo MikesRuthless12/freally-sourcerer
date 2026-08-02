@@ -9,11 +9,12 @@
 //! rebuild their index, and that decision is worth testing without
 //! standing up a daemon, a volume, or a filesystem.
 
+use freally_index::VolumeMap;
 use freally_rpc::{
     AdvisoryFix, AdvisoryId, AdvisorySeverity, HealthAdvisory, IndexHealth, VolumeHealth,
-    VolumeInfo,
 };
 
+use crate::catalogs::CatalogRegistry;
 use crate::watcher::{WatcherSnapshot, WatcherState};
 
 /// Lag above which changes no longer feel live. Everything the app does
@@ -25,17 +26,28 @@ const HIGH_LAG_MS: u64 = 5_000;
 /// is outrunning Tantivy and only a lull will save the difference.
 const QUEUE_SATURATION_PCT: u64 = 80;
 
-/// Assemble the health document. `volumes` is the detected volume list,
-/// used only to put a human label on a root.
-pub fn build(snapshots: Vec<WatcherSnapshot>, volumes: &[VolumeInfo]) -> IndexHealth {
+/// Assemble the health document.
+///
+/// Labels come from the already-reconciled catalog registry, resolved
+/// through the same `VolumeMap` the index stamps rows with — rather than
+/// from a fresh `volumes::detect()`. The panel polls every two seconds,
+/// and on Windows a detect walks all 26 drive letters with blocking
+/// Win32 calls that can spin up removable media; that is far too heavy a
+/// thing to hang off a telemetry read, and re-deriving "is this the same
+/// root" here would be a third answer to a question `VolumeMap` already
+/// answers.
+pub fn build(
+    snapshots: Vec<WatcherSnapshot>,
+    catalogs: &CatalogRegistry,
+    volume_map: &VolumeMap,
+) -> IndexHealth {
     let volumes: Vec<VolumeHealth> = snapshots
         .into_iter()
         .map(|s| {
             let root = s.root.to_string_lossy().to_string();
-            let label = volumes
-                .iter()
-                .find(|v| paths_equal(&v.mount_point, &root))
-                .map(|v| v.label.clone())
+            let label = catalogs
+                .badge(&volume_map.resolve(&s.root))
+                .map(|(name, _)| name.to_string())
                 .unwrap_or_else(|| root.clone());
             let (monitoring, unavailable_reason) = match &s.state {
                 WatcherState::Running => (true, None),
@@ -140,21 +152,6 @@ pub fn advise(volumes: &[VolumeHealth]) -> Vec<HealthAdvisory> {
     // itself between polls.
     out.sort_by_key(|a| std::cmp::Reverse(a.severity));
     out
-}
-
-/// Compare two roots the way the host filesystem would. Windows roots
-/// arrive as `C:\` from detection and `C:\` from the watcher, but case
-/// and trailing separators are not guaranteed to agree.
-fn paths_equal(a: &str, b: &str) -> bool {
-    let norm = |s: &str| {
-        let t = s.trim_end_matches(['\\', '/']);
-        if cfg!(windows) {
-            t.to_lowercase()
-        } else {
-            t.to_string()
-        }
-    };
-    norm(a) == norm(b)
 }
 
 #[cfg(test)]
@@ -266,17 +263,5 @@ mod tests {
         assert_eq!(out.len(), 4);
         assert_eq!(out[0].severity, AdvisorySeverity::Critical);
         assert_eq!(out[1].severity, AdvisorySeverity::Critical);
-    }
-
-    #[test]
-    fn roots_match_their_volume_label_across_trailing_separators() {
-        assert!(paths_equal("/Volumes/Media", "/Volumes/Media/"));
-        assert!(!paths_equal("/Volumes/Media", "/Volumes/Other"));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_roots_match_case_insensitively() {
-        assert!(paths_equal("C:\\", "c:"));
     }
 }
