@@ -27,6 +27,7 @@ import { settingsDialog } from "./stores/settings_dialog.svelte";
 import { fileListStore } from "./stores/file_list.svelte";
 import { refineStore } from "./stores/refine.svelte";
 import { toastStore } from "./stores/toast.svelte";
+import { renameStore, opsStore } from "./stores/rename.svelte";
 import * as files from "./ipc/files";
 import * as fileLists from "./ipc/file_lists";
 import * as indexIpc from "./ipc/index_api";
@@ -299,6 +300,36 @@ function registerHandlers() {
   });
   registry.register("edit.paste", async () => {
     document.execCommand("paste");
+  });
+  // SRC-M15 / SRC-M16. Rename opens on the current selection; the
+  // backend re-derives every name from the rule, so the dialog only ever
+  // sends paths + the rule.
+  registry.register("edit.bulk_rename", async () => {
+    const paths = selectedPaths();
+    if (paths.length === 0) {
+      toastStore.show(t("rename-nothing-selected"));
+      return;
+    }
+    renameStore.open(paths);
+    dialogsStore.open("bulk_rename");
+  });
+  registry.register("edit.undo", async () => {
+    const moved = await opsStore.undo();
+    if (moved !== null) {
+      toastStore.show(t("ops-toast-undone", { count: moved }));
+      await resultsStore.run(queryStore.source);
+    } else if (opsStore.error) {
+      toastStore.error(opsStore.error);
+    }
+  });
+  registry.register("edit.redo", async () => {
+    const moved = await opsStore.redo();
+    if (moved !== null) {
+      toastStore.show(t("ops-toast-redone", { count: moved }));
+      await resultsStore.run(queryStore.source);
+    } else if (opsStore.error) {
+      toastStore.error(opsStore.error);
+    }
   });
   registry.register("edit.copy_to_folder", async () => {
     try {

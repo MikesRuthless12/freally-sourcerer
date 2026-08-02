@@ -1,0 +1,39 @@
+// SRC-M15 bulk rename + SRC-M16 undo/redo.
+//
+// The rule crosses the wire; destination paths never do. The backend
+// derives every new name itself and re-derives it at apply time, so what
+// the preview shows is a display of the backend's own plan rather than
+// an instruction it trusts.
+
+import { invoke } from "@tauri-apps/api/core";
+import type {
+  OperationListing,
+  RenamePreview,
+  RenameOutcome,
+  RenameRule,
+  UndoOutcome
+} from "./types";
+
+export function preview(paths: string[], rule: RenameRule): Promise<RenamePreview> {
+  return invoke<RenamePreview>("files_rename_preview", { paths, rule });
+}
+
+export function apply(paths: string[], rule: RenameRule): Promise<RenameOutcome> {
+  return invoke<RenameOutcome>("files_rename_apply", { paths, rule });
+}
+
+export function opsList(): Promise<OperationListing> {
+  return invoke<OperationListing>("ops_list");
+}
+
+export function undo(id: string): Promise<UndoOutcome> {
+  return invoke<UndoOutcome>("ops_undo", { id });
+}
+
+export function redo(id: string): Promise<UndoOutcome> {
+  return invoke<UndoOutcome>("ops_redo", { id });
+}
+
+export function trashRestoreSupported(): Promise<boolean> {
+  return invoke<boolean>("ops_trash_restore_supported");
+}

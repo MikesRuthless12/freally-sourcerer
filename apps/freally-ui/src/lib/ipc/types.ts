@@ -100,6 +100,85 @@ export interface QueryHit {
   volume_offline?: boolean;
 }
 
+// ---- bulk rename (SRC-M15) ----
+
+export type NamePart = "stem" | "full";
+export type CaseTransform = "none" | "lower" | "upper" | "title";
+
+export interface RenameRule {
+  find: string;
+  replace: string;
+  use_regex: boolean;
+  ignore_case: boolean;
+  case: CaseTransform;
+  part: NamePart;
+  counter_start: number;
+  counter_step: number;
+}
+
+export type RenameStatus = "ok" | "unchanged" | "invalid" | "collision" | "exists";
+
+export type InvalidReason =
+  | "empty"
+  | "path_separator"
+  | "dot_name"
+  | "forbidden_character"
+  | "reserved_name"
+  | "bad_pattern";
+
+export interface RenameItem {
+  from: string;
+  from_name: string;
+  to_name: string;
+  status: RenameStatus;
+  reason?: InvalidReason;
+}
+
+export interface RenamePreview {
+  items: RenameItem[];
+  will_apply: number;
+  /** True when any row would collide, overwrite, or is invalid. Apply is
+   *  refused by the backend in this state, not merely disabled here. */
+  blocked: boolean;
+}
+
+export interface RenameOutcome {
+  renamed: number;
+  operation_id?: string;
+}
+
+// ---- undo / redo (SRC-M16) ----
+
+export type OperationKind = "rename" | "bulk_rename" | "delete";
+export type NotUndoable = "trash_restore_unsupported" | "source_changed";
+
+export interface OperationItem {
+  from: string;
+  to: string;
+}
+
+export interface OperationEntry {
+  id: string;
+  kind: OperationKind;
+  at_ms: number;
+  items: OperationItem[];
+  undone: boolean;
+  undoable: boolean;
+  not_undoable_reason?: NotUndoable;
+}
+
+export interface OperationListing {
+  entries: OperationEntry[];
+  /** What Ctrl+Z would act on; absent when there is nothing to undo. */
+  undo_id?: string | null;
+  redo_id?: string | null;
+}
+
+export interface UndoOutcome {
+  moved: number;
+  id: string;
+}
+
 /** SRC-M14 — one device Freally has indexed, attached or not. */
 export interface CatalogInfo {
   id: string;

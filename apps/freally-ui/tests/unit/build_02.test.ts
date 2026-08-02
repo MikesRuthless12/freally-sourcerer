@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { FluentBundle, FluentResource } from "@fluent/bundle";
 import { COMMAND_IDS } from "../../src/lib/commands/ids";
 import { iterItems } from "../../src/lib/commands/menu_spec";
+import { BINDINGS } from "../../src/lib/commands/shortcuts";
 import { dialogsStore } from "../../src/lib/stores/dialogs.svelte";
 import type { AdvisoryId } from "../../src/lib/ipc/types";
 
@@ -84,6 +85,51 @@ describe("advisory messages", () => {
     // The badge has to explain itself on hover — an unexplained
     // "offline" on a result row reads like an error.
     expect(bundle.getMessage("results-offline-badge-title")?.value).toBeTruthy();
+  });
+
+  it("has a message for every rename status and invalid reason SRC-M15 can send", () => {
+    const bundle = enBundle();
+    // The dialog builds its key from the backend enum, so a variant with
+    // no Fluent key renders as the raw key string in the table.
+    const statuses = ["ok", "unchanged", "invalid", "collision", "exists"];
+    for (const s of statuses) {
+      expect(bundle.getMessage(`rename-status-${s}`)?.value, `rename-status-${s}`).toBeTruthy();
+    }
+    const reasons = [
+      "empty",
+      "path_separator",
+      "dot_name",
+      "forbidden_character",
+      "reserved_name",
+      "bad_pattern"
+    ];
+    for (const r of reasons) {
+      const key = `rename-invalid-${r.replace(/_/g, "-")}`;
+      expect(bundle.getMessage(key)?.value, key).toBeTruthy();
+    }
+  });
+
+  it("wires the SRC-M15/M16 commands, menu items and shortcuts", () => {
+    for (const id of ["edit.bulk_rename", "edit.undo", "edit.redo"]) {
+      expect(COMMAND_IDS).toContain(id);
+    }
+    const menuIds = [...iterItems()].map((i) => i.id);
+    for (const id of ["edit.bulk_rename", "edit.undo", "edit.redo"]) {
+      expect(menuIds, `${id} missing from the menu`).toContain(id);
+    }
+    const bound = BINDINGS.map((b) => b.command);
+    expect(bound).toContain("edit.undo");
+    expect(bound).toContain("edit.redo");
+    expect(bound).toContain("edit.bulk_rename");
+  });
+
+  it("distinguishes undo from redo by the shift modifier", () => {
+    const undo = BINDINGS.find((b) => b.command === "edit.undo")!;
+    const redo = BINDINGS.find((b) => b.command === "edit.redo")!;
+    expect(undo.shortcut.key).toBe("z");
+    expect(redo.shortcut.key).toBe("z");
+    expect(undo.shortcut.shift ?? false).toBe(false);
+    expect(redo.shortcut.shift).toBe(true);
   });
 
   it("has the panel's own chrome strings", () => {
