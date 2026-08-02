@@ -56,6 +56,16 @@ const APPLY_BATCH: usize = 4_096;
 /// stop flag.
 const CONSUMER_POLL: Duration = Duration::from_millis(250);
 
+/// How long the producer parks on the change stream before re-checking
+/// the stop flag.
+///
+/// The stop oneshot below is what normally wakes it, and this tick only
+/// bounds the wait if that wake does not arrive. It is not belt-and-
+/// braces: on macOS and Linux an unbounded park here deadlocked
+/// `shutdown()` outright, because a producer that never wakes can never
+/// be joined. See `spawn_producer`.
+const PRODUCER_POLL: Duration = Duration::from_millis(250);
+
 /// Longest a batch waits before being published. Bounds the
 /// event → query-visible lag during a sustained burst, where the queue
 /// never drains and the "burst died down" condition never fires.
@@ -366,23 +376,54 @@ fn spawn_producer(
         .name("freally-indexd/journal-producer".into())
         .spawn(move || {
             use futures::StreamExt;
-            use futures::executor::block_on;
 
             let stream = subscriber.subscribe();
-            block_on(async move {
-                // Racing the stream against a stop signal is what makes
-                // shutdown possible at all. Checking a flag after
-                // `stream.next()` resolves is not enough: on a quiet
-                // volume the next event may be hours away, or never, and
-                // the OS stream cannot be closed from this side — the
-                // Windows subscriber has no `Drop`, and the mac/linux
-                // ones only stop when the subscriber itself drops, which
-                // cannot happen while this thread holds a clone of it.
-                // Without this the `join()` in `shutdown` blocks forever.
+
+            // Racing the stream against a stop signal is what makes
+            // shutdown possible at all. Checking a flag after
+            // `stream.next()` resolves is not enough: on a quiet volume
+            // the next event may be hours away, or never, and the OS
+            // stream cannot be closed from this side — the Windows
+            // subscriber has no `Drop`, and the mac/linux ones only stop
+            // when the subscriber itself drops, which cannot happen while
+            // this thread holds a clone of it.
+            //
+            // The stop oneshot alone is not enough either. This parked on
+            // `futures::executor::block_on` and, on macOS and Linux, the
+            // wake from dropping the sender did not arrive: the producer
+            // stayed parked and `shutdown()`'s `join()` blocked forever,
+            // hanging the daemon on quit and wedging CI for 48 minutes
+            // before it was killed. Windows only escaped because
+            // `watch_roots` collapses every folder on a drive to one
+            // volume root, so the test that catches this started a single
+            // watcher there and two on Unix.
+            //
+            // So the wait is *bounded*. The oneshot still gives a prompt
+            // exit when its wake does arrive; `PRODUCER_POLL` guarantees
+            // one within a quarter second when it does not. A shutdown
+            // path must not be able to block forever on a wake it does
+            // not control.
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    warn!(root = %root.display(), error = %e,
+                        "no runtime for the journal producer; this root is scan-only");
+                    return;
+                }
+            };
+            rt.block_on(async move {
                 let mut stream = stream.fuse();
                 let mut stop_rx = stop_rx;
                 loop {
-                    futures::select! {
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    tokio::select! {
+                        biased;
+                        _ = &mut stop_rx => break,
                         event = stream.next() => {
                             let Some(event) = event else { break };
                             if stop.load(Ordering::Relaxed) {
@@ -396,7 +437,7 @@ fn spawn_producer(
                                 metrics.note_drop();
                             }
                         }
-                        _ = stop_rx => break,
+                        _ = tokio::time::sleep(PRODUCER_POLL) => {}
                     }
                 }
             });
