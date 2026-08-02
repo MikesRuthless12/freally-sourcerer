@@ -49,6 +49,22 @@ impl freally_query::VolumeCatalogs for CatalogRegistry {
     }
 }
 
+/// The key a catalog is filed under, and the value rows are stamped
+/// with: the device's own identity when the platform can supply one,
+/// otherwise the mount id.
+///
+/// The fallback is the pre-M14 behaviour and carries its weakness — a
+/// reused drive letter looks like the same device — but it only applies
+/// where the OS genuinely cannot identify the hardware, rather than
+/// everywhere.
+pub fn device_key(v: &VolumeInfo) -> &str {
+    if v.device_id.is_empty() {
+        &v.id
+    } else {
+        &v.device_id
+    }
+}
+
 impl CatalogRegistry {
     /// Fold the currently-mounted volumes in: anything detected is
     /// online and has its label and mount point refreshed, anything
@@ -82,19 +98,20 @@ impl CatalogRegistry {
             if v.status == VolumeStatus::Offline {
                 continue;
             }
-            present.insert(v.id.as_str());
+            let key = device_key(v);
+            present.insert(key);
             self.catalogs
-                .entry(v.id.clone())
+                .entry(key.to_string())
                 .and_modify(|c| {
-                    c.name = pick_name(&c.name, &v.label, &v.id);
+                    c.name = pick_name(&c.name, &v.label, key);
                     c.mount_point = v.mount_point.clone();
                     c.fs_kind = v.fs_kind.clone();
                     c.last_seen_ms = now_ms;
                     c.online = true;
                 })
                 .or_insert_with(|| Catalog {
-                    id: v.id.clone(),
-                    name: pick_name("", &v.label, &v.id),
+                    id: key.to_string(),
+                    name: pick_name("", &v.label, key),
                     mount_point: v.mount_point.clone(),
                     fs_kind: v.fs_kind.clone(),
                     first_seen_ms: now_ms,
@@ -177,9 +194,14 @@ fn pick_name(current: &str, label: &str, id: &str) -> String {
 mod tests {
     use super::*;
 
-    fn vol(id: &str, label: &str, status: VolumeStatus) -> VolumeInfo {
+    /// Mirrors real detection: `id` is the *mount* (a drive letter,
+    /// reusable), `device_id` is the device serial (stable). Passing
+    /// them separately is what makes the letter-reuse cases below real
+    /// instead of hypothetical.
+    fn vol_on(id: &str, device_id: &str, label: &str, status: VolumeStatus) -> VolumeInfo {
         VolumeInfo {
             id: id.to_string(),
+            device_id: device_id.to_string(),
             label: label.to_string(),
             mount_point: format!("/mnt/{id}"),
             fs_kind: "exfat".into(),
@@ -196,11 +218,16 @@ mod tests {
         }
     }
 
+    /// Convenience for cases where the mount is not the point.
+    fn vol(id: &str, label: &str, status: VolumeStatus) -> VolumeInfo {
+        vol_on(id, &format!("dev-{id}"), label, status)
+    }
+
     #[test]
     fn a_new_device_is_registered_with_its_label() {
         let mut r = CatalogRegistry::default();
         r.reconcile(&[vol("win-D", "Orange WD 4TB", VolumeStatus::Indexed)], 100);
-        let c = &r.catalogs["win-D"];
+        let c = &r.catalogs["dev-win-D"];
         assert_eq!(c.name, "Orange WD 4TB");
         assert!(c.online);
         assert_eq!(c.first_seen_ms, 100);
@@ -212,8 +239,8 @@ mod tests {
         r.reconcile(&[vol("win-D", "Orange WD 4TB", VolumeStatus::Indexed)], 100);
         let (gone, _) = r.reconcile(&[], 200);
 
-        assert_eq!(gone, vec!["win-D"]);
-        let c = &r.catalogs["win-D"];
+        assert_eq!(gone, vec!["dev-win-D"]);
+        let c = &r.catalogs["dev-win-D"];
         assert!(!c.online, "the device is gone");
         assert_eq!(c.name, "Orange WD 4TB", "but it keeps its name");
         assert_eq!(c.last_seen_ms, 100, "and when we last saw it");
@@ -231,6 +258,78 @@ mod tests {
     }
 
     #[test]
+    fn a_different_drive_inheriting_the_letter_is_a_different_catalog() {
+        // The failure this whole split exists to prevent. "Orange" is
+        // indexed at E:; it is unplugged and a different drive takes E:.
+        // Keying on the letter renamed Orange's catalog to "Blue Backup"
+        // and marked it online, so every one of Orange's rows badged as
+        // Blue — and `volume:orange` returned Blue's files.
+        let mut r = CatalogRegistry::default();
+        r.reconcile(
+            &[vol_on(
+                "win-E",
+                "wvol-aaaa",
+                "Orange WD 4TB",
+                VolumeStatus::Indexed,
+            )],
+            100,
+        );
+        r.reconcile(
+            &[vol_on(
+                "win-E",
+                "wvol-bbbb",
+                "Blue Backup",
+                VolumeStatus::Indexed,
+            )],
+            200,
+        );
+
+        assert_eq!(r.catalogs.len(), 2, "two devices, two catalogs");
+        assert_eq!(r.badge("wvol-aaaa"), Some(("Orange WD 4TB", true)));
+        assert_eq!(r.badge("wvol-bbbb"), Some(("Blue Backup", false)));
+        assert_eq!(r.resolve_filter("orange"), vec!["wvol-aaaa"]);
+    }
+
+    #[test]
+    fn the_same_drive_on_a_new_letter_stays_one_catalog() {
+        let mut r = CatalogRegistry::default();
+        r.reconcile(
+            &[vol_on(
+                "win-E",
+                "wvol-aaaa",
+                "Orange WD 4TB",
+                VolumeStatus::Indexed,
+            )],
+            100,
+        );
+        r.reconcile(&[], 200);
+        // Same device, different letter.
+        r.reconcile(
+            &[vol_on(
+                "win-F",
+                "wvol-aaaa",
+                "Orange WD 4TB",
+                VolumeStatus::Indexed,
+            )],
+            300,
+        );
+
+        assert_eq!(r.catalogs.len(), 1, "one device is one catalog");
+        assert_eq!(r.badge("wvol-aaaa"), Some(("Orange WD 4TB", false)));
+        assert_eq!(r.catalogs["wvol-aaaa"].first_seen_ms, 100);
+    }
+
+    #[test]
+    fn a_platform_that_cannot_identify_the_device_falls_back_to_the_mount() {
+        let mut r = CatalogRegistry::default();
+        r.reconcile(
+            &[vol_on("lin-_mnt_x", "", "Stick", VolumeStatus::Indexed)],
+            100,
+        );
+        assert_eq!(r.badge("lin-_mnt_x"), Some(("Stick", false)));
+    }
+
+    #[test]
     fn replugging_brings_the_same_catalog_back_online() {
         let mut r = CatalogRegistry::default();
         r.reconcile(&[vol("win-D", "Orange WD 4TB", VolumeStatus::Indexed)], 100);
@@ -242,7 +341,7 @@ mod tests {
         r.reconcile(&[back], 300);
 
         assert_eq!(r.catalogs.len(), 1, "not a second catalog for one device");
-        let c = &r.catalogs["win-D"];
+        let c = &r.catalogs["dev-win-D"];
         assert!(c.online);
         assert_eq!(c.mount_point, "/mnt/elsewhere");
         assert_eq!(c.first_seen_ms, 100, "still the device we met first");
@@ -253,16 +352,17 @@ mod tests {
         let mut r = CatalogRegistry::default();
         r.reconcile(&[vol("win-E", "Card Reader", VolumeStatus::Indexed)], 100);
         r.reconcile(&[vol("win-E", "Card Reader", VolumeStatus::Offline)], 200);
-        assert!(!r.catalogs["win-E"].online);
+        assert!(!r.catalogs["dev-win-E"].online);
     }
 
     #[test]
     fn an_unlabelled_device_adopts_a_label_when_it_reports_one() {
         let mut r = CatalogRegistry::default();
         r.reconcile(&[vol("win-D", "", VolumeStatus::Indexed)], 100);
-        assert_eq!(r.catalogs["win-D"].name, "win-D");
+        // With no label to show, the catalog is named after its key.
+        assert_eq!(r.catalogs["dev-win-D"].name, "dev-win-D");
         r.reconcile(&[vol("win-D", "Orange WD 4TB", VolumeStatus::Indexed)], 200);
-        assert_eq!(r.catalogs["win-D"].name, "Orange WD 4TB");
+        assert_eq!(r.catalogs["dev-win-D"].name, "Orange WD 4TB");
     }
 
     #[test]
@@ -277,9 +377,9 @@ mod tests {
         );
         r.reconcile(&[vol("win-C", "System", VolumeStatus::Indexed)], 200);
 
-        assert_eq!(r.badge("win-C"), Some(("System", false)));
-        assert_eq!(r.badge("win-D"), Some(("Orange WD 4TB", true)));
-        assert_eq!(r.badge("win-Z"), None, "an unknown volume has no badge");
+        assert_eq!(r.badge("dev-win-C"), Some(("System", false)));
+        assert_eq!(r.badge("dev-win-D"), Some(("Orange WD 4TB", true)));
+        assert_eq!(r.badge("dev-win-Z"), None, "an unknown volume has no badge");
         assert_eq!(r.badge(""), None, "rows indexed before M14 have no badge");
     }
 
@@ -293,9 +393,9 @@ mod tests {
             ],
             100,
         );
-        assert_eq!(r.resolve_filter("orange"), vec!["win-D"]);
-        assert_eq!(r.resolve_filter("ORANGE"), vec!["win-D"]);
-        assert_eq!(r.resolve_filter("win-E"), vec!["win-E"]);
+        assert_eq!(r.resolve_filter("orange"), vec!["dev-win-D"]);
+        assert_eq!(r.resolve_filter("ORANGE"), vec!["dev-win-D"]);
+        assert_eq!(r.resolve_filter("dev-win-E"), vec!["dev-win-E"]);
         assert!(r.resolve_filter("nothing").is_empty());
         assert!(r.resolve_filter("  ").is_empty());
     }

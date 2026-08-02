@@ -713,7 +713,14 @@ export interface PreviewPayload {
 export type VolumeStatus = "indexed" | "indexing" | "paused" | "offline" | "error";
 
 export interface VolumeInfo {
+  /** Where the volume is mounted — reusable, and what per-volume
+   *  settings are keyed on. */
   id: string;
+  /** Which physical device this is (serial / filesystem UUID / volume
+   *  label). SRC-M14 keys catalogs on this so a drive that returns on a
+   *  different letter is still the same catalog. Empty when the platform
+   *  cannot tell. */
+  device_id?: string;
   label: string;
   mount_point: string;
   fs_kind: string;
