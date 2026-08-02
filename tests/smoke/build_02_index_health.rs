@@ -139,13 +139,22 @@ async fn watchers_follow_the_watched_folder_set() {
 }
 
 #[tokio::test]
-async fn an_unstreamable_root_is_reported_as_scan_only_with_one_advisory() {
+async fn a_watched_root_reports_a_coherent_state_either_way() {
+    // Whether a change stream can be opened is not portable, and cannot
+    // be forced from a test: on Windows `watch_roots` maps any path to
+    // its *volume* root, so even a non-existent folder resolves to `C:\`
+    // — which opens fine on an elevated runner (GitHub's Windows images
+    // are) and fails on an ordinary developer machine. An earlier version
+    // of this test assumed the failing case and passed locally while
+    // failing in CI for that reason.
+    //
+    // So assert the invariant that holds on every platform: the reported
+    // state is internally coherent, and an unwatched root explains itself
+    // and raises exactly one advisory. The rules themselves are pinned
+    // deterministically by the `health::advise` unit tests.
     let tmp = tempfile::TempDir::new().unwrap();
     let state = daemon(&tmp).await;
 
-    // A path that does not exist can never yield a change stream on any
-    // OS, which is the deterministic way to exercise the unavailable
-    // branch without depending on runner privileges.
     let missing = tmp.path().join("no-such-directory");
     state
         .watchers
@@ -156,18 +165,30 @@ async fn an_unstreamable_root_is_reported_as_scan_only_with_one_advisory() {
 
     assert_eq!(health.volumes.len(), 1);
     let v = &health.volumes[0];
-    assert!(!v.monitoring);
-    assert!(
-        v.unavailable_reason.is_some(),
-        "the panel has to be able to explain why this root is scan-only"
-    );
-    assert_eq!(v.events_seen, 0);
-    assert_eq!(v.events_dropped, 0);
-
     let ids: Vec<AdvisoryId> = health.advisories.iter().map(|a| a.id).collect();
-    assert_eq!(
-        ids,
-        vec![AdvisoryId::NotMonitoring],
-        "an idle pipeline must not also raise lag / saturation advice"
-    );
+
+    if v.monitoring {
+        assert!(
+            v.unavailable_reason.is_none(),
+            "a live watcher has nothing to explain"
+        );
+        assert!(
+            !ids.contains(&AdvisoryId::NotMonitoring),
+            "a live watcher must not be reported as scan-only"
+        );
+    } else {
+        assert!(
+            v.unavailable_reason.is_some(),
+            "the panel has to be able to explain why this root is scan-only"
+        );
+        assert_eq!(
+            ids,
+            vec![AdvisoryId::NotMonitoring],
+            "an idle pipeline must not also raise lag / saturation advice"
+        );
+    }
+
+    // True regardless: nothing has been indexed through this watcher yet.
+    assert_eq!(v.events_applied, 0);
+    assert_eq!(v.events_dropped, 0);
 }
