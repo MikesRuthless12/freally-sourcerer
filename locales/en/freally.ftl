@@ -849,3 +849,4 @@ settings-custom-commands-program = Program
 settings-custom-commands-args = Arguments
 settings-custom-commands-extensions = Only for extensions
 settings-custom-commands-add = Add command
+did-you-mean-label = Did you mean

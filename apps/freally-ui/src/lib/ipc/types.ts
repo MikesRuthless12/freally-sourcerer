@@ -166,9 +166,23 @@ export interface QueryBatch {
   groups?: HitGroup[];
 }
 
+/** A spelling correction for a query that matched nothing (SRC-M11).
+ *  Mirrors `freally_rpc::dto::DidYouMean`. `query` is the original
+ *  source with `typed` swapped for `suggested`, so accepting the
+ *  suggestion is a single run with no re-parsing on this side. */
+export interface DidYouMean {
+  typed: string;
+  suggested: string;
+  query: string;
+  distance: number;
+}
+
 export interface QueryDone {
   handle: string;
   timings: LensTimings;
+  /** Absent on pre-Build-2 daemons, and whenever the query matched
+   *  something or no plausible correction exists. */
+  did_you_mean?: DidYouMean;
 }
 
 // ---- index.state ----

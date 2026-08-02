@@ -247,6 +247,7 @@ async fn run_query_streaming(
         freally_query::ParseOpts::default()
     };
     let parsed = freally_query::parse_with(&source, parse_opts);
+    let mut total_hits = 0usize;
 
     for lens in lenses {
         if cancel.load(Ordering::Acquire) {
@@ -282,6 +283,7 @@ async fn run_query_streaming(
             LensId::Audio => timings.audio_ms = elapsed_ms,
             LensId::Similarity => timings.similarity_ms = elapsed_ms,
         }
+        total_hits += hits.len();
         let batch = QueryBatch {
             handle: handle.to_string(),
             lens,
@@ -300,10 +302,23 @@ async fn run_query_streaming(
             return timings;
         }
     }
+    // SRC-M11: only when the whole query came back empty. A search that
+    // matched something does not need correcting, and the candidate
+    // scan is not work worth doing on the success path.
+    let did_you_mean = if total_hits == 0 {
+        parsed
+            .as_ref()
+            .ok()
+            .and_then(|q| suggest_correction(&svc.state, q))
+    } else {
+        None
+    };
+
     timings.total_ms = started.elapsed().as_secs_f32() * 1000.0;
     let done = QueryDone {
         handle: handle.to_string(),
         timings,
+        did_you_mean,
     };
     let _ = sink
         .send(freally_rpc::Notification::new(
@@ -312,6 +327,73 @@ async fn run_query_streaming(
         ))
         .await;
     timings
+}
+
+/// How many trigrams a name must share with the typed term to be worth
+/// scoring. Two is enough to survive a single typo in a short word
+/// while still discarding names that merely share one common trigram.
+const SUGGEST_MIN_SHARED_TRIGRAMS: usize = 2;
+
+/// Ceiling on names scored for one suggestion. Edit distance is cheap
+/// per candidate but this runs while the user waits, so the scan is
+/// bounded rather than proportional to the index.
+const SUGGEST_CANDIDATE_CAP: usize = 2_000;
+
+/// SRC-M11 — propose a spelling correction for a query that found
+/// nothing.
+///
+/// Candidates come from shared-trigram overlap rather than the
+/// substring path, which by construction returns nothing for the typo
+/// that caused the empty result. Names are compared as stems: the user
+/// typed a word, not a filename, and leaving `.txt` attached would
+/// spend the whole edit budget on the extension.
+fn suggest_correction(
+    state: &crate::state::DaemonState,
+    query: &freally_query::Query,
+) -> Option<freally_rpc::DidYouMean> {
+    let typed = query.sole_literal_term()?;
+    if freally_similarity::max_distance_for(typed) == 0 {
+        return None;
+    }
+    // The rewrite below is a textual substitution, so it is only safe
+    // when the term appears once in the source. `path:report report`
+    // has one literal but two occurrences, and replacing the first
+    // would silently edit the modifier instead of the search term.
+    // Offering no suggestion beats offering a query the user did not
+    // ask for.
+    if query.source().matches(typed).count() != 1 {
+        return None;
+    }
+    let needle = typed.to_lowercase();
+
+    let mut stems: Vec<String> = Vec::new();
+    state.index.name_index().for_each_fuzzy_candidate(
+        &needle,
+        SUGGEST_MIN_SHARED_TRIGRAMS,
+        SUGGEST_CANDIDATE_CAP,
+        |_, name| {
+            let name = String::from_utf8_lossy(name);
+            let stem = match name.rsplit_once('.') {
+                // A leading dot is a dotfile, not an extension.
+                Some((s, _)) if !s.is_empty() => s,
+                _ => name.as_ref(),
+            };
+            stems.push(stem.to_string());
+        },
+    );
+    stems.sort_unstable();
+    stems.dedup();
+
+    let best = freally_similarity::best_suggestion(typed, stems.iter().map(String::as_str))?;
+    // Replace only the term itself, so the surrounding modifiers,
+    // booleans and quoting survive verbatim.
+    let rewritten = query.source().replacen(typed, &best.term, 1);
+    Some(freally_rpc::DidYouMean {
+        typed: typed.to_string(),
+        suggested: best.term,
+        query: rewritten,
+        distance: best.distance as u32,
+    })
 }
 
 /// Run a parsed query through the real `freally-query` executor against

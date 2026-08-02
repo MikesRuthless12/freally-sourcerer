@@ -850,3 +850,4 @@ settings-custom-commands-program = Programma
 settings-custom-commands-args = Argumenten
 settings-custom-commands-extensions = Alleen voor extensies
 settings-custom-commands-add = Opdracht toevoegen
+did-you-mean-label = Bedoelde u
