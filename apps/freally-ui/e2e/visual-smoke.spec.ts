@@ -69,6 +69,36 @@ test("connect-endpoint dialog opens via Tools menu", async ({ page }) => {
   await page.screenshot({ path: SHOT("06-connect-endpoint"), fullPage: true });
 });
 
+// ---- Build 2 (v0.22.0) ----
+
+test("index health panel opens via Tools › Index maintenance (SRC-M13)", async ({ page }) => {
+  await bootMain(page);
+  await page.getByRole("button", { name: "Tools" }).click();
+  await page.getByRole("menuitem", { name: /Index maintenance/ }).click();
+  await page.getByRole("menuitem", { name: /Index Health/ }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  // Both watcher states and the advisory that carries a one-click fix.
+  await expect(dialog.getByText("System")).toBeVisible();
+  await expect(dialog.getByText("Orange WD 4TB")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Rebuild index/ })).toBeVisible();
+  await page.screenshot({ path: SHOT("08-index-health"), fullPage: true });
+});
+
+test("bulk rename dialog previews and blocks a collision (SRC-M15)", async ({ page }) => {
+  await bootMain(page);
+  // Rename acts on the selection, so select a result first.
+  await page.getByText("quarterly-report.pdf").first().click();
+  await page.keyboard.press("F2");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  // The preview table renders all three statuses, and Apply stays
+  // disabled while a row is blocking.
+  await expect(dialog.getByText("photo-01.jpg").first()).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /^Rename$/ })).toBeDisabled();
+  await page.screenshot({ path: SHOT("09-bulk-rename"), fullPage: true });
+});
+
 test("first-run wizard renders for a fresh install (?wizard=1)", async ({ page }) => {
   await page.goto("/?wizard=1");
   await expect(page.getByRole("dialog")).toBeVisible({ timeout: 15_000 });

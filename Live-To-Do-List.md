@@ -12,10 +12,38 @@ machine.
 
 ## ✅ Playwright confirmed these render
 
-> **Not yet populated.** The Playwright harness was scaffolded on 2026-07-19 and
-> has **never actually run** against this app. Populate this section from the
-> first real `pnpm test:e2e` run — list each spec/screenshot that passed. Do not
-> pre-check items. The scaffolded specs cover (pending that first run):
+> **Still not populated.** The harness was scaffolded on 2026-07-19 and has
+> **still never completed a run**. Populate this section from the first real
+> `pnpm test:e2e` run — list each spec/screenshot that passed. Do not
+> pre-check items.
+>
+> **2026-08-02 (Build 2) — first run attempted, blocked before any spec
+> executed.** All 9 specs failed identically at `browserType.launch`, never
+> reaching a single assertion, so nothing below can be checked off. The cause
+> is environmental, not the app:
+>
+> - This project's Playwright wants Chromium build **1217**. The machine has
+>   `chromium-1228` and `chromium_headless_shell-1228`, plus a `chromium-1217`
+>   directory whose `chrome-win64\chrome.exe` is **missing** — a partial
+>   install, most likely from the Windows crash on 2026-08-01.
+> - `playwright install` cannot repair it: a browser download from a *different*
+>   repo (`D:\Havoc Software\Freally File Manager`) has held the global
+>   `%LOCALAPPDATA%\ms-playwright\__dirlock` since 02:04 and was still holding
+>   it an hour later. That lock was deliberately left alone — force-removing it
+>   would corrupt the other project's download.
+> - Installing to a private `PLAYWRIGHT_BROWSERS_PATH` sidesteps the lock but
+>   stalled at 4.6 MB. The CDN is reachable, so the stall is unexplained; both
+>   downloads stalling suggests something environmental worth a fresh look.
+>
+> **To finish this:** once no other Playwright install is running, `rm -rf
+> "$LOCALAPPDATA/ms-playwright/chromium-1217"` then
+> `pnpm exec playwright install chromium`, then `pnpm build && pnpm test:e2e`
+> from `apps/freally-ui`. GitHub CI does **not** run this harness (no
+> Playwright step in `.github/workflows/ci.yml`), so this is a local-only gap
+> and does not gate the release.
+>
+> The scaffolded specs cover (pending that first run) — the last two are new in
+> Build 2 and are also unverified:
 >
 > - [ ] Main window: menu bar, search bar, quick-filter chips, grouped lens results, status bar (`01-main-results`)
 > - [ ] Typed query re-runs the search (`02-search-query`)
@@ -24,6 +52,8 @@ machine.
 > - [ ] Organize Bookmarks dialog with listed bookmarks (`05-organize-bookmarks`)
 > - [ ] Connect-to-FTP-Server dialog via Tools menu (`06-connect-endpoint`)
 > - [ ] First-run wizard for a fresh install (`07-first-run-wizard`)
+> - [ ] Index Health panel via Tools → Index maintenance, both watcher states + a rebuild advisory (`08-index-health`) — SRC-M13
+> - [ ] Bulk Rename dialog: preview table renders all three statuses and Apply stays disabled on a collision (`09-bulk-rename`) — SRC-M15
 
 ## ☐ Human drills — features Playwright cannot verify
 

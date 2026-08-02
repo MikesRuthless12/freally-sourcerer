@@ -213,6 +213,112 @@
     files_thumbnail: () => null,
     files_preview: () => ({ kind: "unsupported", message: "No preview in the mock." }),
     files_whitelist_user_chosen: () => null,
+
+    // ---- Build 2 (v0.22.0) ----
+
+    // SRC-M13. One healthy root and one the OS will not stream changes
+    // for, plus a dropped-event ledger, so the panel renders every state
+    // it has: the Live/Scan-only pills, the lag and queue columns, and a
+    // critical advisory carrying its one-click rebuild.
+    index_health: () => ({
+      volumes: [
+        {
+          root: "C:\\",
+          label: "System",
+          monitoring: true,
+          events_seen: 48_120,
+          events_applied: 47_998,
+          events_dropped: 122,
+          events_coalesced: 3_401,
+          last_event_ms: NOW - 1_500,
+          last_drop_ms: NOW - 90_000,
+          last_apply_ms: NOW - 900,
+          last_lag_ms: 42,
+          max_lag_ms: 610,
+          queue_depth: 12,
+          queue_capacity: 65_536,
+          stream_reset: false,
+        },
+        {
+          root: "D:\\",
+          label: "Orange WD 4TB",
+          monitoring: false,
+          unavailable_reason: "opening the change journal needs administrator rights",
+          events_seen: 0,
+          events_applied: 0,
+          events_dropped: 0,
+          events_coalesced: 0,
+          last_event_ms: 0,
+          last_drop_ms: 0,
+          last_apply_ms: 0,
+          last_lag_ms: 0,
+          max_lag_ms: 0,
+          queue_depth: 0,
+          queue_capacity: 0,
+          stream_reset: false,
+        },
+      ],
+      advisories: [
+        {
+          id: "events_dropped",
+          severity: "critical",
+          root: "C:\\",
+          count: 122,
+          fix: "rebuild_index",
+        },
+        {
+          id: "not_monitoring",
+          severity: "warning",
+          root: "D:\\",
+          count: 0,
+          fix: "none",
+        },
+      ],
+    }),
+
+    // SRC-M14.
+    catalogs_list: () => [
+      {
+        id: "wvol-a1b2c3d4",
+        name: "Orange WD 4TB",
+        mount_point: "D:\\",
+        fs_kind: "exfat",
+        first_seen_ms: NOW - 90 * 86_400_000,
+        last_seen_ms: NOW - 3 * 86_400_000,
+        online: false,
+      },
+    ],
+
+    // SRC-M15. Covers every preview status the table styles: a row that
+    // will apply, one the rule left alone, and a blocking collision.
+    files_rename_preview: () => ({
+      items: [
+        {
+          from: "C:\\Shoot\\img001.jpg",
+          from_name: "img001.jpg",
+          to_name: "photo-01.jpg",
+          status: "ok",
+        },
+        {
+          from: "C:\\Shoot\\notes.txt",
+          from_name: "notes.txt",
+          to_name: "notes.txt",
+          status: "unchanged",
+        },
+        {
+          from: "C:\\Shoot\\img002.jpg",
+          from_name: "img002.jpg",
+          to_name: "photo-01.jpg",
+          status: "collision",
+        },
+      ],
+      will_apply: 1,
+      blocked: true,
+    }),
+    files_rename_apply: () => ({ renamed: 0 }),
+    ops_list: () => ({ entries: [], undo_id: null, redo_id: null }),
+    ops_undo: () => ({ moved: 0, id: "" }),
+    ops_redo: () => ({ moved: 0, id: "" }),
   };
 
   function respond(cmd, args) {
