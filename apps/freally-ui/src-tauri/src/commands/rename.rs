@@ -27,10 +27,10 @@
 //! applied. Partially-applied bulk renames are the failure mode people
 //! actually get hurt by.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use freally_rpc::rename::{
-    RenameItem, RenameRule, RenameStatus, destination_for, perform_moves,
+    RenameItem, RenameRule, RenameStatus, destination_for, is_same_file, perform_moves,
 };
 use serde::Serialize;
 use tauri::State;
@@ -75,7 +75,9 @@ pub fn files_rename_preview(
                 // filesystem, but the apply re-checks and the rename
                 // itself is the real guard — this is here so the user
                 // sees the problem before pressing Apply.
-                if dest.exists() {
+                // A case-only rename finds a destination that *is* the
+                // source; that is not a conflict.
+                if dest.exists() && !is_same_file(Path::new(&item.from), &dest) {
                     item.status = RenameStatus::Exists;
                 }
             }
@@ -119,7 +121,7 @@ pub fn files_rename_apply(
     let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
     for item in plan.items.iter().filter(|i| i.status.will_apply()) {
         let dest = destination_for(&item.from, &item.to_name).map_err(|e| e.to_string())?;
-        if dest.exists() {
+        if dest.exists() && !is_same_file(Path::new(&item.from), &dest) {
             return Err("a destination already exists; nothing was changed".into());
         }
         moves.push((PathBuf::from(&item.from), dest));
@@ -142,9 +144,13 @@ pub fn files_rename_apply(
 
     // Renamed files are legitimate targets for follow-up operations
     // (including the undo), so grant them the same provenance their
-    // sources had.
-    for (_, to) in &moves {
+    // sources had - and revoke the old name, which no longer refers to
+    // anything the daemon returned. Leaving it granted would let a
+    // later, unrelated file created at that path inherit a permission
+    // it was never given.
+    for (from, to) in &moves {
         known.add(&to.to_string_lossy());
+        known.revoke(&from.to_string_lossy());
     }
 
     let kind = if renamed == 1 {
@@ -235,28 +241,38 @@ fn apply_journal_entry(
         }
         let from = PathBuf::from(&p.from);
         let to = PathBuf::from(&p.to);
-        // Re-derive the destination from the source's parent plus the
-        // journal's bare name, exactly as a fresh rename would.
+        // Structural checks only. `validate_name` is deliberately NOT
+        // applied here: it constrains names this tool *creates*, and the
+        // undo destination is a name that already existed on disk.
+        // Running it would make a file legitimately called `my:notes.txt`
+        // on Linux impossible to restore, permanently — and because the
+        // entry stays live, it would block undo of everything older too.
         let name = to
             .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
             .ok_or_else(|| "journal entry has no destination name".to_string())?;
-        let dest = destination_for(&p.from, &name).map_err(|e| e.to_string())?;
         if from.parent() != to.parent() {
             return Err("journal entry crosses directories".into());
         }
+        let dest = to
+            .parent()
+            .ok_or_else(|| "journal entry has no parent directory".to_string())?
+            .join(name);
         if !from.exists() {
             return Err("a file has moved since this operation; nothing was changed".into());
-        }
-        if dest.exists() {
-            return Err("something already occupies the original name".into());
         }
         moves.push((from, dest));
     }
 
+    // Destinations are deliberately NOT pre-checked for existence. A
+    // batch that shifted names along a chain (a→b, b→c) unwinds in
+    // reverse, so each destination is freed by the move immediately
+    // before it — pre-checking would reject exactly the case
+    // `inverse_items` reverses the order to support. `perform_moves`
+    // refuses to clobber at the syscall, which is the real guarantee.
     let moved = perform_moves(&moves).map_err(|e| e.to_string())?;
-    for (_, to) in &moves {
+    for (from, to) in &moves {
         known.add(&to.to_string_lossy());
+        known.revoke(&from.to_string_lossy());
     }
     Ok(moved)
 }
@@ -288,26 +304,46 @@ fn mark_undone(id: &str, undone: bool) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn ops_undo(id: String, known: State<'_, KnownPaths>) -> Result<UndoOutcome, String> {
-    let entry = journal_entry(&id)?;
-    if entry.undone {
+/// Flip the journal flag *first*, then move the files, rolling the flag
+/// back if the move fails.
+///
+/// The other order is worse in a way that is hard to recover from: if
+/// the files move and then the flag write fails, the disk and the
+/// journal disagree, and because `next_undo` deliberately never skips
+/// past the newest live entry, that entry becomes a permanent tombstone
+/// blocking undo of everything older. Flipping first can only ever leave
+/// the flag wrong in the direction that makes the entry *retryable*.
+fn run_journal_op(id: &str, redo: bool, known: &KnownPaths) -> Result<usize, String> {
+    let entry = journal_entry(id)?;
+    if redo && !entry.undone {
+        return Err("that operation has not been undone".into());
+    }
+    if !redo && entry.undone {
         return Err("that operation has already been undone".into());
     }
-    let moved = apply_journal_entry(&entry, false, &known)?;
-    // Only claim it is undone once the disk actually changed.
-    mark_undone(&id, true)?;
+
+    mark_undone(id, !redo)?;
+    match apply_journal_entry(&entry, redo, known) {
+        Ok(moved) => Ok(moved),
+        Err(e) => {
+            // Best effort: if this also fails the entry is left claiming
+            // a state the disk does not have, but it stays reachable
+            // from the opposite direction.
+            let _ = mark_undone(id, redo);
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn ops_undo(id: String, known: State<'_, KnownPaths>) -> Result<UndoOutcome, String> {
+    let moved = run_journal_op(&id, false, &known)?;
     Ok(UndoOutcome { moved, id })
 }
 
 #[tauri::command]
 pub fn ops_redo(id: String, known: State<'_, KnownPaths>) -> Result<UndoOutcome, String> {
-    let entry = journal_entry(&id)?;
-    if !entry.undone {
-        return Err("that operation has not been undone".into());
-    }
-    let moved = apply_journal_entry(&entry, true, &known)?;
-    mark_undone(&id, false)?;
+    let moved = run_journal_op(&id, true, &known)?;
     Ok(UndoOutcome { moved, id })
 }
 

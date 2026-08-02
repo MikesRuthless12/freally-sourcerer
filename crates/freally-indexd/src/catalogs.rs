@@ -54,10 +54,25 @@ impl CatalogRegistry {
     /// online and has its label and mount point refreshed, anything
     /// previously known but absent is marked offline and kept.
     ///
-    /// Returns the ids that went offline during *this* call, so the
-    /// caller can log the transition rather than re-deriving it.
-    pub fn reconcile(&mut self, detected: &[VolumeInfo], now_ms: u64) -> Vec<String> {
+    /// Returns the ids that went offline during *this* call, plus
+    /// whether the registry changed at all (a first sighting, a rename,
+    /// a new mount point) so the caller knows to persist.
+    pub fn reconcile(&mut self, detected: &[VolumeInfo], now_ms: u64) -> (Vec<String>, bool) {
         let mut went_offline = Vec::new();
+        let before = self.catalogs.len();
+        let fingerprint = |c: &BTreeMap<String, Catalog>| {
+            c.values()
+                .map(|x| {
+                    (
+                        x.id.clone(),
+                        x.name.clone(),
+                        x.mount_point.clone(),
+                        x.online,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let prev = fingerprint(&self.catalogs);
         let mut present: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
 
         for v in detected {
@@ -94,7 +109,8 @@ impl CatalogRegistry {
                 went_offline.push(c.id.clone());
             }
         }
-        went_offline
+        let changed = before != self.catalogs.len() || prev != fingerprint(&self.catalogs);
+        (went_offline, changed)
     }
 
     /// Badge data for a row stamped with `volume_id`: the catalog's
@@ -194,7 +210,7 @@ mod tests {
     fn unplugging_keeps_the_catalog_and_marks_it_offline() {
         let mut r = CatalogRegistry::default();
         r.reconcile(&[vol("win-D", "Orange WD 4TB", VolumeStatus::Indexed)], 100);
-        let gone = r.reconcile(&[], 200);
+        let (gone, _) = r.reconcile(&[], 200);
 
         assert_eq!(gone, vec!["win-D"]);
         let c = &r.catalogs["win-D"];
@@ -207,9 +223,9 @@ mod tests {
     fn going_offline_is_reported_once_not_on_every_poll() {
         let mut r = CatalogRegistry::default();
         r.reconcile(&[vol("win-D", "D", VolumeStatus::Indexed)], 100);
-        assert_eq!(r.reconcile(&[], 200).len(), 1);
+        assert_eq!(r.reconcile(&[], 200).0.len(), 1);
         assert!(
-            r.reconcile(&[], 300).is_empty(),
+            r.reconcile(&[], 300).0.is_empty(),
             "already-offline catalogs are not a new transition"
         );
     }

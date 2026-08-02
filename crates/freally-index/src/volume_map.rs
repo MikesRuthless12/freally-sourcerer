@@ -93,13 +93,18 @@ fn is_under_bytes(path: &[u8], mount: &[u8]) -> bool {
     }
 }
 
-/// Lower-case, forward-slash, no trailing separator. Case folding is
-/// unconditional: a volume id has to stay stable across the case
-/// variations Windows hands out for the same drive, and on Unix two
-/// mount points differing only by case are not a distinction worth
-/// splitting a catalog over.
+/// Forward-slash, ASCII-lower-case, no trailing separator.
+///
+/// The fold is deliberately **ASCII-only**, to match `is_under_bytes`.
+/// A full `to_lowercase()` here would fold non-ASCII characters that the
+/// byte comparison then cannot fold back, so a mount point like
+/// `/media/me/ÉTÉ` would never match its own paths — and with a `/`
+/// entry present on Linux those files would silently fall through to
+/// the root volume and be stamped with the *wrong* id. `to_lowercase`
+/// is also not length-preserving (`U+212A KELVIN SIGN` folds to `k`),
+/// which would make a normalized mount match an unrelated directory.
 fn normalize(p: &Path) -> String {
-    let s = p.to_string_lossy().replace('\\', "/").to_lowercase();
+    let s = p.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
     let trimmed = s.trim_end_matches('/');
     if trimmed.is_empty() && s.starts_with('/') {
         // The Unix root is a mount point whose normalized form is empty.
