@@ -232,6 +232,9 @@ async fn run_service_daemon() -> Result<()> {
 
     let opts = DaemonOptions {
         index_root: Some(index_root),
+        // One daemon, one pipe, every user on the machine — so the
+        // per-user undo journal is refused rather than shared.
+        shared_multi_user: true,
         ..Default::default()
     };
     let state: Arc<DaemonState> = DaemonState::open(opts)?;

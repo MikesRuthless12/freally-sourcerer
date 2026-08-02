@@ -26,14 +26,32 @@ use std::sync::Mutex;
 const MAX_KNOWN_PATHS: usize = 16_384;
 
 /// How a path earned its place in the registry.
+///
+/// Ordered weakest-first: a grant satisfies any requirement at or below
+/// its own level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Provenance {
-    /// The daemon returned it as a search hit. Enough to read, preview,
-    /// reveal, or open the file.
+    /// The **frontend** asserted this path, via
+    /// `files_whitelist_user_chosen`. That command takes an arbitrary
+    /// string from the webview, so this level attests to nothing beyond
+    /// "some JS asked for it" — it is what the untrusted layer can mint
+    /// for itself.
+    ///
+    /// Enough to read, preview, reveal, or open, which is what the two
+    /// real callers need (the preview pane, and Go To after a JS-opened
+    /// folder dialog). Deliberately **not** enough to delete or rename:
+    /// those are irreversible, and a compromised frontend dependency
+    /// must not be able to authorize them by naming a path.
+    FrontendAsserted,
+    /// The daemon returned it as a search hit, registered by the Rust
+    /// notification re-emitter as `query:batch` passes through. Nothing
+    /// reachable from JS can mint this, which is what makes it a real
+    /// attestation and the right gate for destructive commands.
     QueryHit,
-    /// The user picked it in an OS-native dialog. That dialog is the
-    /// real trust boundary, so this is what a command that *writes* to
-    /// a path requires.
+    /// The user picked it in an OS-native dialog **opened in Rust**.
+    /// That dialog is the strongest trust boundary available, so this is
+    /// what a command that writes new content to a caller-named path
+    /// requires.
     UserChosen,
 }
 
@@ -49,6 +67,8 @@ impl KnownPaths {
         }
     }
 
+    /// Register a path the **daemon** returned as a search hit. Only the
+    /// notification re-emitter calls this; it is not reachable from JS.
     pub fn add(&self, path: &str) {
         self.record(path, Provenance::QueryHit);
     }
@@ -57,6 +77,12 @@ impl KnownPaths {
         for p in paths {
             self.add(&p);
         }
+    }
+
+    /// Register a path the **frontend** named. Grants the weakest level,
+    /// which cannot satisfy a destructive command's gate.
+    pub fn add_frontend_asserted(&self, path: &str) {
+        self.record(path, Provenance::FrontendAsserted);
     }
 
     /// User selected via OS-native dialog — the dialog itself is the
@@ -164,6 +190,45 @@ mod tests {
         // A later query hit for the same path must not demote it.
         k.add("/vault/a.txt");
         assert!(k.verify("/vault/a.txt", Provenance::UserChosen).is_ok());
+    }
+
+    #[test]
+    fn what_the_frontend_asserts_can_be_read_but_never_deleted_or_renamed() {
+        // The whole point of the third tier. `files_whitelist_user_chosen`
+        // takes an arbitrary string from the webview, so a compromised
+        // frontend dependency could otherwise name any path on disk and
+        // then have it renamed or trashed with no user interaction.
+        let k = KnownPaths::new();
+        k.add_frontend_asserted("/etc/shadow");
+
+        // Reads still work — the preview pane and Go To depend on it.
+        assert!(
+            k.verify("/etc/shadow", Provenance::FrontendAsserted).is_ok(),
+            "preview / reveal must still accept a path the user just picked"
+        );
+        // Destructive commands do not.
+        assert!(k.verify("/etc/shadow", Provenance::QueryHit).is_err());
+        assert!(k.verify("/etc/shadow", Provenance::UserChosen).is_err());
+    }
+
+    #[test]
+    fn a_daemon_returned_hit_satisfies_the_destructive_gate() {
+        let k = KnownPaths::new();
+        k.add("/vault/report.pdf");
+        assert!(k.verify("/vault/report.pdf", Provenance::QueryHit).is_ok());
+        // ...but still not the dialog-only level.
+        assert!(k.verify("/vault/report.pdf", Provenance::UserChosen).is_err());
+    }
+
+    #[test]
+    fn a_frontend_assertion_cannot_downgrade_a_daemon_attested_path() {
+        let k = KnownPaths::new();
+        k.add("/vault/report.pdf");
+        k.add_frontend_asserted("/vault/report.pdf");
+        assert!(
+            k.verify("/vault/report.pdf", Provenance::QueryHit).is_ok(),
+            "record() keeps the wider grant"
+        );
     }
 
     #[test]

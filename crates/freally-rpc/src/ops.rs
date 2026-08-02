@@ -19,6 +19,7 @@
 //! the user pressed it.
 
 use std::collections::VecDeque;
+use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -75,7 +76,81 @@ pub struct OperationEntry {
     pub not_undoable_reason: Option<NotUndoable>,
 }
 
+/// Largest batch a single journal entry may describe. A real bulk rename
+/// is bounded by the selection; anything past this is not a shape the app
+/// produces.
+pub const MAX_ITEMS_PER_ENTRY: usize = 10_000;
+
+/// Why a journal entry was refused at record time.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum EntryRejected {
+    #[error("journal entry has no items")]
+    Empty,
+    #[error("journal entry describes more than {MAX_ITEMS_PER_ENTRY} items")]
+    TooManyItems,
+    #[error("journal entry has an empty path")]
+    EmptyPath,
+    #[error("journal entry path is not absolute")]
+    NotAbsolute,
+    #[error("journal entry path contains a `..` component")]
+    Traversal,
+    #[error("journal entry moves a file between directories")]
+    CrossesDirectories,
+    #[error("a delete carries no destination and cannot be replayed")]
+    DeleteHasDestination,
+}
+
 impl OperationEntry {
+    /// Structural check applied **before** an entry is admitted to the
+    /// journal.
+    ///
+    /// The journal drives real renames, and the code that executes it
+    /// deliberately skips `validate_name` — an undo restores a name that
+    /// already existed on disk, and that validator constrains names this
+    /// tool *creates*. So the shape has to be pinned here instead, at the
+    /// boundary where an entry arrives, rather than trusted later.
+    ///
+    /// This constrains *shape*, not *target*: a same-directory pair is
+    /// still a same-directory pair wherever it points. Confining which
+    /// directories a peer may name is the transport's job — see the
+    /// per-user partitioning in `freally-indexd`.
+    pub fn validate_shape(&self) -> Result<(), EntryRejected> {
+        if self.items.is_empty() {
+            return Err(EntryRejected::Empty);
+        }
+        if self.items.len() > MAX_ITEMS_PER_ENTRY {
+            return Err(EntryRejected::TooManyItems);
+        }
+        for it in &self.items {
+            if self.kind == OperationKind::Delete {
+                // A delete's `to` is empty by construction; a non-empty
+                // one would be a rename wearing a delete's label, which
+                // the executor refuses to replay anyway.
+                if !it.to.is_empty() {
+                    return Err(EntryRejected::DeleteHasDestination);
+                }
+                continue;
+            }
+            if it.from.is_empty() || it.to.is_empty() {
+                return Err(EntryRejected::EmptyPath);
+            }
+            let (from, to) = (Path::new(&it.from), Path::new(&it.to));
+            if !from.is_absolute() || !to.is_absolute() {
+                return Err(EntryRejected::NotAbsolute);
+            }
+            if [from, to]
+                .iter()
+                .any(|p| p.components().any(|c| c == Component::ParentDir))
+            {
+                return Err(EntryRejected::Traversal);
+            }
+            if from.parent() != to.parent() {
+                return Err(EntryRejected::CrossesDirectories);
+            }
+        }
+        Ok(())
+    }
+
     /// The inverse of this entry — what an undo has to perform. Renames
     /// run in reverse order so that a batch which shifted names along a
     /// chain unwinds without colliding with itself.
@@ -214,6 +289,79 @@ mod tests {
             undoable: true,
             not_undoable_reason: None,
         }
+    }
+
+    /// An absolute path for the host platform. `Path::is_absolute` on
+    /// Windows needs a drive prefix, so a POSIX-shaped literal would not
+    /// exercise the check the way a real path does.
+    fn abs(rest: &str) -> String {
+        if cfg!(windows) {
+            format!("C:\\{}", rest.replace('/', "\\"))
+        } else {
+            format!("/{rest}")
+        }
+    }
+
+    #[test]
+    fn a_well_formed_rename_entry_is_admitted() {
+        assert_eq!(
+            rename_entry("1", &abs("a/x"), &abs("a/y")).validate_shape(),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_entry_that_would_move_a_file_out_of_its_directory_is_refused() {
+        // The journal drives real renames and the executor does not
+        // re-derive the destination, so a cross-directory pair here would
+        // become a cross-directory move at replay.
+        assert_eq!(
+            rename_entry("1", &abs("a/x"), &abs("b/x")).validate_shape(),
+            Err(EntryRejected::CrossesDirectories)
+        );
+    }
+
+    #[test]
+    fn traversal_and_relative_paths_are_refused() {
+        assert_eq!(
+            rename_entry("1", &abs("a/../etc/x"), &abs("a/../etc/y")).validate_shape(),
+            Err(EntryRejected::Traversal)
+        );
+        assert_eq!(
+            rename_entry("1", "a/x", "a/y").validate_shape(),
+            Err(EntryRejected::NotAbsolute)
+        );
+    }
+
+    #[test]
+    fn an_empty_or_oversized_entry_is_refused() {
+        let mut e = rename_entry("1", &abs("a/x"), &abs("a/y"));
+        e.items.clear();
+        assert_eq!(e.validate_shape(), Err(EntryRejected::Empty));
+
+        let mut big = rename_entry("2", &abs("a/x"), &abs("a/y"));
+        big.items = (0..MAX_ITEMS_PER_ENTRY + 1)
+            .map(|i| OperationItem {
+                from: abs(&format!("a/x{i}")),
+                to: abs(&format!("a/y{i}")),
+            })
+            .collect();
+        assert_eq!(big.validate_shape(), Err(EntryRejected::TooManyItems));
+    }
+
+    #[test]
+    fn a_delete_may_carry_no_destination() {
+        let mut del = rename_entry("1", &abs("a/gone"), "");
+        del.kind = OperationKind::Delete;
+        assert_eq!(del.validate_shape(), Ok(()));
+
+        // A rename wearing a delete's label is refused.
+        let mut sneaky = rename_entry("2", &abs("a/x"), &abs("a/y"));
+        sneaky.kind = OperationKind::Delete;
+        assert_eq!(
+            sneaky.validate_shape(),
+            Err(EntryRejected::DeleteHasDestination)
+        );
     }
 
     #[test]

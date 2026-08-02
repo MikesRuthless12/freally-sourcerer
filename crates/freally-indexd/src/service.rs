@@ -649,10 +649,37 @@ async fn catalogs_list(svc: &IndexdService) -> Result<Value, RpcError> {
 
 // ---------- operation journal (SRC-M16) ----------
 
+/// Refuse the journal outright when one daemon serves every user on the
+/// machine.
+///
+/// The Windows service binds a single pipe that grants Authenticated
+/// Users and keeps its state in `%PROGRAMDATA%`, so a shared journal
+/// would let any local peer record a rename that a *different* user's
+/// Ctrl+Z then executes under that user's own account — the peer chooses
+/// both halves of every pair, so the inverse is entirely theirs.
+///
+/// Partitioning would need a per-connection identity the RPC layer does
+/// not carry today. Refusing is the honest alternative rather than the
+/// lesser one: "undo my last operation" has no meaning over a stack
+/// shared by everyone, so there is no correct behaviour being withheld.
+/// The per-user desktop daemon — what a normal install runs — is
+/// unaffected and keeps full undo.
+fn deny_if_shared(svc: &IndexdService) -> Result<(), RpcError> {
+    if svc.state.shared_multi_user {
+        return Err(RpcError::Remote {
+            code: codes::INVALID_REQUEST,
+            message: "the operation journal is unavailable on a shared multi-user daemon".into(),
+            data: None,
+        });
+    }
+    Ok(())
+}
+
 /// The undo stack, oldest first, plus what Ctrl+Z / Ctrl+Shift+Z would
 /// act on right now. The UI renders the history popover from this and
 /// enables its two shortcuts from `undo_id` / `redo_id` being present.
 async fn ops_list(svc: &IndexdService) -> Result<Value, RpcError> {
+    deny_if_shared(svc)?;
     let j = svc.state.operations.read().await;
     Ok(json!({
         "entries": j.entries().cloned().collect::<Vec<_>>(),
@@ -662,7 +689,18 @@ async fn ops_list(svc: &IndexdService) -> Result<Value, RpcError> {
 }
 
 async fn ops_record(svc: &IndexdService, params: Value) -> Result<Value, RpcError> {
+    deny_if_shared(svc)?;
     let entry: freally_rpc::OperationEntry = serde_json::from_value(params)?;
+    // Refuse anything that is not the shape this app produces, at the
+    // boundary rather than at replay time. The code that executes the
+    // journal deliberately skips `validate_name` (an undo restores a name
+    // that already existed on disk), so if the shape is not pinned here it
+    // is not pinned anywhere.
+    entry.validate_shape().map_err(|e| RpcError::Remote {
+        code: codes::INVALID_PARAMS,
+        message: e.to_string(),
+        data: None,
+    })?;
     let id = entry.id.clone();
     svc.state.operations.write().await.record(entry);
     svc.state
@@ -679,6 +717,7 @@ struct SetUndoneParams {
 }
 
 async fn ops_set_undone(svc: &IndexdService, params: Value) -> Result<Value, RpcError> {
+    deny_if_shared(svc)?;
     let p: SetUndoneParams = serde_json::from_value(params)?;
     let ok = svc
         .state
@@ -700,6 +739,7 @@ async fn ops_set_undone(svc: &IndexdService, params: Value) -> Result<Value, Rpc
 }
 
 async fn ops_clear(svc: &IndexdService) -> Result<Value, RpcError> {
+    deny_if_shared(svc)?;
     svc.state.operations.write().await.clear();
     svc.state
         .persist()
