@@ -131,7 +131,30 @@ async fn watchers_follow_the_watched_folder_set() {
     ]);
     assert_eq!(state.watchers.snapshot().len(), roots);
 
-    state.watchers.reconcile(&[]);
+    // Stopping every watcher must *finish*, and finish promptly. This is
+    // wrapped in a timeout because the failure mode it guards is a
+    // deadlock, not a wrong answer: the producer threads park on the
+    // change stream, and when a stop signal failed to wake them `join()`
+    // blocked forever. Un-timed, that does not fail the suite — it hangs
+    // it, which cost 48 minutes of CI on two runners before anyone
+    // noticed. A hang that reports itself in ten seconds is worth the
+    // extra plumbing.
+    //
+    // `reconcile` blocks (it joins threads), hence spawn_blocking rather
+    // than calling it directly on the runtime thread.
+    let stopping = state.clone();
+    let stopped = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::task::spawn_blocking(move || stopping.watchers.reconcile(&[])),
+    )
+    .await;
+    assert!(
+        stopped.is_ok(),
+        "reconcile(&[]) did not return within 10s — a watcher thread is not \
+         being woken, so shutdown deadlocked"
+    );
+    stopped.unwrap().expect("reconcile panicked");
+
     assert!(
         state.watchers.snapshot().is_empty(),
         "dropping every folder must stop every watcher"
