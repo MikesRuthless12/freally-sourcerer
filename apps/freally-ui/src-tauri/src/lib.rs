@@ -157,6 +157,7 @@ pub fn run() {
             commands::query::query_lens_timings,
             // Daemon-routed index controls.
             commands::index_state::index_state,
+            commands::index_state::index_health,
             commands::index_state::index_verify,
             commands::index_state::index_compact,
             commands::index_state::index_rebuild,

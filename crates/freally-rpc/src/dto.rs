@@ -150,6 +150,102 @@ pub struct IndexState {
     pub message: String,
 }
 
+/// SRC-M13 — everything the Index Health panel renders.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexHealth {
+    pub volumes: Vec<VolumeHealth>,
+    /// Pending eager content extractions. `None` means the daemon does
+    /// not run an eager-extraction worker, so there is no backlog to
+    /// report — distinct from `Some(0)`, which means "worker idle".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_backlog: Option<u64>,
+    pub advisories: Vec<HealthAdvisory>,
+}
+
+/// Live-journaling health for one watched root.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VolumeHealth {
+    /// The root the change stream is opened on — a drive root on
+    /// Windows, the watched directory on macOS / Linux.
+    pub root: String,
+    /// Volume label when the root maps onto a detected volume.
+    pub label: String,
+    /// False when the OS refused a change stream here; the root is still
+    /// searchable from its last scan, it just will not self-update.
+    pub monitoring: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
+    pub events_seen: u64,
+    pub events_applied: u64,
+    /// Events refused because the queue was full — each is a hole in the
+    /// index that only a rescan can fill.
+    pub events_dropped: u64,
+    pub events_coalesced: u64,
+    /// Unix ms; 0 means "never".
+    pub last_event_ms: u64,
+    pub last_drop_ms: u64,
+    pub last_apply_ms: u64,
+    /// event → query-visible latency of the last committed batch.
+    pub last_lag_ms: u64,
+    pub max_lag_ms: u64,
+    pub queue_depth: u64,
+    pub queue_capacity: u64,
+    /// The OS discarded the change stream we were reading (a wrapped USN
+    /// journal, a recreated FSEvents stream). Events in the gap are lost.
+    pub stream_reset: bool,
+}
+
+/// One rule the advisor fired. The daemon sends a stable `id` and a
+/// single number rather than a sentence, so the UI renders it through
+/// Fluent in the user's locale.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthAdvisory {
+    pub id: AdvisoryId,
+    pub severity: AdvisorySeverity,
+    /// The root this concerns; `None` for index-wide advisories.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    /// The one figure the rule's message interpolates — dropped events,
+    /// lag in ms, queue depth. 0 when the rule needs no number.
+    pub count: u64,
+    pub fix: AdvisoryFix,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisoryId {
+    /// The change stream was discarded and re-seated; the index missed
+    /// everything in the gap.
+    JournalStreamReset,
+    /// Events were dropped at our queue boundary under load.
+    EventsDropped,
+    /// No change stream on this root — scans only.
+    NotMonitoring,
+    /// Changes are taking a long time to become searchable.
+    HighLag,
+    /// The queue is close to full, so drops are imminent.
+    QueueSaturated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AdvisorySeverity {
+    Info,
+    Warning,
+    Critical,
+}
+
+/// The one-click action that resolves an advisory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisoryFix {
+    /// Nothing the app can do unattended — the panel explains instead.
+    None,
+    /// Re-scan every watched folder, which fills whatever holes the
+    /// dropped or missed events left.
+    RebuildIndex,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExtractorMode {

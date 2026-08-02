@@ -101,6 +101,7 @@ impl Service for IndexdService {
                 "query.cancel" => query_cancel(&self, params).await,
                 "query.lens_timings" => query_lens_timings(&self, params).await,
                 "index.state" => index_state(&self).await,
+                "index.health" => index_health(&self).await,
                 "index.verify" => index_verify(&self).await,
                 "index.compact" => index_compact(&self).await,
                 "index.rebuild" => index_rebuild(&self).await,
@@ -485,6 +486,17 @@ async fn index_state(svc: &IndexdService) -> Result<Value, RpcError> {
     Ok(serde_json::to_value(st)?)
 }
 
+/// SRC-M13. Reads live watcher counters plus the detected volume list;
+/// touches no locks the ingest path holds, so it stays cheap enough for
+/// the panel to poll.
+async fn index_health(svc: &IndexdService) -> Result<Value, RpcError> {
+    let snapshots = svc.state.watchers.snapshot();
+    let volumes = crate::volumes::detect();
+    Ok(serde_json::to_value(crate::health::build(
+        snapshots, &volumes,
+    ))?)
+}
+
 async fn index_verify(_svc: &IndexdService) -> Result<Value, RpcError> {
     // The Phase 4 index already runs corruption detection on open; an
     // explicit verify rebuilds the manifest checksum table.
@@ -743,6 +755,7 @@ async fn folders_add(svc: &IndexdService, params: Value) -> Result<Value, RpcErr
         .await
         .map_err(|e| RpcError::Other(e.to_string()))?;
     crate::scanner::spawn_scan(svc.state.index.clone(), &scan_path);
+    svc.state.reconcile_watchers().await;
     Ok(json!({ "ok": true }))
 }
 
@@ -760,6 +773,7 @@ async fn folders_remove(svc: &IndexdService, params: Value) -> Result<Value, Rpc
         .persist()
         .await
         .map_err(|e| RpcError::Other(e.to_string()))?;
+    svc.state.reconcile_watchers().await;
     Ok(json!({ "ok": true }))
 }
 
@@ -776,6 +790,7 @@ async fn folders_update(svc: &IndexdService, params: Value) -> Result<Value, Rpc
         .persist()
         .await
         .map_err(|e| RpcError::Other(e.to_string()))?;
+    svc.state.reconcile_watchers().await;
     Ok(json!({ "ok": true }))
 }
 

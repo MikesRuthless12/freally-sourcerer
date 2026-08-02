@@ -10,6 +10,7 @@ export type ModalId =
   | "settings"
   | "connect_endpoint"
   | "custom_extractor_manager"
+  | "index_health"
   | "more_freally_apps";
 
 class DialogsStore {

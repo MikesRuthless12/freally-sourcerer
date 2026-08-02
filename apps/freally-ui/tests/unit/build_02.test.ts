@@ -1,0 +1,93 @@
+// Build 2 (v0.22.0) frontend behaviour — SRC-M13 Index Health panel.
+
+import { describe, it, expect, beforeEach } from "vitest";
+import { FluentBundle, FluentResource } from "@fluent/bundle";
+import { COMMAND_IDS } from "../../src/lib/commands/ids";
+import { iterItems } from "../../src/lib/commands/menu_spec";
+import { dialogsStore } from "../../src/lib/stores/dialogs.svelte";
+import type { AdvisoryId } from "../../src/lib/ipc/types";
+
+const EN = import.meta.glob<string>("../../../../locales/en/freally.ftl", {
+  query: "?raw",
+  import: "default",
+  eager: true
+});
+
+function enBundle(): FluentBundle {
+  const source = Object.values(EN)[0];
+  const bundle = new FluentBundle("en");
+  const errs = bundle.addResource(new FluentResource(source));
+  if (errs.length > 0) throw new Error(`Fluent parse errors: ${errs.map(String).join(" | ")}`);
+  return bundle;
+}
+
+// ---- SRC-M13: the panel is reachable ----------------------------------
+
+describe("index health panel wiring", () => {
+  beforeEach(() => dialogsStore.close());
+
+  it("registers the command id the menu item points at", () => {
+    expect(COMMAND_IDS).toContain("tools.index_health");
+  });
+
+  it("surfaces Index Health as a real menu item", () => {
+    const ids = [...iterItems()].map((i) => i.id);
+    expect(ids).toContain("tools.index_health");
+  });
+
+  it("is a modal the dialog store can hold open", () => {
+    dialogsStore.open("index_health");
+    expect(dialogsStore.active).toBe("index_health");
+    dialogsStore.close();
+    expect(dialogsStore.active).toBeNull();
+  });
+});
+
+// ---- SRC-M13: every advisory the daemon can send renders --------------
+
+describe("advisory messages", () => {
+  // The panel builds its key as `health-advice-${id.replace(/_/g, "-")}`.
+  // A daemon-side AdvisoryId with no matching Fluent key would render as
+  // the raw key string in the UI, so pin the mapping here.
+  const IDS: AdvisoryId[] = [
+    "journal_stream_reset",
+    "events_dropped",
+    "not_monitoring",
+    "high_lag",
+    "queue_saturated"
+  ];
+
+  it("has an English message for every advisory id", () => {
+    const bundle = enBundle();
+    for (const id of IDS) {
+      const key = `health-advice-${id.replace(/_/g, "-")}`;
+      const msg = bundle.getMessage(key);
+      expect(msg?.value, `missing Fluent key ${key}`).toBeTruthy();
+    }
+  });
+
+  it("interpolates the root and the count the rules send", () => {
+    const bundle = enBundle();
+    const msg = bundle.getMessage("health-advice-events-dropped");
+    const out = bundle.formatPattern(msg!.value!, { root: "C:\\", count: 3412 }, []);
+    // Fluent inserts directional isolate marks around placeables.
+    expect(out.replace(/[\u2068\u2069]/g, "")).toContain("3,412");
+    expect(out.replace(/[\u2068\u2069]/g, "")).toContain("C:\\");
+  });
+
+  it("has the panel's own chrome strings", () => {
+    const bundle = enBundle();
+    for (const key of [
+      "health-title",
+      "health-all-good",
+      "health-no-watched-roots",
+      "health-status-live",
+      "health-status-scan-only",
+      "health-fix-rebuild",
+      "health-extraction-untracked",
+      "menu-tools-index-health"
+    ]) {
+      expect(bundle.getMessage(key)?.value, `missing Fluent key ${key}`).toBeTruthy();
+    }
+  });
+});

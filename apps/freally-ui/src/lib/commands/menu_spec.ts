@@ -258,6 +258,7 @@ export const MENU_BAR: MenuRoot[] = [
         hint: "Index maintenance tools.",
         hintL10n: "menu-tools-index-maintenance-hint",
         children: [
+          { kind: "item", id: "tools.index_health", label: "Index Health…", l10n: "menu-tools-index-health" },
           { kind: "item", id: "tools.verify_index", label: "Verify Index…", l10n: "menu-tools-verify-index" },
           { kind: "item", id: "tools.compact_index", label: "Compact Index…", l10n: "menu-tools-compact-index" },
           { kind: "item", id: "tools.rebuild_index", label: "Force Rebuild Index…", l10n: "menu-tools-rebuild-index" }

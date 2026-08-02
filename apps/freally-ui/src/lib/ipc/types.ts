@@ -196,6 +196,54 @@ export interface IndexState {
   message: string;
 }
 
+// ---- index health (SRC-M13) ----
+
+export type AdvisoryId =
+  | "journal_stream_reset"
+  | "events_dropped"
+  | "not_monitoring"
+  | "high_lag"
+  | "queue_saturated";
+
+export type AdvisorySeverity = "info" | "warning" | "critical";
+
+export type AdvisoryFix = "none" | "rebuild_index";
+
+export interface HealthAdvisory {
+  id: AdvisoryId;
+  severity: AdvisorySeverity;
+  root?: string;
+  count: number;
+  fix: AdvisoryFix;
+}
+
+export interface VolumeHealth {
+  root: string;
+  label: string;
+  monitoring: boolean;
+  unavailable_reason?: string;
+  events_seen: number;
+  events_applied: number;
+  events_dropped: number;
+  events_coalesced: number;
+  /** Unix ms; 0 means never. */
+  last_event_ms: number;
+  last_drop_ms: number;
+  last_apply_ms: number;
+  last_lag_ms: number;
+  max_lag_ms: number;
+  queue_depth: number;
+  queue_capacity: number;
+  stream_reset: boolean;
+}
+
+export interface IndexHealth {
+  volumes: VolumeHealth[];
+  /** Absent when the daemon runs no eager-extraction worker. */
+  extraction_backlog?: number;
+  advisories: HealthAdvisory[];
+}
+
 // ---- bookmarks ----
 
 export interface Bookmark {

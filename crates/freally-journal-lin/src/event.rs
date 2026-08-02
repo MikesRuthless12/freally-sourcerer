@@ -62,6 +62,23 @@ impl JournalEvent {
     }
 }
 
+/// OS-agnostic snapshot of where a subscriber currently sits in its
+/// change stream. Mirrors `freally_journal_win::JournalPosition` so the
+/// daemon's watcher supervisor can detect a stream recreate / wrap without
+/// knowing the per-OS cursor type.
+///
+/// `generation` identifies the stream itself — a change means the OS threw
+/// away the old stream, so any events between the two are lost and the index
+/// needs a rebuild. `offset` is the monotonic position within that stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JournalPosition {
+    /// `stat.st_dev` of the watched root.
+    pub generation: u64,
+    /// Wall-clock nanoseconds of the last emitted event. Advisory only —
+    /// neither inotify nor fanotify has a resumable cursor.
+    pub offset: u64,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum JournalError {
     #[error("watch root must be an absolute, existing directory: {0}")]
