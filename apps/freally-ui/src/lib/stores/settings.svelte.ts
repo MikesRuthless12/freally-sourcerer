@@ -39,6 +39,7 @@ const FALLBACK: SettingsState = {
     match_whole_word: false,
     match_path: false,
     match_diacritics: false,
+    match_phonetic: false,
     enable_regex: false
   },
   on_top: "never",

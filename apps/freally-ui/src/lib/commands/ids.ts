@@ -78,6 +78,7 @@ export const COMMAND_IDS = [
   "search.match_whole_word",
   "search.match_path",
   "search.match_diacritics",
+  "search.match_phonetic",
   "search.enable_regex",
   "search.advanced",
   "search.within_results",

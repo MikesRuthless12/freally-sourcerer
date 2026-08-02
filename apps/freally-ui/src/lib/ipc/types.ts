@@ -238,6 +238,10 @@ export interface SearchOpts {
   match_whole_word: boolean;
   match_path: boolean;
   match_diacritics: boolean;
+  /** SRC-M12 — `wenjian` matches `文件`, romaji matches kana, lead
+   *  jamo matches Hangul. Off by default: it widens what a query can
+   *  hit, so it is opt-in like Match Diacritics beside it. */
+  match_phonetic: boolean;
   enable_regex: boolean;
 }
 

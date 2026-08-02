@@ -158,6 +158,16 @@ struct QueryRunParams {
     strict_everything: bool,
     #[serde(default)]
     per_lens_limits: Option<freally_rpc::PerLensLimits>,
+    /// SRC-M12 — let latin/jamo terms match CJK names phonetically.
+    ///
+    /// Only this match-mode flag crosses the wire. The other four
+    /// (case / whole-word / path / diacritics) are still UI-local and
+    /// never reached the executor, which uses `ExecOpts::default()`;
+    /// sending them now would silently change what existing queries
+    /// return. That gap is real but pre-dates Build 2 and is left
+    /// alone deliberately.
+    #[serde(default)]
+    match_phonetic: bool,
 }
 
 async fn query_run(
@@ -178,19 +188,9 @@ async fn query_run(
 
     let svc_for_task = svc.clone();
     let handle_for_task = handle.clone();
-    let strict = p.strict_everything;
-    let limits = p.per_lens_limits;
     tokio::spawn(async move {
-        let timings = run_query_streaming(
-            svc_for_task.clone(),
-            &handle_for_task,
-            p.source,
-            strict,
-            limits,
-            cancel,
-            sink,
-        )
-        .await;
+        let timings =
+            run_query_streaming(svc_for_task.clone(), &handle_for_task, p, cancel, sink).await;
         if let Some(entry) = svc_for_task.handles.lock().await.get_mut(&handle_for_task) {
             entry.timings = timings;
         }
@@ -226,12 +226,16 @@ async fn query_lens_timings(svc: &IndexdService, params: Value) -> Result<Value,
 async fn run_query_streaming(
     svc: Arc<IndexdService>,
     handle: &str,
-    source: String,
-    strict_everything: bool,
-    per_lens_limits: Option<freally_rpc::PerLensLimits>,
+    p: QueryRunParams,
     cancel: Arc<AtomicBool>,
     sink: NotificationSink,
 ) -> LensTimings {
+    let QueryRunParams {
+        source,
+        strict_everything,
+        per_lens_limits,
+        match_phonetic,
+    } = p;
     let started = std::time::Instant::now();
     let mut timings = LensTimings::default();
     let lenses = [
@@ -267,6 +271,7 @@ async fn run_query_streaming(
                     &svc.state,
                     query,
                     per_lens_limits.as_ref().map(|l| l.filename).unwrap_or(200),
+                    match_phonetic,
                 )
                 .await
             }
@@ -406,10 +411,15 @@ async fn filename_lens_hits(
     state: &DaemonState,
     query: &freally_query::Query,
     limit: u32,
+    match_phonetic: bool,
 ) -> (Vec<freally_rpc::QueryHit>, Vec<freally_rpc::HitGroup>) {
     let _ = handle;
     let opts = freally_query::ExecOpts {
         limit: limit as usize,
+        match_mode: freally_query::MatchMode {
+            match_phonetic,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let result = freally_query::execute(state.index.as_ref(), query, opts);

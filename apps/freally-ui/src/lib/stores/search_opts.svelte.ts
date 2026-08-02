@@ -10,6 +10,7 @@ export type SearchOptKey =
   | "match_whole_word"
   | "match_path"
   | "match_diacritics"
+  | "match_phonetic"
   | "enable_regex";
 
 class SearchOptsStore {
@@ -23,6 +24,7 @@ class SearchOptsStore {
       match_whole_word: false,
       match_path: false,
       match_diacritics: false,
+      match_phonetic: false,
       enable_regex: false
     };
     await settingsStore.patch({

@@ -851,3 +851,4 @@ settings-custom-commands-args = الوسائط
 settings-custom-commands-extensions = لهذه الامتدادات فقط
 settings-custom-commands-add = إضافة أمر
 did-you-mean-label = هل تقصد
+menu-search-match-phonetic = مطابقة صوتيات CJK

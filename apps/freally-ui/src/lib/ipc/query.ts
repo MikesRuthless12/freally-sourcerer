@@ -14,13 +14,18 @@ export function parse(source: string, opts: ParseOpts): Promise<ParseReport> {
 export interface RunOpts {
   strict_everything?: boolean;
   per_lens_limits?: { filename: number; content: number; audio: number; similarity: number };
+  /** SRC-M12 — match CJK names through their phonetic reading. The
+   *  only match-mode flag the daemon reads; the other four remain
+   *  UI-local, as they were before Build 2. */
+  match_phonetic?: boolean;
 }
 
 export function run(source: string, opts: RunOpts = {}): Promise<QueryRunHandle> {
   return call<QueryRunHandle>("query_run", {
     source,
     strict_everything: opts.strict_everything ?? false,
-    per_lens_limits: opts.per_lens_limits ?? null
+    per_lens_limits: opts.per_lens_limits ?? null,
+    match_phonetic: opts.match_phonetic ?? false
   });
 }
 
