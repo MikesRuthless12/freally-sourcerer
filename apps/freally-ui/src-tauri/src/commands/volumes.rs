@@ -7,6 +7,12 @@ pub fn volumes_list() -> Result<Vec<freally_rpc::VolumeInfo>, String> {
     daemon_call("volumes.list", serde_json::Value::Null)
 }
 
+/// SRC-M14 — every device Freally has indexed, attached or not.
+#[tauri::command]
+pub fn catalogs_list() -> Result<Vec<freally_rpc::CatalogInfo>, String> {
+    daemon_call("catalogs.list", serde_json::Value::Null)
+}
+
 #[tauri::command]
 pub fn volumes_update(update: freally_rpc::VolumeUpdate) -> Result<(), String> {
     daemon_call_void(

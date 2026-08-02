@@ -90,6 +90,25 @@ export interface QueryHit {
    *  used by ResultRow to render a folder icon. Optional for backward
    *  compat with older daemon responses. */
   attrs?: number;
+  /** SRC-M14. Volume id this row was indexed from. Absent for rows
+   *  indexed before M14 and for paths outside any known mount point. */
+  volume?: string;
+  /** Catalog display name for `volume`, when one is known. */
+  volume_label?: string;
+  /** True when the device this row came from is not currently attached —
+   *  what the "offline — Orange WD 4TB" badge keys off. */
+  volume_offline?: boolean;
+}
+
+/** SRC-M14 — one device Freally has indexed, attached or not. */
+export interface CatalogInfo {
+  id: string;
+  name: string;
+  mount_point: string;
+  fs_kind: string;
+  first_seen_ms: number;
+  last_seen_ms: number;
+  online: boolean;
 }
 
 export interface LensTimings {

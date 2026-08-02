@@ -226,6 +226,12 @@ pub enum ModifierKind {
     ChildCount { op: SizeOp, count: u64 },
     /// SRC-M08 `descendant-count:<10` — descendants at any depth.
     DescendantCount { op: SizeOp, count: u64 },
+    /// SRC-M14 `volume:orange` — the device a row was indexed from,
+    /// matched against a catalog's display name or its volume id. The
+    /// executor resolves the needle to volume ids through the daemon's
+    /// catalog registry before filtering, because the row carries the
+    /// id and the user types the name.
+    Volume(String),
     /// SRC-M07 `dupe:` / `name-dupe:` / `size-dupe:`. Set-shaped: a row
     /// only matches because *other* rows share its key, so the executor
     /// resolves it as a post-pass over the hydrated result set rather

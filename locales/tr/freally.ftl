@@ -881,3 +881,7 @@ health-advice-events-dropped = { $root } üzerinde { $count } değişiklik dizin
 health-advice-not-monitoring = { $root } üzerindeki değişiklikler izlenmiyor; sonuçlar yalnızca klasör yeniden tarandığında güncellenir.
 health-advice-high-lag = { $root } üzerindeki değişikliklerin sonuçlarda görünmesi { $count } ms’ye kadar sürüyor.
 health-advice-queue-saturated = { $root } için değişiklik kuyruğu neredeyse dolu ({ $count } bekliyor); değişiklikler düşürülmeye başlayabilir.
+
+# SRC-M14 — offline removable-volume catalogs
+results-offline-badge = çevrimdışı — { $name }
+results-offline-badge-title = Bu dosyanın bulunduğu sürücü bağlı değil. Kayıt, Freally'nin o aygıt için tuttuğu katalogdan geliyor.

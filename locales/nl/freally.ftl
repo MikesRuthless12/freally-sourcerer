@@ -881,3 +881,7 @@ health-advice-events-dropped = { $count } wijzigingen op { $root } kwamen snelle
 health-advice-not-monitoring = Wijzigingen op { $root } worden niet gevolgd; resultaten worden alleen bijgewerkt na een nieuwe scan.
 health-advice-high-lag = Wijzigingen op { $root } doen er tot { $count } ms over om in de resultaten te verschijnen.
 health-advice-queue-saturated = De wijzigingswachtrij voor { $root } is bijna vol ({ $count } wachtend); wijzigingen kunnen verloren gaan.
+
+# SRC-M14 — offline removable-volume catalogs
+results-offline-badge = offline — { $name }
+results-offline-badge-title = De schijf met dit bestand is niet aangesloten. Het item komt uit Freally's catalogus van dat apparaat.

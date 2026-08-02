@@ -881,3 +881,7 @@ health-advice-events-dropped = { $root } 上有 { $count } 个变更到达速度
 health-advice-not-monitoring = { $root } 上的变更未被跟踪，结果仅在重新扫描该文件夹时更新。
 health-advice-high-lag = { $root } 上的变更最多需要 { $count } 毫秒才会出现在结果中。
 health-advice-queue-saturated = { $root } 的变更队列接近占满（{ $count } 个等待），变更可能开始被丢弃。
+
+# SRC-M14 — offline removable-volume catalogs
+results-offline-badge = 离线 — { $name }
+results-offline-badge-title = 该文件所在的驱动器未连接。此条目来自 Freally 保存的该设备目录。

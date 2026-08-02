@@ -881,3 +881,7 @@ health-advice-events-dropped = { $count } thay đổi trên { $root } đến nha
 health-advice-not-monitoring = Các thay đổi trên { $root } không được theo dõi, nên kết quả chỉ cập nhật khi quét lại thư mục.
 health-advice-high-lag = Các thay đổi trên { $root } mất tới { $count } ms mới xuất hiện trong kết quả.
 health-advice-queue-saturated = Hàng đợi thay đổi của { $root } gần đầy ({ $count } đang chờ); các thay đổi có thể bắt đầu bị bỏ.
+
+# SRC-M14 — offline removable-volume catalogs
+results-offline-badge = ngoại tuyến — { $name }
+results-offline-badge-title = Ổ đĩa chứa tệp này chưa được kết nối. Mục này lấy từ danh mục mà Freally lưu cho thiết bị đó.

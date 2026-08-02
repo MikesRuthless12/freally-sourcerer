@@ -881,3 +881,7 @@ health-advice-events-dropped = { $root }의 변경 { $count }건이 색인 속�
 health-advice-not-monitoring = { $root }의 변경이 추적되지 않아 결과는 폴더를 다시 검사할 때만 갱신됩니다.
 health-advice-high-lag = { $root }의 변경이 결과에 나타나기까지 최대 { $count } ms가 걸립니다.
 health-advice-queue-saturated = { $root }의 변경 대기열이 거의 가득 찼습니다({ $count }건 대기). 변경이 누락되기 시작할 수 있습니다.
+
+# SRC-M14 — offline removable-volume catalogs
+results-offline-badge = 오프라인 — { $name }
+results-offline-badge-title = 이 파일이 있는 드라이브가 연결되어 있지 않습니다. 이 항목은 Freally가 보관 중인 해당 장치의 카탈로그에서 나온 것입니다.

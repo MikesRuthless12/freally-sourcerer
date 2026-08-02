@@ -28,6 +28,7 @@ use freally_rpc::{ExcludeRules, RescanSchedule, WatchedFolder};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+use crate::catalogs::CatalogRegistry;
 use crate::watcher::WatcherSupervisor;
 
 #[derive(Debug, Clone, Default)]
@@ -50,6 +51,8 @@ pub struct DaemonState {
     pub excludes: RwLock<ExcludeRules>,
     pub network: RwLock<NetworkState>,
     pub history: RwLock<HistoryConfig>,
+    /// SRC-M14 — every device we have indexed, attached or not.
+    pub catalogs: RwLock<CatalogRegistry>,
     pub config_dir: PathBuf,
 }
 
@@ -164,6 +167,7 @@ impl DaemonState {
         let excludes = load_or_default::<ExcludeRules>(&config_dir.join("excludes.json"));
         let network = load_or_default::<NetworkState>(&config_dir.join("network.json"));
         let history = load_or_default::<HistoryConfig>(&config_dir.join("history.json"));
+        let catalogs = load_or_default::<CatalogRegistry>(&config_dir.join("catalogs.json"));
         Ok(Arc::new(Self {
             watchers: WatcherSupervisor::new(index.clone()),
             index,
@@ -175,8 +179,39 @@ impl DaemonState {
             excludes: RwLock::new(excludes),
             network: RwLock::new(network),
             history: RwLock::new(history),
+            catalogs: RwLock::new(catalogs),
             config_dir,
         }))
+    }
+
+    /// SRC-M14. Refresh the catalog registry from the mounted volumes
+    /// and install the mount-point table the index stamps rows with.
+    /// Idempotent; call at boot and whenever volumes may have changed.
+    pub async fn reconcile_catalogs(&self) {
+        let detected = crate::volumes::detect();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let went_offline = self.catalogs.write().await.reconcile(&detected, now);
+        for id in &went_offline {
+            // Rows stay in the index — that is the whole point of a
+            // catalog. Only the badge changes.
+            tracing::info!(volume = %id, "volume detached; retained as an offline catalog");
+        }
+
+        self.index.set_volume_map(freally_index::VolumeMap::new(
+            detected
+                .iter()
+                .map(|v| (PathBuf::from(&v.mount_point), v.id.clone())),
+        ));
+
+        if !went_offline.is_empty() {
+            if let Err(e) = self.persist().await {
+                tracing::warn!(error = %e, "persisting catalogs failed");
+            }
+        }
     }
 
     /// Bring the live watchers in line with the current watched-folder
@@ -212,6 +247,10 @@ impl DaemonState {
         write_json(
             &self.config_dir.join("history.json"),
             &*self.history.read().await,
+        )?;
+        write_json(
+            &self.config_dir.join("catalogs.json"),
+            &*self.catalogs.read().await,
         )?;
         Ok(())
     }

@@ -1,8 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { VolumeInfo, VolumeUpdate } from "./types";
+import type { CatalogInfo, VolumeInfo, VolumeUpdate } from "./types";
 
 export async function list(): Promise<VolumeInfo[]> {
   return invoke<VolumeInfo[]>("volumes_list");
+}
+
+/** SRC-M14 — every device indexed, including unplugged ones. */
+export async function catalogs(): Promise<CatalogInfo[]> {
+  return invoke<CatalogInfo[]>("catalogs_list");
 }
 
 export async function update(payload: VolumeUpdate): Promise<void> {

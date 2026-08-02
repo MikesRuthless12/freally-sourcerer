@@ -177,6 +177,9 @@ fn needs_hydration(node: &QueryNode) -> bool {
             | ModifierKind::ChildCount { .. }
             | ModifierKind::DescendantCount { .. }
             | ModifierKind::Dupe(_) => true,
+            // SRC-M14: the volume id lives on the SQLite row, not in
+            // the name buffer.
+            ModifierKind::Volume(_) => true,
             ModifierKind::Reserved { .. } => true,
         },
         // Quick filter shortcuts to `ext:` so it doesn't need full
@@ -270,6 +273,27 @@ pub fn execute_with_audio(
     q: &Query,
     opts: ExecOpts,
 ) -> Result<ResultSet, QueryError> {
+    execute_with_catalogs(idx, similarity, audio, None, q, opts)
+}
+
+/// SRC-M14 entry point. Adds the catalog registry so `volume:` can be
+/// written the way a person thinks about a drive — `volume:orange` for
+/// "Orange WD 4TB" — instead of only as the internal volume id.
+///
+/// Without a registry the modifier still works, matching the needle
+/// against the row's volume id directly; that is the shape the CLI and
+/// the test harnesses use.
+pub fn execute_with_catalogs(
+    idx: &Index,
+    similarity: Option<&SimilarityIndex>,
+    audio: Option<&dyn AudioAttributesProvider>,
+    catalogs: Option<&dyn VolumeCatalogs>,
+    q: &Query,
+    opts: ExecOpts,
+) -> Result<ResultSet, QueryError> {
+    // Resolved once per query, not per row: a needle maps to the same
+    // handful of volume ids for every candidate.
+    let volumes = resolve_volume_needles(q.root(), catalogs);
     validate_supported(q)?;
     // Phase 10: optimize the AST before planning so the executor's
     // AND iter().all() short-circuit picks up the cheap predicates
@@ -282,7 +306,7 @@ pub fn execute_with_audio(
         return Err(QueryError::AudioProviderUnavailable);
     }
     if let Some(needle) = top_level_similar(q.root()) {
-        return execute_similar(idx, similarity, audio, q, &opts, needle);
+        return execute_similar(idx, similarity, audio, q, &opts, needle, &volumes);
     }
     if has_similar_anywhere(q.root()) {
         // Phase 6 only routes Similar in the root or as a direct child
@@ -402,6 +426,7 @@ pub fn execute_with_audio(
             audio,
             needs_audio,
             &dirs,
+            &volumes,
         )?;
     }
 
@@ -692,6 +717,55 @@ fn split_phonetic(key: &[u8]) -> (&[u8], Option<&[u8]>) {
     }
 }
 
+/// SRC-M14. Supplies the executor with the volume ids a user-typed
+/// `volume:` needle refers to. Implemented by `freally-indexd` over its
+/// catalog registry; the executor never learns what a catalog is.
+pub trait VolumeCatalogs {
+    /// Volume ids whose catalog name or id matches `needle`. An empty
+    /// result means "no catalog matches", which is a query that
+    /// legitimately returns nothing.
+    fn resolve(&self, needle: &str) -> Vec<String>;
+}
+
+/// Every `volume:` needle in a query, mapped to the volume ids it
+/// resolved to. Absent from the map means no registry was available and
+/// the predicate falls back to matching the row's volume id directly.
+type VolumeNeedles = std::collections::HashMap<String, std::collections::HashSet<String>>;
+
+/// Walk the AST once and pre-resolve each distinct `volume:` needle.
+fn resolve_volume_needles(
+    root: &QueryNode,
+    catalogs: Option<&dyn VolumeCatalogs>,
+) -> VolumeNeedles {
+    let mut out = VolumeNeedles::new();
+    let Some(catalogs) = catalogs else {
+        return out;
+    };
+    fn walk(node: &QueryNode, out: &mut Vec<String>) {
+        match node {
+            QueryNode::Modifier(m) => {
+                if let ModifierKind::Volume(needle) = &m.kind {
+                    out.push(needle.clone());
+                }
+            }
+            QueryNode::Not(inner) | QueryNode::Lens { inner, .. } => walk(inner, out),
+            QueryNode::And(parts) | QueryNode::Or(parts) => {
+                for p in parts {
+                    walk(p, out);
+                }
+            }
+            QueryNode::Text(_) | QueryNode::QuickFilter(_) | QueryNode::True => {}
+        }
+    }
+    let mut needles = Vec::new();
+    walk(root, &mut needles);
+    for n in needles {
+        out.entry(n.clone())
+            .or_insert_with(|| catalogs.resolve(&n).into_iter().collect());
+    }
+    out
+}
+
 /// Apply the post-hydration predicate filter, including (when
 /// `needs_audio` is true) per-row audio-attribute lookups.
 fn filter_with_audio(
@@ -701,6 +775,7 @@ fn filter_with_audio(
     audio: Option<&dyn AudioAttributesProvider>,
     needs_audio: bool,
     dirs: &DirStats,
+    volumes: &VolumeNeedles,
 ) -> Result<Vec<FileRow>, QueryError> {
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
@@ -728,6 +803,7 @@ fn filter_with_audio(
             path_lower: path_lower.as_deref(),
             audio: attrs.as_ref(),
             dirs,
+            volumes,
             phonetic: phonetic.as_deref(),
         };
         if eval_full(root, &r, &ctx) {
@@ -757,6 +833,8 @@ struct EvalCtx<'a> {
     /// text predicate against a name the reading matched and throw the
     /// row away again.
     phonetic: Option<&'a str>,
+    /// SRC-M14 `volume:` needles already resolved to volume ids.
+    volumes: &'a VolumeNeedles,
 }
 
 /// Can this subtree be decided from the name buffer alone?
@@ -876,6 +954,22 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow, ctx: &EvalCtx<'_>) -> bool 
         ModifierKind::Path(needle) => {
             let p = row.path.to_string_lossy().to_lowercase();
             p.contains(&needle.to_lowercase())
+        }
+        // SRC-M14. A row with no volume can never belong to a catalog,
+        // so it never matches — including rows indexed before M14,
+        // whose volume is empty. Those need a rescan to become
+        // filterable, which is exactly what an empty badge tells the
+        // user.
+        ModifierKind::Volume(needle) => {
+            if row.volume.is_empty() {
+                return false;
+            }
+            match ctx.volumes.get(needle) {
+                Some(ids) => ids.contains(&row.volume),
+                // No catalog registry wired in (CLI, tests): match the
+                // volume id directly so `volume:win-d` still works.
+                None => row.volume.to_lowercase().contains(&needle.to_lowercase()),
+            }
         }
         ModifierKind::Parent(needle) => row
             .path
@@ -1258,6 +1352,7 @@ fn execute_similar(
     q: &Query,
     opts: &ExecOpts,
     needle: &str,
+    volumes: &VolumeNeedles,
 ) -> Result<ResultSet, QueryError> {
     let sim = similarity.ok_or(QueryError::SimilarityIndexUnavailable)?;
     let cap = if opts.candidate_cap == 0 {
@@ -1314,6 +1409,7 @@ fn execute_similar(
             audio: attrs.as_ref(),
             dirs: &dirs,
             phonetic: phonetic.as_deref(),
+            volumes,
         };
         if similarity_row_matches(q.root(), &r, &ctx) {
             filtered.push(r);

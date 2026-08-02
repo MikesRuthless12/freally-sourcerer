@@ -108,6 +108,7 @@ impl Service for IndexdService {
                 "extractors.list" => extractors_list(&self).await,
                 "extractors.set_mode" => extractors_set_mode(&self, params).await,
                 "volumes.list" => volumes_list(&self).await,
+                "catalogs.list" => catalogs_list(&self).await,
                 "volumes.update" => volumes_update(&self, params).await,
                 "volumes.recreate_journal" => volumes_recreate_journal(&self, params).await,
                 "volumes.reset_stream" => volumes_reset_stream(&self, params).await,
@@ -423,7 +424,17 @@ async fn filename_lens_hits(
         },
         ..Default::default()
     };
-    let result = freally_query::execute(state.index.as_ref(), query, opts);
+    // SRC-M14: snapshot the registry once so `volume:` can be typed as a
+    // catalog name, and so every hit can carry its own badge.
+    let catalogs = state.catalogs.read().await.clone();
+    let result = freally_query::execute_with_catalogs(
+        state.index.as_ref(),
+        None,
+        None,
+        Some(&catalogs),
+        query,
+        opts,
+    );
     let (rows, groups) = match result {
         Ok(rs) => {
             // SRC-M07: read the clusters before `collect()` consumes
@@ -444,26 +455,35 @@ async fn filename_lens_hits(
     };
     let hits = rows
         .into_iter()
-        .map(|row| freally_rpc::QueryHit {
-            file_id: row.file_id.to_string(),
-            lens: LensId::Filename,
-            name: row.name,
-            path: row.path.to_string_lossy().into_owned(),
-            ext: row.ext.clone().unwrap_or_default(),
-            size: row.size,
-            // `row.mtime_ns` is signed; if a journal record carried a
-            // zero/unset FILETIME (some MFT bootstrap entries do), the
-            // stored value is a large negative i64. Casting that to u64
-            // directly wraps to ~1.8e19, which overflows JS's max Date
-            // (8.64e15) and renders as `NaN-NaN-NaN`. Clamp to 0 so the
-            // UI shows 1970-01-01 — surfaced through `formatDateMs`'s
-            // em-dash for "unknown timestamp" once the UI guards land.
-            modified_ms: (row.mtime_ns.max(0) / 1_000_000) as u64,
-            kind: row.ext.unwrap_or_else(|| "file".into()).to_uppercase(),
-            score: 1.0,
-            // Pass the FILE_ATTRIBUTE_* bitmask through to the UI so it
-            // can render folder icons (0x10 = FILE_ATTRIBUTE_DIRECTORY).
-            attrs: row.attrs as u32,
+        .map(|row| {
+            let (volume_label, volume_offline) = match catalogs.badge(&row.volume) {
+                Some((name, offline)) => (Some(name.to_string()), offline),
+                None => (None, false),
+            };
+            freally_rpc::QueryHit {
+                file_id: row.file_id.to_string(),
+                lens: LensId::Filename,
+                name: row.name,
+                path: row.path.to_string_lossy().into_owned(),
+                ext: row.ext.clone().unwrap_or_default(),
+                size: row.size,
+                // `row.mtime_ns` is signed; if a journal record carried a
+                // zero/unset FILETIME (some MFT bootstrap entries do), the
+                // stored value is a large negative i64. Casting that to u64
+                // directly wraps to ~1.8e19, which overflows JS's max Date
+                // (8.64e15) and renders as `NaN-NaN-NaN`. Clamp to 0 so the
+                // UI shows 1970-01-01 — surfaced through `formatDateMs`'s
+                // em-dash for "unknown timestamp" once the UI guards land.
+                modified_ms: (row.mtime_ns.max(0) / 1_000_000) as u64,
+                kind: row.ext.unwrap_or_else(|| "file".into()).to_uppercase(),
+                score: 1.0,
+                // Pass the FILE_ATTRIBUTE_* bitmask through to the UI so it
+                // can render folder icons (0x10 = FILE_ATTRIBUTE_DIRECTORY).
+                attrs: row.attrs as u32,
+                volume: row.volume,
+                volume_label,
+                volume_offline,
+            }
         })
         .collect();
     (hits, groups)
@@ -603,7 +623,18 @@ async fn extractors_set_mode(svc: &IndexdService, params: Value) -> Result<Value
 
 // ---------- volumes ----------
 
+/// SRC-M14 — every device we have indexed, attached or not. Reconciles
+/// first so a drive plugged in since the last call shows as online.
+async fn catalogs_list(svc: &IndexdService) -> Result<Value, RpcError> {
+    svc.state.reconcile_catalogs().await;
+    let dto = svc.state.catalogs.read().await.to_dto();
+    Ok(serde_json::to_value(dto)?)
+}
+
 async fn volumes_list(svc: &IndexdService) -> Result<Value, RpcError> {
+    // The UI polls this whenever the volumes panel is open, which makes
+    // it the natural place to notice a drive being plugged or unplugged.
+    svc.state.reconcile_catalogs().await;
     let cfg = svc.state.volumes.read().await.clone();
     let detected = crate::volumes::detect();
     let with_overrides: Vec<VolumeInfo> = detected

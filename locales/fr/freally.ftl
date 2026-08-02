@@ -881,3 +881,7 @@ health-advice-events-dropped = { $count } changements sur { $root } sont arrivé
 health-advice-not-monitoring = Les changements sur { $root } ne sont pas suivis : les résultats ne se mettent à jour qu’après une nouvelle analyse.
 health-advice-high-lag = Les changements sur { $root } mettent jusqu’à { $count } ms à apparaître dans les résultats.
 health-advice-queue-saturated = La file de changements de { $root } est presque pleine ({ $count } en attente) ; des changements risquent d’être perdus.
+
+# SRC-M14 — offline removable-volume catalogs
+results-offline-badge = hors ligne — { $name }
+results-offline-badge-title = Le disque contenant ce fichier n’est pas connecté. L’entrée provient du catalogue que Freally conserve de cet appareil.

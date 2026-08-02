@@ -881,3 +881,7 @@ health-advice-events-dropped = { $count } изменений на { $root } по
 health-advice-not-monitoring = Изменения на { $root } не отслеживаются, поэтому результаты обновляются только при повторном сканировании.
 health-advice-high-lag = Изменения на { $root } появляются в результатах с задержкой до { $count } мс.
 health-advice-queue-saturated = Очередь изменений для { $root } почти заполнена ({ $count } в ожидании); изменения могут начать теряться.
+
+# SRC-M14 — offline removable-volume catalogs
+results-offline-badge = не подключён — { $name }
+results-offline-badge-title = Диск с этим файлом не подключён. Запись взята из каталога этого устройства, сохранённого Freally.

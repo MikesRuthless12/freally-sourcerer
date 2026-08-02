@@ -35,6 +35,19 @@ pub struct QueryHit {
     /// fixtures readable without re-serialization.
     #[serde(default)]
     pub attrs: u32,
+    /// SRC-M14. Volume id this row was indexed from. Empty for rows
+    /// written before M14, and for paths outside any known mount point.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub volume: String,
+    /// Catalog display name for `volume`, when one is known. Sent with
+    /// the hit rather than looked up client-side so a result row can
+    /// render its own badge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_label: Option<String>,
+    /// True when the device this row came from is not currently
+    /// attached — what the "offline — Orange WD 4TB" badge keys off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub volume_offline: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -148,6 +161,21 @@ pub struct IndexState {
     pub files_indexed: u64,
     pub files_total: u64,
     pub message: String,
+}
+
+/// SRC-M14 — one device Freally has indexed, attached or not.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogInfo {
+    /// Volume id stamped onto this device's rows; what `volume:` matches.
+    pub id: String,
+    pub name: String,
+    /// Where it was mounted when last seen — display only, since a
+    /// removable device can return on a different mount point.
+    pub mount_point: String,
+    pub fs_kind: String,
+    pub first_seen_ms: u64,
+    pub last_seen_ms: u64,
+    pub online: bool,
 }
 
 /// SRC-M13 — everything the Index Health panel renders.

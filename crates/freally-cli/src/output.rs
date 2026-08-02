@@ -345,6 +345,9 @@ mod tests {
             kind: "Text".into(),
             score: 1.0,
             attrs: 32,
+            volume: String::new(),
+            volume_label: None,
+            volume_offline: false,
         }
     }
 

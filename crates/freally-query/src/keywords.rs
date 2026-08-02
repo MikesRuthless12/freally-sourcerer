@@ -42,6 +42,7 @@ pub const MODIFIER_KEYS: &[&str] = &[
     "similar",
     "size",
     "size-dupe",
+    "volume",
 ];
 
 /// Quick-filter aliases, usable bare (`audio:`) or as a lens prefix.
