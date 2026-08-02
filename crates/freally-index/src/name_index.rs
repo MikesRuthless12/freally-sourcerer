@@ -126,13 +126,23 @@ impl NameIndex {
         Ok(())
     }
 
+    /// Index `name_lower` under `file_id`.
+    ///
+    /// SRC-M12: a CJK name is stored as `name` + [`PHONETIC_SEP`] +
+    /// its phonetic readings, so the trigram postings cover `wenjian`
+    /// as well as `文件`. Augmenting here rather than at each of the
+    /// five call sites keeps one place where the stored key is decided.
+    /// Readers split the key with
+    /// [`phonetic::plain_name`](crate::phonetic::plain_name); latin
+    /// names are stored byte-for-byte as before.
     pub fn upsert(&self, file_id: u64, name_lower: &str) -> Result<(), IndexError> {
+        let key = crate::phonetic::with_phonetic_keys(name_lower);
         let mut inner = self.inner.write();
         if let Some(&existing_row) = inner.by_file_id.get(&file_id) {
             Self::tombstone_row_locked(&mut inner, existing_row);
         }
         let start = inner.heap.len();
-        let bytes = name_lower.as_bytes();
+        let bytes = key.as_bytes();
         if bytes.len() > u32::MAX as usize {
             return Err(IndexError::NameIndex("filename exceeds 4 GiB".into()));
         }

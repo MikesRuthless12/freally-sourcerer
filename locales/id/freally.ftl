@@ -851,3 +851,4 @@ settings-custom-commands-args = Argumen
 settings-custom-commands-extensions = Hanya untuk ekstensi
 settings-custom-commands-add = Tambah perintah
 did-you-mean-label = Apakah maksud Anda
+menu-search-match-phonetic = Cocokkan fonetik CJK

@@ -851,3 +851,4 @@ settings-custom-commands-args = Argumente
 settings-custom-commands-extensions = Nur für Erweiterungen
 settings-custom-commands-add = Befehl hinzufügen
 did-you-mean-label = Meinten Sie
+menu-search-match-phonetic = CJK-Phonetik abgleichen

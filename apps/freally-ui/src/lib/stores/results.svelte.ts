@@ -148,7 +148,8 @@ class ResultsStore {
     try {
       ({ handle } = await ipcQuery.run(composed, {
         strict_everything: settingsStore.state.strict_everything_mode,
-        per_lens_limits: settingsStore.state.default_lens_result_limits
+        per_lens_limits: settingsStore.state.default_lens_result_limits,
+        match_phonetic: settingsStore.state.search_opts?.match_phonetic ?? false
       }));
     } catch (e) {
       console.warn("[results] run failed:", e);

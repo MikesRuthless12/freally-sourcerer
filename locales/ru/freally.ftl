@@ -851,3 +851,4 @@ settings-custom-commands-args = Аргументы
 settings-custom-commands-extensions = Только для расширений
 settings-custom-commands-add = Добавить команду
 did-you-mean-label = Возможно, вы имели в виду
+menu-search-match-phonetic = Сопоставлять фонетику CJK

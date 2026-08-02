@@ -351,21 +351,26 @@ pub fn execute_with_audio(
 
     if use_seed {
         idx.name_index()
-            .for_each_candidate_named(&plan.seed, cap, |fid, name| {
+            .for_each_candidate_named(&plan.seed, cap, |fid, key| {
                 stats.candidates += 1;
-                if skip_name_filter || evaluator.matches(name) {
+                // The stored key may carry SRC-M12 readings; only the
+                // name half is the row's identity, so that is what
+                // sorting and hydration see.
+                let (name, phonetic) = split_phonetic(key);
+                if skip_name_filter || evaluator.matches(name, phonetic) {
                     survivors_ids.push(fid);
                     survivors_names.push(String::from_utf8_lossy(name).into_owned());
                 }
             });
     } else {
         let mut emitted = 0usize;
-        idx.name_index().for_each_live(|fid, name| {
+        idx.name_index().for_each_live(|fid, key| {
             stats.candidates += 1;
             if emitted >= cap {
                 return false;
             }
-            if skip_name_filter || evaluator.matches(name) {
+            let (name, phonetic) = split_phonetic(key);
+            if skip_name_filter || evaluator.matches(name, phonetic) {
                 survivors_ids.push(fid);
                 survivors_names.push(String::from_utf8_lossy(name).into_owned());
                 emitted += 1;
@@ -665,8 +670,25 @@ impl<'a> NameEvaluator<'a> {
     /// Name-side eval. The bytes are the lowercased filename from the
     /// name index. Modifiers that need SQLite return true (the full
     /// pass filters them out later).
-    fn matches(&self, name_lower: &[u8]) -> bool {
-        eval_name(self.root, name_lower, &self.opts.match_mode)
+    ///
+    /// `phonetic` carries SRC-M12's readings for a CJK name. Only text
+    /// predicates consult it — `ext:` and the quick filters read the
+    /// name alone, because `文件.txt`'s reading has no extension and
+    /// matching one against it would be nonsense.
+    fn matches(&self, name_lower: &[u8], phonetic: Option<&[u8]>) -> bool {
+        eval_name(self.root, name_lower, phonetic, &self.opts.match_mode)
+    }
+}
+
+/// Split a stored name-index key into `(name, phonetic)`.
+///
+/// SRC-M12 stores CJK names as `name` + separator + readings; every
+/// other name is returned unchanged with `None`.
+fn split_phonetic(key: &[u8]) -> (&[u8], Option<&[u8]>) {
+    const SEP: u8 = freally_index::phonetic::PHONETIC_SEP as u8;
+    match key.iter().position(|&b| b == SEP) {
+        Some(i) => (&key[..i], Some(&key[i + 1..])),
+        None => (key, None),
     }
 }
 
@@ -696,11 +718,17 @@ fn filter_with_audio(
         } else {
             None
         };
+        let phonetic = if mm.match_phonetic {
+            freally_index::phonetic::phonetic_keys(&r.name_lower)
+        } else {
+            None
+        };
         let ctx = EvalCtx {
             mm,
             path_lower: path_lower.as_deref(),
             audio: attrs.as_ref(),
             dirs,
+            phonetic: phonetic.as_deref(),
         };
         if eval_full(root, &r, &ctx) {
             out.push(r);
@@ -720,6 +748,15 @@ struct EvalCtx<'a> {
     path_lower: Option<&'a str>,
     audio: Option<&'a AudioAttributes>,
     dirs: &'a DirStats,
+    /// SRC-M12 readings for the row's name, when the toggle is on and
+    /// the name holds CJK.
+    ///
+    /// Derived per row here rather than read from the name index: this
+    /// pass works from hydrated SQLite records, whose `name_lower` is
+    /// the bare name. Without it the hydrated pass would re-test the
+    /// text predicate against a name the reading matched and throw the
+    /// row away again.
+    phonetic: Option<&'a str>,
 }
 
 /// Can this subtree be decided from the name buffer alone?
@@ -739,19 +776,30 @@ fn name_decidable(node: &QueryNode) -> bool {
     }
 }
 
-fn eval_name(node: &QueryNode, name_lower: &[u8], mm: &MatchMode) -> bool {
+fn eval_name(node: &QueryNode, name_lower: &[u8], phonetic: Option<&[u8]>, mm: &MatchMode) -> bool {
+    // SRC-M12: a text predicate matches if either the name or its
+    // phonetic reading satisfies it. Gated on the toggle, so with the
+    // setting off the readings sitting in the index are inert and
+    // matching is byte-identical to pre-Build-2.
+    let phon =
+        |mm: &MatchMode| -> Option<&[u8]> { if mm.match_phonetic { phonetic } else { None } };
     match node {
         QueryNode::True => true,
-        QueryNode::Text(p) => match_text(p, name_lower, mm),
+        QueryNode::Text(p) => {
+            match_text(p, name_lower, mm) || phon(mm).is_some_and(|ph| match_text(p, ph, mm))
+        }
         // A negation we cannot decide here must not reject the row —
         // `!size:>1mb`, `!empty:folder`, `NOT lufs:<-14` all need the
         // hydrated pass to answer.
         QueryNode::Not(inner) if !name_decidable(inner) => true,
-        QueryNode::Not(inner) => !eval_name(inner, name_lower, mm),
-        QueryNode::And(parts) => parts.iter().all(|p| eval_name(p, name_lower, mm)),
-        QueryNode::Or(parts) => parts.iter().any(|p| eval_name(p, name_lower, mm)),
+        QueryNode::Not(inner) => !eval_name(inner, name_lower, phonetic, mm),
+        QueryNode::And(parts) => parts.iter().all(|p| eval_name(p, name_lower, phonetic, mm)),
+        QueryNode::Or(parts) => parts.iter().any(|p| eval_name(p, name_lower, phonetic, mm)),
         QueryNode::Modifier(m) => match &m.kind {
-            ModifierKind::Child(needle) => substring_match(name_lower, needle, mm),
+            ModifierKind::Child(needle) => {
+                substring_match(name_lower, needle, mm)
+                    || phon(mm).is_some_and(|ph| substring_match(ph, needle, mm))
+            }
             // Modifiers we can pre-filter by extension/name from the
             // lowercase name buffer. They still re-evaluate at the
             // full-record stage when hydration reads the canonical
@@ -762,7 +810,7 @@ fn eval_name(node: &QueryNode, name_lower: &[u8], mm: &MatchMode) -> bool {
             _ => true,
         },
         QueryNode::QuickFilter(qf) => name_has_any_ext(name_lower, qf.extensions()),
-        QueryNode::Lens { inner, .. } => eval_name(inner, name_lower, mm),
+        QueryNode::Lens { inner, .. } => eval_name(inner, name_lower, phonetic, mm),
     }
 }
 
@@ -772,6 +820,9 @@ fn eval_full(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
         QueryNode::Text(p) => {
             let target = ctx.path_lower.unwrap_or(row.name_lower.as_str());
             match_text(p, target.as_bytes(), ctx.mm)
+                || ctx
+                    .phonetic
+                    .is_some_and(|ph| match_text(p, ph.as_bytes(), ctx.mm))
         }
         QueryNode::Not(inner) => !eval_full(inner, row, ctx),
         QueryNode::And(parts) => parts.iter().all(|p| eval_full(p, row, ctx)),
@@ -1252,11 +1303,17 @@ fn execute_similar(
         } else {
             None
         };
+        let phonetic = if opts.match_mode.match_phonetic {
+            freally_index::phonetic::phonetic_keys(&r.name_lower)
+        } else {
+            None
+        };
         let ctx = EvalCtx {
             mm: &opts.match_mode,
             path_lower: path_lower.as_deref(),
             audio: attrs.as_ref(),
             dirs: &dirs,
+            phonetic: phonetic.as_deref(),
         };
         if similarity_row_matches(q.root(), &r, &ctx) {
             filtered.push(r);

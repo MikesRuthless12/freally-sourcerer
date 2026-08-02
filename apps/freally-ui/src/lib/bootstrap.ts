@@ -489,6 +489,7 @@ function registerHandlers() {
     "search.match_whole_word": "match_whole_word",
     "search.match_path": "match_path",
     "search.match_diacritics": "match_diacritics",
+    "search.match_phonetic": "match_phonetic",
     "search.enable_regex": "enable_regex"
   };
   for (const [id, key] of Object.entries(searchToggleIds)) {

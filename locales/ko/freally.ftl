@@ -851,3 +851,4 @@ settings-custom-commands-args = 인수
 settings-custom-commands-extensions = 다음 확장자에만
 settings-custom-commands-add = 명령 추가
 did-you-mean-label = 다음을 찾으셨나요
+menu-search-match-phonetic = CJK 발음 일치

@@ -9,6 +9,14 @@ pub struct MatchMode {
     pub whole_word: bool,
     pub match_path: bool,
     pub match_diacritics: bool,
+    /// SRC-M12 — let a latin (or jamo) term match a CJK name through
+    /// its phonetic reading, so `wenjian` finds `文件`.
+    ///
+    /// Opt-in, and off by default, because it widens what a query can
+    /// hit: with it on, `ni` matches every name containing `に`. The
+    /// keys are indexed either way, so toggling this takes effect on
+    /// the next query rather than requiring a reindex.
+    pub match_phonetic: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

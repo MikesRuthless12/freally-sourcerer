@@ -212,6 +212,7 @@ export const MENU_BAR: MenuRoot[] = [
       { kind: "item", id: "search.match_whole_word", label: "Match Whole Word", l10n: "menu-search-match-whole-word", accelerator: "Ctrl+B", checkable: true },
       { kind: "item", id: "search.match_path", label: "Match Path", l10n: "menu-search-match-path", accelerator: "Ctrl+U", checkable: true },
       { kind: "item", id: "search.match_diacritics", label: "Match Diacritics", l10n: "menu-search-match-diacritics", accelerator: "Ctrl+M", checkable: true },
+      { kind: "item", id: "search.match_phonetic", label: "Match CJK Phonetics", l10n: "menu-search-match-phonetic", checkable: true },
       { kind: "item", id: "search.enable_regex", label: "Enable Regex", l10n: "menu-search-enable-regex", accelerator: "Ctrl+R", checkable: true },
       { kind: "item", id: "search.advanced", label: "Advanced Search…", l10n: "menu-search-advanced" },
       { kind: "item", id: "search.within_results", label: "Search Within Results", l10n: "menu-search-within-results", accelerator: "Ctrl+Shift+F" },

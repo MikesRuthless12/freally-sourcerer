@@ -27,6 +27,7 @@ pub mod error;
 pub mod location;
 pub mod manifest;
 pub mod name_index;
+pub mod phonetic;
 pub mod pipeline;
 pub mod schema;
 pub mod store;

@@ -851,3 +851,4 @@ settings-custom-commands-args = 引数
 settings-custom-commands-extensions = 対象の拡張子
 settings-custom-commands-add = コマンドを追加
 did-you-mean-label = もしかして
+menu-search-match-phonetic = CJK 読みで一致

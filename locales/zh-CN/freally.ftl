@@ -851,3 +851,4 @@ settings-custom-commands-args = 参数
 settings-custom-commands-extensions = 仅用于扩展名
 settings-custom-commands-add = 添加命令
 did-you-mean-label = 您是否要找
+menu-search-match-phonetic = 匹配中日韩拼音
