@@ -17,6 +17,7 @@
 //! (`main.rs`) is a thin shim that parses CLI flags and dispatches.
 
 pub mod bookmarks;
+pub mod catalogs;
 pub mod health;
 pub mod history;
 pub mod scanner;
@@ -48,6 +49,9 @@ pub async fn spawn_default(state: Arc<DaemonState>) -> Result<JoinHandle<()>> {
 /// Spawn the RPC server at a caller-chosen socket / pipe. Used by smoke
 /// tests to bind to a temp path.
 pub async fn spawn_at(state: Arc<DaemonState>, socket: SocketPath) -> Result<JoinHandle<()>> {
+    // SRC-M14: catalogs first, so the index has a mount-point table
+    // before any scan the watchers kick off starts stamping rows.
+    state.reconcile_catalogs().await;
     // Live change journaling for whatever was already being watched when
     // the daemon last shut down. Without this the index would only move
     // when something explicitly triggered a scan.

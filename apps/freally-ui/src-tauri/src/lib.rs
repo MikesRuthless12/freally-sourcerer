@@ -200,6 +200,7 @@ pub fn run() {
             // Phase 12 daemon-routed Settings → Indexes panels.
             commands::volumes::volumes_list,
             commands::volumes::volumes_update,
+            commands::volumes::catalogs_list,
             commands::volumes::volumes_recreate_journal,
             commands::volumes::volumes_reset_stream,
             commands::volumes::volumes_upgrade_fanotify,

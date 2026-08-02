@@ -881,3 +881,7 @@ health-advice-events-dropped = { $root } の変更 { $count } 件がインデッ
 health-advice-not-monitoring = { $root } の変更は追跡されていないため、結果はフォルダーを再スキャンしたときにのみ更新されます。
 health-advice-high-lag = { $root } の変更が結果に現れるまで最大 { $count } ms かかっています。
 health-advice-queue-saturated = { $root } の変更キューがほぼ満杯です（{ $count } 件待機）。変更が破棄され始める可能性があります。
+
+# SRC-M14 — offline removable-volume catalogs
+results-offline-badge = オフライン — { $name }
+results-offline-badge-title = このファイルがあるドライブは接続されていません。この項目は Freally が保持しているそのデバイスのカタログによるものです。

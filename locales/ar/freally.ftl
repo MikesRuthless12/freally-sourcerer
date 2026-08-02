@@ -881,3 +881,7 @@ health-advice-events-dropped = وصل { $count } تغييرًا على { $root }
 health-advice-not-monitoring = لا يجري تتبع التغييرات على { $root }، لذا لا تتحدث النتائج إلا عند إعادة فحص المجلد.
 health-advice-high-lag = تستغرق التغييرات على { $root } حتى { $count } مللي ثانية لتظهر في النتائج.
 health-advice-queue-saturated = طابور التغييرات لـ { $root } شبه ممتلئ ({ $count } في الانتظار)؛ وقد تبدأ التغييرات في الإهمال.
+
+# SRC-M14 — offline removable-volume catalogs
+results-offline-badge = غير متصل — { $name }
+results-offline-badge-title = محرك الأقراص الذي يوجد به هذا الملف غير متصل. جاء هذا الإدخال من فهرس Freally المحفوظ لذلك الجهاز.

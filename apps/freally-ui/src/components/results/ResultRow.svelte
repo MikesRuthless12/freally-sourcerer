@@ -8,6 +8,7 @@
   import { registry } from "../../lib/commands/registry.svelte";
   import * as files from "../../lib/ipc/files";
   import { formatBytes, formatDateMs } from "../../lib/util/format";
+  import { t } from "../../lib/i18n/t";
 
   interface Props {
     hit: QueryHit;
@@ -111,6 +112,14 @@
         {/if}
       {/if}
       {cellText(col.id)}
+      {#if col.id === "name" && hit.volume_offline}
+        <!-- SRC-M14: the drive this file lives on is not plugged in.
+             Shown on the name cell because that is the one column the
+             user cannot switch off. -->
+        <span class="offline-badge" title={t("results-offline-badge-title")}>
+          {t("results-offline-badge", { name: hit.volume_label ?? "" })}
+        </span>
+      {/if}
     </span>
   {/each}
 </button>
@@ -133,6 +142,15 @@
     cursor: default;
     font-size: 13px;
     border-radius: 0;
+  }
+  .offline-badge {
+    margin-left: 8px;
+    padding: 0 6px;
+    border-radius: 9px;
+    font-size: 10px;
+    white-space: nowrap;
+    background: rgba(127, 127, 127, 0.2);
+    color: var(--text-secondary);
   }
   .row:hover {
     background: var(--row-highlighted-bg, var(--bg-surface-2));

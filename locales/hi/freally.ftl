@@ -881,3 +881,7 @@ health-advice-events-dropped = { $root } पर { $count } परिवर्त
 health-advice-not-monitoring = { $root } पर परिवर्तन ट्रैक नहीं हो रहे, इसलिए परिणाम केवल दोबारा स्कैन करने पर अद्यतन होते हैं।
 health-advice-high-lag = { $root } पर परिवर्तनों को परिणामों में दिखने में { $count } मिसे तक लग रहे हैं।
 health-advice-queue-saturated = { $root } की परिवर्तन-कतार लगभग भरी है ({ $count } प्रतीक्षारत); परिवर्तन छूटने लग सकते हैं।
+
+# SRC-M14 — offline removable-volume catalogs
+results-offline-badge = ऑफ़लाइन — { $name }
+results-offline-badge-title = इस फ़ाइल वाली ड्राइव कनेक्ट नहीं है। यह प्रविष्टि उस डिवाइस के लिए Freally के कैटलॉग से आई है।

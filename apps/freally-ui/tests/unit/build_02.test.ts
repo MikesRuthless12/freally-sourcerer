@@ -75,6 +75,17 @@ describe("advisory messages", () => {
     expect(out.replace(/[\u2068\u2069]/g, "")).toContain("C:\\");
   });
 
+  it("has the offline-catalog badge strings SRC-M14 renders", () => {
+    const bundle = enBundle();
+    const msg = bundle.getMessage("results-offline-badge");
+    expect(msg?.value).toBeTruthy();
+    const out = bundle.formatPattern(msg!.value!, { name: "Orange WD 4TB" }, []);
+    expect(out.replace(/[⁨⁩]/g, "")).toContain("Orange WD 4TB");
+    // The badge has to explain itself on hover — an unexplained
+    // "offline" on a result row reads like an error.
+    expect(bundle.getMessage("results-offline-badge-title")?.value).toBeTruthy();
+  });
+
   it("has the panel's own chrome strings", () => {
     const bundle = enBundle();
     for (const key of [

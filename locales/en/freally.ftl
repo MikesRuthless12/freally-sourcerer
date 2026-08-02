@@ -880,3 +880,7 @@ health-advice-events-dropped = { $count } changes on { $root } arrived faster th
 health-advice-not-monitoring = Changes on { $root } are not being tracked, so results update only when the folder is rescanned.
 health-advice-high-lag = Changes on { $root } are taking up to { $count } ms to appear in results.
 health-advice-queue-saturated = The change queue for { $root } is nearly full ({ $count } waiting); changes may start being dropped.
+
+# SRC-M14 — offline removable-volume catalogs
+results-offline-badge = offline — { $name }
+results-offline-badge-title = The drive this file is on is not connected. The entry comes from Freally's catalog of that device.

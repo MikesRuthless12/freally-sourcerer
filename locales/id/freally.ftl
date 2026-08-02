@@ -881,3 +881,7 @@ health-advice-events-dropped = { $count } perubahan pada { $root } datang lebih 
 health-advice-not-monitoring = Perubahan pada { $root } tidak dilacak, sehingga hasil hanya diperbarui saat folder dipindai ulang.
 health-advice-high-lag = Perubahan pada { $root } butuh hingga { $count } ms untuk muncul di hasil.
 health-advice-queue-saturated = Antrean perubahan untuk { $root } hampir penuh ({ $count } menunggu); perubahan mungkin mulai terbuang.
+
+# SRC-M14 — offline removable-volume catalogs
+results-offline-badge = luring — { $name }
+results-offline-badge-title = Drive tempat berkas ini berada tidak terhubung. Entri ini berasal dari katalog Freally untuk perangkat tersebut.
