@@ -213,11 +213,19 @@ impl DaemonState {
         // volume (an empty card reader) has no catalog, so stamping rows
         // with its id would produce hits that can never carry a badge or
         // be reached by `volume:`.
+        // Rows are stamped with the *device* key, not the mount id, so a
+        // drive that returns on a different letter still answers
+        // `volume:` and still badges as itself.
         self.index.set_volume_map(freally_index::VolumeMap::new(
             detected
                 .iter()
                 .filter(|v| v.status != freally_rpc::VolumeStatus::Offline)
-                .map(|v| (PathBuf::from(&v.mount_point), v.id.clone())),
+                .map(|v| {
+                    (
+                        PathBuf::from(&v.mount_point),
+                        crate::catalogs::device_key(v).to_string(),
+                    )
+                }),
         ));
 
         // Persist whenever the registry changed at all, not only when

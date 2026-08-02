@@ -41,6 +41,9 @@ fn file(path: &str) -> JournalEvent {
 fn vol(id: &str, label: &str, mount: &str) -> VolumeInfo {
     VolumeInfo {
         id: id.to_string(),
+        // These fixtures use the device id as the key throughout, which
+        // is what rows are stamped with.
+        device_id: id.to_string(),
         label: label.to_string(),
         mount_point: mount.to_string(),
         fs_kind: "exfat".into(),

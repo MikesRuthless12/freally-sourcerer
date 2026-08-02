@@ -295,7 +295,21 @@ pub struct ExtractorInfo {
 /// `fs_kind`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolumeInfo {
+    /// Where the volume is *mounted*, canonicalized — `win-E`,
+    /// `lin-_media_me_USB`. Stable for as long as the mount is, which is
+    /// what per-volume settings in `volumes.json` are keyed on.
     pub id: String,
+    /// Which physical *device* this is — the NTFS volume serial, the
+    /// Linux filesystem UUID, the macOS volume label.
+    ///
+    /// Deliberately separate from `id`, because a drive letter is not an
+    /// identity: unplug one drive from `E:` and plug in another, and the
+    /// mount id is identical while the device is not. SRC-M14 stamps
+    /// rows and keys catalogs on *this*, so "which drive was that file
+    /// on?" survives the letter being reused. Empty when the platform
+    /// cannot tell us, in which case callers fall back to `id`.
+    #[serde(default)]
+    pub device_id: String,
     pub label: String,
     pub mount_point: String,
     pub fs_kind: String,
