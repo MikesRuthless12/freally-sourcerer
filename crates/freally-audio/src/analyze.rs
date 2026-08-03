@@ -39,10 +39,14 @@ use crate::measure::silence::SilenceCounter;
 pub struct AnalysisOpts {
     pub cancel: Option<Arc<AtomicBool>>,
     pub time_budget: Option<std::time::Duration>,
-    /// SRC-M18 — when set, collect a waveform envelope of this many
-    /// buckets during the same decode. `None` costs nothing; the
-    /// cache's own extractions leave it unset.
-    pub peak_buckets: Option<usize>,
+    /// SRC-M18 — collect a waveform envelope of this many buckets
+    /// during the same decode.
+    ///
+    /// Private on purpose: peaks come back through
+    /// [`analyze_with_peaks`], and a `pub` field here would let a caller
+    /// set it on `analyze_with_opts`, which has nowhere to return them
+    /// and would silently throw them away.
+    peak_buckets: Option<usize>,
 }
 
 impl AnalysisOpts {

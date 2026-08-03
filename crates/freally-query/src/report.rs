@@ -27,7 +27,7 @@ use crate::ast::{
     AudioPredicate, DateBound, LensKind, ModifierKind, QueryNode, RelativeDate, SizeOp, TextPattern,
 };
 use crate::error::ParseError;
-use crate::parser::{ParseOpts, TokKind, parse_with, tokenize};
+use crate::parser::{ParseOpts, TokKind, is_freally_only_modifier, parse_with, tokenize};
 use crate::quick_filters::QuickFilter;
 use std::str::FromStr;
 
@@ -306,26 +306,6 @@ pub fn parse_to_report(s: &str, opts: ParseOpts) -> ParseReport {
             }
         }
     }
-}
-
-fn is_freally_only_modifier(key: &str) -> bool {
-    matches!(
-        key.to_ascii_lowercase().as_str(),
-        "similar"
-            | "lufs"
-            | "codec"
-            | "length"
-            | "duration"
-            | "rate"
-            | "samplerate"
-            | "silence"
-            | "dr"
-            // SRC-M23 — voidtools' Everything has no anchored-match
-            // syntax, so strict mode has to reject these two the same
-            // way it rejects the audio surface.
-            | "name^"
-            | "name$"
-    )
 }
 
 /// Classify a parser-internal `Token` into a UI-shaped `TokenKind`.

@@ -27,11 +27,12 @@
   let result = $state<RegexTestResult | null>(null);
   let inputEl: HTMLInputElement | undefined = $state();
 
+  // `visibleHits`, not `batches`: the latter includes lenses the user
+  // switched off and rows the refine bar filtered out, so the builder
+  // would test the pattern against names that are not on screen and the
+  // "N of 50" count would disagree with the list behind it.
   const subjects = $derived(
-    resultsStore.batches
-      .flatMap((b) => b.hits)
-      .slice(0, SAMPLE_LIMIT)
-      .map((h) => h.name)
+    resultsStore.visibleHits.slice(0, SAMPLE_LIMIT).map((h) => h.name)
   );
 
   const matchedCount = $derived(result?.matches.length ?? 0);

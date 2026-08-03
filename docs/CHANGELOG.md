@@ -409,6 +409,54 @@ Playability is decided from the hit's extension, not from the preview
 payload: a media file's payload is `unsupported`, which is precisely the
 case worth playing.
 
+### Build 3 closeout — what the review passes changed
+
+`/simplify` ran four reviewers over the full build diff. Three of them
+independently flagged the same thing, and two findings were real defects
+rather than style:
+
+- **The sidebar dropped a bookmark's saved filters.** `applyBookmark`
+  re-implemented the dropdown's load flow and omitted
+  `typeFilterStore.setFromIds(...)`, so opening a bookmark from the
+  sidebar composed a different lens prefix than opening the same
+  bookmark from the dropdown. Both now call one `bookmarksStore.apply`.
+- **`visibleHits` existed twice, with different answers.** The Quick
+  Look copy sorted; `resultsStore.visibleHits` — which export,
+  select-all and the status-bar count read — did not. The two disagreed
+  the moment a column sort was active. The sort moved into the store's
+  getter and the copy is gone, which also makes that getter's "the
+  single answer to what the user is looking at" comment true rather than
+  aspirational.
+- **Two hand-synced strict-mode lists had already drifted.** The
+  parser's Freally-only modifier list carried `volume:` and `report.rs`'s
+  copy did not, so a strict-everything query using `volume:` was
+  rejected by the parser while the report the search bar renders from
+  called it fine. Now one `is_freally_only_modifier`.
+
+Performance findings worth recording, all on paths this build added:
+
+- The permission badge's effect re-fired on every index-state poll —
+  `indexStateStore` reassigns the whole state object, so "read `phase`"
+  invalidates regardless of whether `phase` changed. It was issuing an
+  IPC round-trip every five seconds forever, each cloning the whole
+  ledger under a mutex. Guarded on the last polled phase.
+- The natural-sort comparator ran a regex per *character* and built a
+  fresh collator per chunk. Now a code-point test and one shared
+  `Intl.Collator`.
+- Sorting by path converted both `PathBuf`s per comparison —
+  O(n log n) WTF-8 scans. Now decorate-sort-undecorate, one conversion
+  per row.
+- The media player loaded bytes and waveform in sequence though they are
+  independent; and gave all ~800 waveform bars a dependency on playback
+  progress, so every `timeupdate` re-evaluated 800 expressions. Now
+  `Promise.all`-style overlap and a single `--progress` overlay.
+
+Also: `AnalysisOpts::peak_buckets` is private, because as a `pub` field a
+caller could set it on `analyze_with_opts`, which has nowhere to return
+peaks and would silently discard them; and `media.rs` calls the shared
+`files::verify_readable` rather than its own copy, so the provenance
+level for frontend-asserted reads is decided in exactly one place.
+
 ### TASK-098 — full Fluent i18n end-to-end across all 18 locales (2026-05-11)
 
 The 18-locale Fluent loader is now wired. Switching the language in

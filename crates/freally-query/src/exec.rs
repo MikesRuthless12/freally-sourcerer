@@ -693,16 +693,10 @@ fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
             // path as text to see the digit runs at all, so the two
             // branches are not just "same order, digits aware"; that is
             // the one column where the toggle changes more than digits.
-            SortField::Path => {
-                if spec.natural {
-                    crate::natural::natural_cmp(
-                        &a.path.to_string_lossy(),
-                        &b.path.to_string_lossy(),
-                    )
-                } else {
-                    a.path.cmp(&b.path)
-                }
-            }
+            // `to_string_lossy` per comparison would be O(n log n)
+            // conversions of both operands — on Windows a full WTF-8
+            // validity scan each time. The keys are built once below.
+            SortField::Path => a.path.cmp(&b.path),
             SortField::Size => a.size.cmp(&b.size),
             SortField::Date => a.mtime_ns.cmp(&b.mtime_ns),
             // Phase 5 collapses voidtools' "Type" (display-name from
@@ -719,6 +713,27 @@ fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
             },
         }
     };
+    // SRC-M24 — the path column is the one case that needs a string it
+    // does not already have. Decorate-sort-undecorate so each row is
+    // converted once rather than once per comparison; with natural sort
+    // off, `PathBuf::cmp` needs no key at all.
+    if spec.natural && spec.field == SortField::Path {
+        let asc = spec.order == SortOrder::Asc;
+        // One conversion per row instead of two per comparison.
+        let mut keyed: Vec<(String, FileRow)> = rows
+            .iter()
+            .cloned()
+            .map(|r| (r.path.to_string_lossy().into_owned(), r))
+            .collect();
+        keyed.sort_by(|(x, _), (y, _)| {
+            let o = crate::natural::natural_cmp(x, y);
+            if asc { o } else { o.reverse() }
+        });
+        for (slot, (_, row)) in rows.iter_mut().zip(keyed) {
+            *slot = row;
+        }
+        return;
+    }
     match spec.order {
         SortOrder::Asc => rows.sort_by(cmp),
         SortOrder::Desc => rows.sort_by(|a, b| cmp(a, b).reverse()),
@@ -1224,12 +1239,9 @@ fn match_text(pattern: &TextPattern, target: &[u8], mm: &MatchMode) -> bool {
 }
 
 fn literal_match(target_lower_or_cased: &str, needle: &str, mm: &MatchMode) -> bool {
-    let target_eff = if mm.match_case {
-        target_lower_or_cased
-    } else {
-        // The name index already lowercased; ensure needle matches.
-        target_lower_or_cased
-    };
+    // The name index already lowercased, so there is nothing to fold on
+    // this side; `match_case` only decides what happens to the needle.
+    let target_eff = target_lower_or_cased;
     let needle_lc = if mm.match_case {
         needle.to_string()
     } else {

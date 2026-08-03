@@ -24,6 +24,7 @@ import type {
 import { fileListStore } from "./file_list.svelte";
 import { refineStore } from "./refine.svelte";
 import { selectionStore } from "./selection.svelte";
+import { sortStore } from "./sort.svelte";
 import { recentSearchesStore } from "./recent_searches.svelte";
 import { settingsStore } from "./settings.svelte";
 import { typeFilterStore } from "./type_filter.svelte";
@@ -212,9 +213,17 @@ class ResultsStore {
    *  would count hits in a lens the user has switched off, and
    *  duplicate-cluster members that grouping dropped. */
   get visibleHits(): QueryHit[] {
-    return LENS_ORDER.flatMap((lens) =>
-      settingsStore.state.lens_visibility[lens] === false ? [] : this.viewForLens(lens).hits
-    );
+    return LENS_ORDER.flatMap((lens) => {
+      if (settingsStore.state.lens_visibility[lens] === false) return [];
+      const view = this.viewForLens(lens);
+      // Sorted the way `LensSection` renders it, so this really is the
+      // order on screen — export, select-all, the status-bar count and
+      // Quick Look's arrow keys all read this, and before SRC-M22 they
+      // disagreed the moment a column sort was active. Grouped
+      // (duplicate-cluster) batches keep the daemon's order: re-sorting
+      // them would break the clusters apart.
+      return view.groups.length > 0 ? view.hits : sortStore.applied(view.hits);
+    });
   }
 
   get total(): number {
