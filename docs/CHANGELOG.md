@@ -4,7 +4,7 @@ All notable changes documented here. Format: [Keep a Changelog](https://keepacha
 
 ---
 
-## [Unreleased] — Build 3 · Must-Have stable gate, slice 3 of 3
+## [0.23.0] — Build 3 · Must-Have stable gate, slice 3 of 3 (2026-08-03)
 
 The last of the three Must-Have builds: SRC-M17 … SRC-M24. Ships as
 v0.23.0, the **stable** tag.
@@ -496,6 +496,10 @@ other destructive command. Three changes:
   non-root user, so **portable mode could not start its daemon on Linux
   at all** — the hardening step was taking down the thing it was meant
   to protect. It logs and relies on the socket's own 0600 instead.
+
+---
+
+## [Unreleased]
 
 ### TASK-098 — full Fluent i18n end-to-end across all 18 locales (2026-05-11)
 
