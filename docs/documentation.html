@@ -158,6 +158,9 @@
           <a href="#index-health">Index Health</a>
           <a href="#file-lists">File Lists &amp; Export</a>
           <a href="#preview">Preview Pane</a>
+          <a href="#sidebar">Sidebar</a>
+          <a href="#permissions">What Search Cannot See</a>
+          <a href="#portable">Portable Mode</a>
           <a href="#hotkey">Global Hotkey</a>
           <a href="#settings">Settings</a>
           <a href="#language">Language &amp; Locale</a>
@@ -266,13 +269,17 @@
               <tr><td>child-count:N</td><td>Folders with N direct children (supports &lt;, &lt;=, &gt;, &gt;=, =)</td><td><code>child-count:&gt;500</code></td></tr>
               <tr><td>descendant-count:N</td><td>Folders with N descendants at any depth</td><td><code>descendant-count:&lt;10</code></td></tr>
               <tr><td>volume:name</td><td>Files indexed from one device, matched by the drive's name or its volume id. Works for drives that are not currently plugged in.</td><td><code>volume:orange</code></td></tr>
+              <tr><td>name^:text</td><td>Filenames that <em>start with</em> the text. Not available in strict-Everything mode.</td><td><code>name^:invoice</code></td></tr>
+              <tr><td>name$:text</td><td>Filenames that <em>end with</em> the text, extension included — so <code>name$:report</code> does not match <code>report.txt</code>. Not available in strict-Everything mode.</td><td><code>name$:final.md</code></td></tr>
             </tbody>
           </table>
 
           <h3>Match options</h3>
           <ol>
-            <li>Toggle <strong>Match Case</strong>, <strong>Whole Word</strong>, <strong>Match Path</strong>, and <strong>Match Diacritics</strong> using the small icons to the right of the search bar, or via keyboard shortcuts shown on hover.</li>
-            <li>Enable <strong>Regex mode</strong> with the <code>/…/</code> toggle to write full regular expressions.</li>
+            <li>Toggle <strong>Match Case</strong>, <strong>Whole Word</strong>, <strong>Match Path</strong>, and <strong>Match Diacritics</strong> from the <strong>Search</strong> menu, or with the keyboard shortcuts shown beside each item.</li>
+            <li><strong>Ignore Punctuation</strong> makes <code>foobar</code> find <code>foo-bar</code> and <code>foo_bar</code> — and equally, <code>foo-bar</code> find <code>foobar</code>. <strong>Ignore Whitespace</strong> does the same for spaces, so <code>myreport</code> finds <code>my report</code>. Both are off by default, and both search more slowly on a large index, because the stored word fragments no longer describe the text being matched.</li>
+            <li><strong>Match CJK Phonetics</strong> lets a Latin query reach a CJK name through its reading: <code>wenjian</code> or <code>wj</code> finds <span lang="zh">文件</span>.</li>
+            <li>Enable <strong>Regex mode</strong> with the <code>.*</code> button at the right of the search bar. The <strong>⌄</strong> button beside it opens the <strong>regular expression builder</strong>: type a pattern and see, live, which of the names currently on screen it matches, with the search engine's own error message if the pattern is invalid. It uses Rust regular expression syntax — there are no backreferences and no lookaround.</li>
           </ol>
 
           <div class="tip"><strong>Example — find loud FLAC masters longer than 3 minutes:</strong><br><code>lufs:&lt;-14 codec:flac length:&gt;3:00</code></div>
@@ -389,6 +396,52 @@
             <li><strong>Close the preview pane</strong> by pressing <code>Ctrl+P</code> / <code>⌘P</code> again, or by dragging the divider all the way to the right.</li>
           </ol>
           <div class="tip"><strong>Tip:</strong> Enable <strong>Thumbnails</strong> view to see image thumbnails directly in the result rows without opening the preview pane.</div>
+
+          <h3>Playing audio and video</h3>
+          <p>Select an audio or video result and the pane becomes a player: play/pause, a seek bar, loop, and volume. Audio also draws a waveform you can click to scrub, with the codec, sample rate, channel count and measured loudness shown beneath it — so you can check whether a take is the one you want without leaving the results list.</p>
+          <p>Playback is buffered rather than streamed, which puts a ceiling of roughly 190&nbsp;MB on a file previewed this way. Past that the pane offers to open the file in your system player instead. This is deliberate: streaming would mean giving the app's display layer direct read access to your filesystem, and the whole design keeps that layer able to touch only files the search engine actually returned.</p>
+
+          <h3>Quick Look</h3>
+          <p>Press <code>Space</code> on any result for a large preview over the whole window. The arrow keys keep walking the result list while it stays open, so you can flick through a folder's worth of files without closing anything, and the header shows where you are — "7 of 50". <code>Space</code> again, or <code>Escape</code>, dismisses it.</p>
+          <p>On macOS the panel also offers <strong>Open in macOS Quick Look</strong> for formats the system can render and Freally cannot, such as Keynote or Sketch files. That opens a separate macOS window, so the arrow-key flow above stops applying to it.</p>
+        </section>
+
+        <!-- Sidebar -->
+        <section id="sidebar">
+          <h2>Sidebar</h2>
+          <p class="section-intro">An optional left column that puts everything you scope a search with in one place.</p>
+          <ol>
+            <li><strong>Show it</strong> with <strong>View → Sidebar</strong>. It is off by default.</li>
+            <li><strong>Bookmarks</strong> — click one to run it. Drag them to reorder; the order is remembered.</li>
+            <li><strong>Filters</strong> — the same type filters as the chip row, clickable from here.</li>
+            <li><strong>Volumes</strong> — click a drive to search only that device, including drives that are not plugged in.</li>
+            <li><strong>Recent searches</strong> — the queries you actually ran, most recent first, with a <strong>Clear</strong> button. Nothing is recorded while <strong>Privacy Mode</strong> is on or <strong>Search History</strong> is off.</li>
+          </ol>
+        </section>
+
+        <!-- Permission health -->
+        <section id="permissions">
+          <h2>What Search Cannot See</h2>
+          <p class="section-intro">If the app cannot read a folder, that folder's files are missing from every search — and a folder that could not be read looks exactly like a folder that was empty. This report is how you tell the difference.</p>
+          <ol>
+            <li><strong>Open it</strong> from <strong>Tools → Permission Health</strong>, or by clicking the <strong>“N folders skipped”</strong> badge in the status bar. The badge only appears when there is something to report.</li>
+            <li><strong>Expand a volume</strong> to see which folders were skipped and the operating system's own reason for each.</li>
+            <li><strong>Follow the fix for your platform.</strong> On macOS the report detects whether Freally already has Full&nbsp;Disk&nbsp;Access and, if not, opens the right settings pane for you — then quit and reopen Freally and rescan. On Linux it explains the ownership and mount permissions involved; on Windows it points at the folder's Security tab.</li>
+          </ol>
+          <div class="tip"><strong>Note:</strong> a file that disappeared while a scan was running is not counted here. That is normal on a live filesystem and there is nothing to fix.</div>
+        </section>
+
+        <!-- Portable mode -->
+        <section id="portable">
+          <h2>Portable Mode</h2>
+          <p class="section-intro">Run Freally from a USB stick, or from a folder you can delete, without it writing anything to the computer it is plugged into.</p>
+          <ol>
+            <li><strong>Turn it on</strong> either by launching with <code>--portable</code>, or — easier — by creating an empty file named <code>portable.flag</code> next to the Freally executable. The flag file means a double-click is enough; no command line needed.</li>
+            <li><strong>Everything lives in <code>Data/</code></strong>, a folder beside the executable: the index, your settings, your bookmarks, and the logs.</li>
+            <li><strong>Nothing is registered with the operating system.</strong> No background service, no <code>freally://</code> link handler, no auto-updater. Update a portable install by replacing the folder.</li>
+          </ol>
+          <div class="tip"><strong>On macOS</strong>, <code>Data/</code> is created beside <code>Freally.app</code>, not inside it — writing inside an app bundle breaks its signature and fails outright on a read-only volume.</div>
+          <p>One thing is deliberately kept off the stick: the small local channel the app and its indexer use to talk to each other. USB sticks are usually formatted in a way that cannot hold one at all, so it is created in the host's temporary folder instead, under a name unique to your portable install. It is removed when the system next clears that folder, and it carries no data of yours.</p>
         </section>
 
         <!-- Global Hotkey -->
