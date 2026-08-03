@@ -23,7 +23,8 @@
 use serde::Serialize;
 use tauri::State;
 
-use super::known_paths::{KnownPaths, Provenance};
+use super::files::verify_readable;
+use super::known_paths::KnownPaths;
 
 /// Largest file served inline.
 ///
@@ -37,10 +38,6 @@ pub const MAX_INLINE_BYTES: u64 = 192 * 1024 * 1024;
 /// 800 buckets survives a 2× device-pixel-ratio display with headroom
 /// and still costs about 3 KB on the wire.
 const WAVEFORM_BUCKETS: usize = 800;
-
-fn verify(path: &str, known: &KnownPaths) -> Result<(), String> {
-    known.verify(path, Provenance::FrontendAsserted).map(|_| ())
-}
 
 #[derive(Debug, Serialize)]
 pub struct Waveform {
@@ -62,7 +59,7 @@ pub async fn media_waveform(
     path: String,
     known: State<'_, KnownPaths>,
 ) -> Result<Waveform, String> {
-    verify(&path, &known)?;
+    verify_readable(&path, &known)?;
     let p = std::path::PathBuf::from(&path);
     // Decoding is CPU-bound and can run for seconds on a long file;
     // holding the async runtime's worker for that would stall every
@@ -93,7 +90,7 @@ pub async fn media_bytes(
     path: String,
     known: State<'_, KnownPaths>,
 ) -> Result<tauri::ipc::Response, String> {
-    verify(&path, &known)?;
+    verify_readable(&path, &known)?;
     let p = std::path::PathBuf::from(&path);
 
     // Check the size before reading, not after: `read` on an oversized

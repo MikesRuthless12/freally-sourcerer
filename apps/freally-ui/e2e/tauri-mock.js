@@ -94,6 +94,84 @@
     index_compact: () => null,
     index_rebuild: () => null,
 
+    // ---- Build 3 (v0.23.0) ----
+
+    // SRC-M17 / About panel. Portable off so the gallery shows the
+    // normal install; the portable rows are a separate concern.
+    app_environment: () => ({
+      version: "0.23.0",
+      portable: false,
+      data_dir: null,
+    }),
+
+    // SRC-M20 — the builder asks the Rust engine what a pattern hits.
+    // Canned to match the first two filename hits so the popover
+    // renders highlighted spans and a non-zero count.
+    regex_test: (args) => {
+      const pattern = args?.args?.pattern ?? "";
+      if (pattern === "") return { valid: false, error: null, matches: [] };
+      if (pattern === "(") {
+        return { valid: false, error: "regex parse error: unclosed group", matches: [] };
+      }
+      return {
+        valid: true,
+        error: null,
+        matches: [
+          { index: 0, spans: [{ start: 0, end: 9 }] },
+          { index: 1, spans: [{ start: 0, end: 4 }] },
+        ],
+      };
+    },
+
+    // SRC-M21 — two unreadable subtrees on one volume, so the report
+    // renders a group, a drill-down, and the platform guidance.
+    index_permissions: () => ({
+      denied: 2,
+      other: 1,
+      dropped: 0,
+      by_volume: [
+        {
+          volume: "C:\\",
+          denied: 2,
+          other: 1,
+          entries: [
+            {
+              path: "C:\\System Volume Information",
+              reason: "permission_denied",
+              detail: "Access is denied. (os error 5)",
+              volume: "C:\\",
+            },
+            {
+              path: "C:\\Users\\other",
+              reason: "permission_denied",
+              detail: "Access is denied. (os error 5)",
+              volume: "C:\\",
+            },
+            {
+              path: "C:\\pagefile.sys",
+              reason: "other",
+              detail: "The process cannot access the file (os error 32)",
+              volume: "C:\\",
+            },
+          ],
+        },
+      ],
+      guidance: "windows_acl",
+      full_disk_access: null,
+    }),
+
+    // SRC-M18 — a short synthetic envelope; enough for the pane to draw
+    // bars and badges without shipping a fixture audio file.
+    media_waveform: () => ({
+      peaks: Array.from({ length: 64 }, (_, i) => Math.abs(Math.sin(i / 4)) * 0.9),
+      duration_ms: 213_000,
+      codec: "flac",
+      sample_rate: 44_100,
+      channels: 2,
+      lufs_integrated: -14.2,
+    }),
+    media_bytes: () => new Uint8Array(0).buffer,
+
     bookmarks_list: () => [
       { id: "bm-1", name: "Big videos", query: "video: size:>1gb", created_ms: NOW - 40 * 86_400_000, filters: [] },
       { id: "bm-2", name: "Loud tracks", query: "audio: lufs:>-8", created_ms: NOW - 12 * 86_400_000, filters: ["audio"] },

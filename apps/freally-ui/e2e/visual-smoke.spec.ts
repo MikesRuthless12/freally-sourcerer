@@ -155,3 +155,54 @@ test("first-run wizard renders for a fresh install (?wizard=1)", async ({ page }
   await expect(page.getByRole("dialog")).toBeVisible({ timeout: 15_000 });
   await page.screenshot({ path: SHOT("07-first-run-wizard"), fullPage: true });
 });
+
+// ---- Build 3 (v0.23.0) ----
+
+test("regex builder popover previews matches (SRC-M20)", async ({ page }) => {
+  await bootMain(page);
+  // Reachable from a button in the search bar, so this needs none of the
+  // menu-bar hover machinery the index-health spec is blocked on.
+  await page.getByTestId("regex-builder-open").click();
+  const popover = page.getByRole("dialog", { name: /Regular expression builder/i });
+  await expect(popover).toBeVisible();
+  await page.getByTestId("regex-pattern").fill("report");
+  // The count only renders once the (mocked) engine has answered.
+  await expect(popover.getByText(/of .* match/i)).toBeVisible();
+  await page.screenshot({ path: SHOT("10-regex-builder"), fullPage: true });
+});
+
+test("regex builder surfaces the engine's own compile error (SRC-M20)", async ({ page }) => {
+  await bootMain(page);
+  await page.getByTestId("regex-builder-open").click();
+  await page.getByTestId("regex-pattern").fill("(");
+  await expect(page.getByText(/unclosed group/)).toBeVisible();
+  // "Use this pattern" must stay disabled while the pattern is invalid.
+  await expect(page.getByTestId("regex-use")).toBeDisabled();
+});
+
+test("permission health report drills down by volume (SRC-M21)", async ({ page }) => {
+  await bootMain(page);
+  // The status-bar badge is the discoverable entry point; clicking it is
+  // also the assertion that it appears when there is something to report.
+  await page.getByTestId("permissions-badge").click();
+  const dialog = page.getByTestId("permission-health");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: /C:/ }).first().click();
+  await expect(dialog.getByText("C:\\System Volume Information")).toBeVisible();
+  await page.screenshot({ path: SHOT("11-permission-health"), fullPage: true });
+});
+
+test("sidebar lists bookmarks, filters, volumes and recent searches (SRC-M22)", async ({
+  page,
+}) => {
+  await bootMain(page);
+  await page.getByRole("button", { name: "View" }).click();
+  // `menuitemcheckbox`, not `menuitem`: MenuBar gives checkable entries
+  // the checkbox role, so a `menuitem` query silently never matches.
+  await page.getByRole("menuitemcheckbox", { name: /Sidebar/ }).click();
+  const sidebar = page.getByTestId("sidebar");
+  await expect(sidebar).toBeVisible();
+  await expect(sidebar.getByText("Bookmarks")).toBeVisible();
+  await expect(sidebar.getByText("Big videos")).toBeVisible();
+  await page.screenshot({ path: SHOT("12-sidebar"), fullPage: true });
+});

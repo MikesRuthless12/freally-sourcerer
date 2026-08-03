@@ -1,9 +1,7 @@
 // Sort store — mirrors the View → Sort by submenu state. Toggling a column
 // header cycles asc → desc on the same column or jumps to a new column.
 
-import type { ColumnId } from "../ipc/types";
-import { resultsStore } from "./results.svelte";
-import type { QueryHit } from "../ipc/types";
+import type { ColumnId, QueryHit } from "../ipc/types";
 import { naturalCompare } from "../util/natural";
 import { settingsStore } from "./settings.svelte";
 
@@ -65,7 +63,8 @@ function compare(a: QueryHit, b: QueryHit, field: SortField): number {
   }
 }
 
+// The results store now imports *this* module (its `visibleHits` applies
+// the sort), so the old `void resultsStore` touch has to go: it ran at
+// module scope and would read an uninitialised binding whenever the
+// results store happened to be evaluated first.
 export const sortStore = new SortStore();
-// Touch resultsStore so the static-analyzer doesn't drop the import in the
-// emit; the sort store relies on hits flowing through resultsStore.
-void resultsStore;

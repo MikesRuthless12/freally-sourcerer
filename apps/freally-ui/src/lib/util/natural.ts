@@ -12,12 +12,28 @@
 // the vector in `natural.test.ts` is mirrored in that file's
 // `natural_matches_the_ui_twin`.
 
+/** ASCII digit test by code point.
+ *
+ * A `/\d/.test(s[k])` here allocates a one-character string and enters
+ * the regex engine for every character of every comparison, and this
+ * runs O(n log n) times per sort. */
+function isDigit(s: string, i: number): boolean {
+  const c = s.charCodeAt(i);
+  return c >= 48 && c <= 57;
+}
+
+/** A regex is fine for a one-shot "does this string contain a digit". */
 const DIGITS = /\d/;
+
+/** Reused across every comparison. Constructing a collator per chunk —
+ *  which is what a bare `localeCompare` does — is roughly an order of
+ *  magnitude slower. */
+const COLLATOR = new Intl.Collator(undefined, { sensitivity: "variant" });
 
 /** Length of the run starting at `i` — all digits, or all non-digits. */
 function runEnd(s: string, i: number, digits: boolean): number {
   let k = i;
-  while (k < s.length && DIGITS.test(s[k]) === digits) k += 1;
+  while (k < s.length && isDigit(s, k) === digits) k += 1;
   return k;
 }
 
@@ -46,7 +62,7 @@ export function naturalCompare(a: string, b: string): number {
   // rather than to the chunked path below, which can only compare a
   // prefix at a time and would lose the context a collator needs for
   // contractions and accents.
-  if (!DIGITS.test(a) && !DIGITS.test(b)) return a.localeCompare(b);
+  if (!DIGITS.test(a) && !DIGITS.test(b)) return COLLATOR.compare(a, b);
 
   let i = 0;
   let j = 0;
@@ -56,8 +72,8 @@ export function naturalCompare(a: string, b: string): number {
   let padding = 0;
 
   while (i < a.length && j < b.length) {
-    const aDigit = DIGITS.test(a[i]);
-    const bDigit = DIGITS.test(b[j]);
+    const aDigit = isDigit(a, i);
+    const bDigit = isDigit(b, j);
 
     if (aDigit && bDigit) {
       const ia = runEnd(a, i, true);
@@ -80,7 +96,7 @@ export function naturalCompare(a: string, b: string): number {
     const ia = aDigit ? i + 1 : runEnd(a, i, false);
     const jb = bDigit ? j + 1 : runEnd(b, j, false);
     const n = Math.min(ia - i, jb - j);
-    const c = a.slice(i, i + n).localeCompare(b.slice(j, j + n));
+    const c = COLLATOR.compare(a.slice(i, i + n), b.slice(j, j + n));
     if (c !== 0) return c;
     i += n;
     j += n;

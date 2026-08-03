@@ -10,11 +10,7 @@
 
   async function load(bm: Bookmark) {
     open = false;
-    // Restore the chip selection first so resultsStore.run() composes
-    // the same lens-prefix the bookmark was saved with.
-    typeFilterStore.setFromIds(bm.filters ?? []);
-    await queryStore.setSource(bm.query);
-    await resultsStore.run(bm.query);
+    await bookmarksStore.apply(bm);
   }
 </script>
 

@@ -54,10 +54,10 @@
 
   let dragId = $state<string | null>(null);
 
-  async function applyBookmark(b: Bookmark) {
-    await queryStore.setSource(b.query);
-    await resultsStore.run(b.query);
-  }
+  // Shared with the bookmarks dropdown: restoring the chip selection
+  // before the query runs is load-bearing, and duplicating the flow here
+  // silently dropped the saved filters.
+  const applyBookmark = (b: Bookmark) => bookmarksStore.apply(b);
 
   async function applyQuery(q: string) {
     await queryStore.setSource(q);

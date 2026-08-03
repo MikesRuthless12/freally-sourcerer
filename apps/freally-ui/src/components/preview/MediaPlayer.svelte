@@ -41,23 +41,30 @@
     duration = 0;
 
     void (async () => {
+      // Started together, not in sequence: the byte read and the
+      // waveform decode are independent full passes over the file, and
+      // serializing them doubles time-to-first-frame for audio.
+      const bytesPromise = media.bytes(target);
+      // A waveform is a nicety — failing to draw one must not stop the
+      // file playing, so its rejection is swallowed here rather than
+      // taken as a load failure below.
+      const wavePromise =
+        kind === "audio" ? media.waveform(target).catch(() => null) : Promise.resolve(null);
+
       try {
-        const bytes = await media.bytes(target);
+        const bytes = await bytesPromise;
         if (cancelled) return;
         objectUrl = URL.createObjectURL(new Blob([bytes]));
         src = objectUrl;
       } catch (e) {
         if (!cancelled) error = String(e);
+        // Still await the sibling so a rejection cannot surface as an
+        // unhandled rejection after this function returns.
+        await wavePromise;
         return;
       }
-      if (kind !== "audio") return;
-      try {
-        const w = await media.waveform(target);
-        if (!cancelled) waveform = w;
-      } catch {
-        // A waveform is a nicety. Failing to draw one must not stop
-        // the file playing, so this is swallowed rather than surfaced.
-      }
+      const w = await wavePromise;
+      if (!cancelled && w) waveform = w;
     })();
 
     return () => {
@@ -141,13 +148,15 @@
           onclick={seekFromWaveform}
           style="--progress: {progress}"
         >
-          {#each waveform.peaks as p, i}
-            <span
-              class="bar"
-              class:played={i / waveform.peaks.length <= progress}
-              style="height: {Math.max(2, p * 100)}%"
-            ></span>
+          {#each waveform.peaks as p}
+            <span class="bar" style="height: {Math.max(2, p * 100)}%"></span>
           {/each}
+          <!-- Played portion as one overlay driven by `--progress`.
+               A `class:played` on each bar would make all 800 of them
+               depend on `progress`, so every `timeupdate` (~4/s) would
+               re-evaluate 800 expressions and diff 800 class attributes;
+               this is a single style write per tick. -->
+          <span class="played" aria-hidden="true"></span>
         </div>
       {/if}
     {/if}
@@ -236,6 +245,7 @@
     border-radius: 4px;
   }
   .wave {
+    position: relative;
     display: flex;
     align-items: flex-end;
     gap: 1px;
@@ -253,9 +263,12 @@
     background: var(--text-secondary);
     opacity: 0.5;
   }
-  .bar.played {
-    background: var(--accent-cyan);
-    opacity: 1;
+  .wave .played {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: calc(var(--progress, 0) * 100%);
+    background: color-mix(in srgb, var(--accent-cyan) 30%, transparent);
+    pointer-events: none;
   }
   .transport {
     display: flex;

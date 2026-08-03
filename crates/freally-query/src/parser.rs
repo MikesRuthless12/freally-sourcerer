@@ -531,6 +531,33 @@ pub(crate) fn is_anchored_modifier(key: &str) -> bool {
         .any(|k| key.eq_ignore_ascii_case(k))
 }
 
+/// Modifiers voidtools' Everything does not have, which
+/// `--strict-everything` therefore rejects.
+///
+/// One function rather than the two hand-synced `matches!` lists this
+/// used to be — the parser's copy and `report.rs`'s copy had already
+/// drifted (`volume` was in one and not the other), so a strict-mode
+/// query using `volume:` was rejected by the parser while the report the
+/// search bar renders from said it was fine.
+pub(crate) fn is_freally_only_modifier(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "similar"
+            | "lufs"
+            | "codec"
+            | "length"
+            | "duration"
+            | "rate"
+            | "samplerate"
+            | "silence"
+            | "dr"
+            | "volume"
+            // SRC-M23 — anchored matching.
+            | "name^"
+            | "name$"
+    )
+}
+
 fn parse_modifier(
     key: &str,
     value: &str,
@@ -542,23 +569,7 @@ fn parse_modifier(
     // we don't even allocate the audio/similarity AST nodes for the
     // ones that wouldn't ship to a voidtools-pure user.
     if opts.strict_everything {
-        let freally_only = matches!(
-            key_lower.as_str(),
-            "similar"
-                | "lufs"
-                | "codec"
-                | "length"
-                | "duration"
-                | "rate"
-                | "samplerate"
-                | "silence"
-                | "dr"
-                | "volume"
-                // SRC-M23 — anchored matching is Freally-only; keep
-                // this in step with `report::is_freally_only_modifier`.
-                | "name^"
-                | "name$"
-        );
+        let freally_only = is_freally_only_modifier(&key_lower);
         if freally_only {
             return Err(ParseError::StrictEverythingViolation {
                 pos,

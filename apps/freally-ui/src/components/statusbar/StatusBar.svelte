@@ -28,9 +28,22 @@
   // a scan runs, and a status bar has no business making an IPC call on
   // every repaint.
   let permissionBadge = $state(0);
+  let lastPolledPhase: string | null = null;
   $effect(() => {
     const phase = indexStateStore.state.phase;
-    if (phase === "indexing") return;
+    if (phase === "indexing") {
+      // Re-poll once the next scan settles.
+      lastPolledPhase = null;
+      return;
+    }
+    // `indexStateStore` reassigns the whole state object on every poll
+    // (1 s while indexing, 5 s once settled), so this effect re-runs
+    // even when nothing it reads changed. Without this guard the badge
+    // issues an IPC round-trip every five seconds forever, and each one
+    // clones the whole ledger under a mutex and re-serializes it — for
+    // a number that only changes when a scan runs.
+    if (phase === lastPolledPhase) return;
+    lastPolledPhase = phase;
     let cancelled = false;
     void (async () => {
       try {

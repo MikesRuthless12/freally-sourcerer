@@ -1593,7 +1593,7 @@ dependencies = [
 
 [[package]]
 name = "freally-audio"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "ebur128",
  "parking_lot",
@@ -1606,7 +1606,7 @@ dependencies = [
 
 [[package]]
 name = "freally-extractors"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "blake3",
  "calamine",
@@ -1664,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "freally-index"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "blake3",
  "freally-journal",
@@ -1681,7 +1681,7 @@ dependencies = [
 
 [[package]]
 name = "freally-journal"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "freally-journal-lin",
  "freally-journal-mac",
@@ -1693,7 +1693,7 @@ dependencies = [
 
 [[package]]
 name = "freally-journal-lin"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "futures",
  "libc",
@@ -1705,7 +1705,7 @@ dependencies = [
 
 [[package]]
 name = "freally-journal-mac"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "core-foundation",
  "core-foundation-sys",
@@ -1720,7 +1720,7 @@ dependencies = [
 
 [[package]]
 name = "freally-journal-win"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "futures",
  "serde",
@@ -1732,7 +1732,7 @@ dependencies = [
 
 [[package]]
 name = "freally-query"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "freally-audio",
  "freally-index",
@@ -1748,7 +1748,7 @@ dependencies = [
 
 [[package]]
 name = "freally-rpc"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -1764,7 +1764,7 @@ dependencies = [
 
 [[package]]
 name = "freally-similarity"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "blake3",
  "freally-journal",
