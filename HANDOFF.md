@@ -3,7 +3,6 @@
 **Written:** 2026-08-03, at the close of Build 3.
 **State:** `v0.23.0` is tagged and merged to `main`. All 24 Must-Haves
 (SRC-M01 … SRC-M24) are closed. Three-OS CI green on `main`.
-**Not finished:** `docs/index.html` still needs promoting to 0.23.0 — see §5.2.
 
 Read this alongside `docs/ROADMAP.md` (the task list) and
 `Freally-Sourcerer-Feature-Roadmap.md` (the feature specs). This file
@@ -266,12 +265,12 @@ always wrong. So the order is:
    *Shipped &lt;date&gt; · Latest*.
 4. Verify every link resolves before committing.
 
-**This was not finished for v0.23.0.** At the time of writing the
-release build (run `30780452254`) had `windows-x86_64` and
-`macos-aarch64` green with the two remaining jobs still queued on runner
-availability. If `docs/index.html` still shows `0.22.0` as latest, this
-step is the outstanding one — and `docs/ROADMAP.md`'s "Build 3 release"
-tick is ahead of reality until it is done.
+**Done for v0.23.0** — the site, `documentation.html` and
+`search-index.js` all carry 0.23.0, and every download link was verified
+to return 200 before committing. Note the release workflow leaves a
+**draft**; publishing is manual, and must use `--latest` or
+`releases/latest/download/latest.json` never resolves and the in-app
+updater silently stops finding new versions.
 
 ### 5.3 The Windows Tantivy flake is real and will recur
 
