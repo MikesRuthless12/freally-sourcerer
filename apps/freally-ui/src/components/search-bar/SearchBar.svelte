@@ -1,10 +1,15 @@
 <script lang="ts">
   import { queryStore } from "../../lib/stores/query.svelte";
   import { resultsStore } from "../../lib/stores/results.svelte";
+  import { searchOptsStore } from "../../lib/stores/search_opts.svelte";
   import { highlight, firstError } from "../../lib/tokenizer/highlight";
+  import RegexBuilder from "./RegexBuilder.svelte";
   import { t } from "../../lib/i18n/t";
 
   let inputEl: HTMLInputElement | undefined = $state();
+  // SRC-M20 — the builder is a popover beside the regex toggle.
+  let builderOpen = $state(false);
+  const regexOn = $derived(searchOptsStore.get("enable_regex"));
 
   const segments = $derived(highlight(queryStore.source, queryStore.report));
   const err = $derived(firstError(queryStore.report));
@@ -45,7 +50,32 @@
       oninput={onInput}
       onkeydown={onKey}
     />
+    <div class="tools">
+      <button
+        type="button"
+        class="tool"
+        class:on={regexOn}
+        aria-pressed={regexOn}
+        title={t("menu-search-enable-regex")}
+        aria-label={t("menu-search-enable-regex")}
+        data-testid="regex-toggle"
+        onclick={() => searchOptsStore.toggle("enable_regex")}>.*</button
+      >
+      <button
+        type="button"
+        class="tool"
+        class:on={builderOpen}
+        aria-expanded={builderOpen}
+        title={t("regex-builder-title")}
+        aria-label={t("regex-builder-title")}
+        data-testid="regex-builder-open"
+        onclick={() => (builderOpen = !builderOpen)}>⌄</button
+      >
+    </div>
   </div>
+  {#if builderOpen}
+    <RegexBuilder onclose={() => (builderOpen = false)} />
+  {/if}
   {#if err}
     <div class="error-pill" role="status">
       <span class="dot"></span>
@@ -56,12 +86,45 @@
 
 <style>
   .search-bar {
+    /* `position: relative` anchors the SRC-M20 builder popover. */
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 4px;
     padding: 8px 12px;
     background: var(--bg-surface);
     border-bottom: 1px solid var(--border);
+  }
+
+  .tools {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    display: flex;
+    gap: 2px;
+    /* Above the input so the buttons are clickable; the input's own
+       padding-right keeps text from running underneath them. */
+    z-index: 2;
+  }
+  .tool {
+    min-width: 24px;
+    height: 24px;
+    padding: 0 5px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: none;
+    color: var(--text-secondary);
+    font: 12px/1 var(--font-mono);
+    cursor: pointer;
+  }
+  .tool:hover {
+    background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  }
+  .tool.on {
+    border-color: var(--accent-violet);
+    color: var(--accent-violet);
+    background: color-mix(in srgb, var(--accent-violet) 18%, transparent);
   }
 
   .input-wrap {
@@ -89,6 +152,8 @@
     background: var(--bg-canvas);
     z-index: 1;
     outline: none;
+    /* Room for the two tool buttons overlaid on the right. */
+    padding-right: 64px;
   }
   .mirror {
     display: none;

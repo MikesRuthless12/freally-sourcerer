@@ -75,6 +75,39 @@ pub async fn files_reveal(
         .map_err(|e| e.to_string())
 }
 
+/// SRC-M19 — hand the file to macOS's own Quick Look.
+///
+/// The in-app modal is the cross-platform surface and is what the
+/// arrow-key flow drives; this is the escape hatch for a format macOS
+/// can render and Freally's preview host cannot (Keynote, Sketch, a
+/// signed PDF with an embedded form). It opens a separate OS window, so
+/// it is a deliberate action rather than the default: `qlmanage` cannot
+/// be driven from Freally's key handling, and silently replacing the
+/// modal with it would break the flow the feature exists for.
+///
+/// The path is gated by the same registry as every other file command,
+/// and passed as an argument to `Command` — never through a shell — so
+/// a name containing spaces or shell metacharacters is inert.
+#[tauri::command]
+pub fn quick_look_native(path: String, known: State<'_, KnownPaths>) -> Result<(), String> {
+    verify_path(&path, &known)?;
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("qlmanage")
+            .arg("-p")
+            .arg(&path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("could not start Quick Look: {e}"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("native Quick Look is a macOS feature".to_string())
+    }
+}
+
 #[tauri::command]
 pub fn files_copy_path(
     paths: Vec<String>,

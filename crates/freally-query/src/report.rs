@@ -175,6 +175,8 @@ pub enum ModifierDetail {
     Volume { needle: String },
     Parent { needle: String },
     Child { needle: String },
+    NamePrefix { needle: String },
+    NameSuffix { needle: String },
     Similar { needle: String },
     AudioLufs { op: String, lufs: f32 },
     AudioCodec { codecs: Vec<String> },
@@ -318,6 +320,11 @@ fn is_freally_only_modifier(key: &str) -> bool {
             | "samplerate"
             | "silence"
             | "dr"
+            // SRC-M23 — voidtools' Everything has no anchored-match
+            // syntax, so strict mode has to reject these two the same
+            // way it rejects the audio surface.
+            | "name^"
+            | "name$"
     )
 }
 
@@ -341,9 +348,13 @@ fn classify_word_kind(lex: &str, next: Option<&crate::parser::Token>) -> TokenKi
     if let Some(colon) = lex.find(':') {
         let key = &lex[..colon];
         let val = &lex[colon + 1..];
+        // Must track `parser::classify_word`'s gate exactly. When these
+        // two disagree the query runs correctly and the search bar
+        // paints it the wrong colour — a modifier shown as a literal.
         if !key.is_empty()
             && (key.chars().all(|c| c.is_ascii_alphabetic() || c == '_')
-                || crate::parser::is_hyphenated_modifier(key))
+                || crate::parser::is_hyphenated_modifier(key)
+                || crate::parser::is_anchored_modifier(key))
         {
             // `regex:<pattern>` is a regex term, not a modifier.
             if key.eq_ignore_ascii_case("regex") {
@@ -496,6 +507,8 @@ fn modifier_name(kind: &ModifierKind) -> &'static str {
         ModifierKind::Volume(_) => "volume",
         ModifierKind::Parent(_) => "parent",
         ModifierKind::Child(_) => "child",
+        ModifierKind::NamePrefix(_) => "name^",
+        ModifierKind::NameSuffix(_) => "name$",
         ModifierKind::Similar(_) => "similar",
         ModifierKind::Audio(p) => match p {
             AudioPredicate::Lufs { .. } => "lufs",
@@ -581,6 +594,8 @@ impl From<&ModifierKind> for ModifierDetail {
             ModifierKind::Volume(s) => ModifierDetail::Volume { needle: s.clone() },
             ModifierKind::Parent(s) => ModifierDetail::Parent { needle: s.clone() },
             ModifierKind::Child(s) => ModifierDetail::Child { needle: s.clone() },
+            ModifierKind::NamePrefix(s) => ModifierDetail::NamePrefix { needle: s.clone() },
+            ModifierKind::NameSuffix(s) => ModifierDetail::NameSuffix { needle: s.clone() },
             ModifierKind::Similar(s) => ModifierDetail::Similar { needle: s.clone() },
             ModifierKind::Audio(p) => match p {
                 AudioPredicate::Lufs { op, lufs } => ModifierDetail::AudioLufs {

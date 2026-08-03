@@ -24,6 +24,15 @@ use freally_journal::JournalEvent;
 use tracing::{info, warn};
 use walkdir::WalkDir;
 
+use crate::permissions::PermissionLedger;
+
+/// SRC-M21 — shared handle to the skipped-path ledger.
+///
+/// `Option` at every call site because the scanner is also driven from
+/// smoke tests and the MFT path, neither of which has a `DaemonState`
+/// to hang a ledger on.
+pub type Ledger = Arc<std::sync::Mutex<PermissionLedger>>;
+
 /// Batch size — how many `JournalEvent`s to accumulate before
 /// flushing into Tantivy's writer. Bumped vs. the legacy
 /// per-commit batch so the bootstrap path spends more time in
@@ -41,9 +50,23 @@ const PROGRESS_EVERY: u64 = 50_000;
 ///
 /// Skips directories that fail to read (permission denied, locked,
 /// missing) with a warn log rather than aborting the whole scan.
-pub fn scan_folder(idx: Arc<Index>, root: PathBuf) -> Result<u64, anyhow::Error> {
+pub fn scan_folder(
+    idx: Arc<Index>,
+    root: PathBuf,
+    ledger: Option<Ledger>,
+) -> Result<u64, anyhow::Error> {
     let started = Instant::now();
     info!(root = %root.display(), "scan start");
+
+    // SRC-M21 — a rescan re-walks the tree, so last pass's findings for
+    // this root are stale before the first entry is read. Dropping them
+    // up front is what makes a fixed permission stop being reported.
+    if let Some(l) = &ledger {
+        l.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear_under(&root);
+    }
+    let volume = root.to_string_lossy().to_string();
 
     let mut total: u64 = 0;
     let mut batch: Vec<JournalEvent> = Vec::with_capacity(BATCH_SIZE);
@@ -56,7 +79,15 @@ pub fn scan_folder(idx: Arc<Index>, root: PathBuf) -> Result<u64, anyhow::Error>
         .filter_map(|res| match res {
             Ok(e) => Some(e),
             Err(e) => {
+                // SRC-M21 — this used to be the whole story: a warn line
+                // in a log nobody opens, and a result list that looks
+                // identical whether a subtree was empty or unreadable.
                 warn!(error = %e, "walk entry skipped");
+                if let (Some(l), Some(p), Some(io)) = (&ledger, e.path(), e.io_error()) {
+                    l.lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .record(p, io, &volume);
+                }
                 None
             }
         })
@@ -154,7 +185,7 @@ pub fn scan_folder(idx: Arc<Index>, root: PathBuf) -> Result<u64, anyhow::Error>
 /// immediately and the indexd worker pool isn't held by a multi-minute
 /// directory walk. Tries the MFT fast path on Windows; falls back to
 /// `walkdir` if that errors.
-pub fn spawn_scan(idx: Arc<Index>, root: &Path) {
+pub fn spawn_scan(idx: Arc<Index>, root: &Path, ledger: Option<Ledger>) {
     let root = root.to_path_buf();
     tokio::task::spawn_blocking(move || {
         #[cfg(windows)]
@@ -173,7 +204,7 @@ pub fn spawn_scan(idx: Arc<Index>, root: &Path) {
                 }
             }
         }
-        if let Err(e) = scan_folder(idx, root.clone()) {
+        if let Err(e) = scan_folder(idx, root.clone(), ledger) {
             warn!(root = %root.display(), error = %e, "scan failed");
         }
     });

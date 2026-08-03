@@ -166,7 +166,11 @@ fn needs_hydration(node: &QueryNode) -> bool {
             | ModifierKind::Parent(_)
             | ModifierKind::Attrib(_)
             | ModifierKind::Ext(_) => true,
-            ModifierKind::Child(_) => false,
+            // SRC-M23 — anchored on the filename, which the name index
+            // already carries, so no hydration either.
+            ModifierKind::Child(_) | ModifierKind::NamePrefix(_) | ModifierKind::NameSuffix(_) => {
+                false
+            }
             ModifierKind::Similar(_) => false,
             // Audio predicates need the FileRow's path + mtime_ns to
             // hit the AudioAttributesProvider.
@@ -212,11 +216,15 @@ fn pick_seed(node: &QueryNode) -> String {
                 // unions per-disjunct candidate sets; Phase 5 keeps it
                 // simple to ship the gate.
             }
-            QueryNode::Modifier(m) => {
-                if let ModifierKind::Child(c) = &m.kind {
-                    out.push(c.to_lowercase());
-                }
-            }
+            QueryNode::Modifier(m) => match &m.kind {
+                // SRC-M23 — an anchored needle is still a literal
+                // substring of the name, so it seeds trigrams just as
+                // well as `name:` does.
+                ModifierKind::Child(c)
+                | ModifierKind::NamePrefix(c)
+                | ModifierKind::NameSuffix(c) => out.push(c.to_lowercase()),
+                _ => {}
+            },
             QueryNode::QuickFilter(_) | QueryNode::True | QueryNode::Not(_) => {}
             // Lens scopes are transparent for seed picking — the
             // inner literal (if any) still drives trigram routing.
@@ -345,7 +353,12 @@ pub fn execute_with_catalogs(
     // and must stay invariant under the query string alone, so that
     // toggling `match_path` between two callers with the same query
     // doesn't poison each other's cached plan.
-    let use_seed = !plan.seed.is_empty() && !opts.match_mode.match_path;
+    // SRC-M23 adds the same problem for a different reason: ignoring
+    // punctuation or whitespace rewrites the text before comparing, so
+    // the trigrams of the raw name no longer describe what the needle
+    // asks for. See `MatchMode::rewrites_text`.
+    let use_seed =
+        !plan.seed.is_empty() && !opts.match_mode.match_path && !opts.match_mode.rewrites_text();
     let mut survivors_ids: Vec<u64> = Vec::new();
     let mut survivors_names: Vec<String> = Vec::new();
     let mut stats = ExecStats {
@@ -656,6 +669,16 @@ fn clamp_groups(groups: Vec<DupeGroup>, len: usize) -> Vec<DupeGroup> {
 }
 
 fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
+    // SRC-M24 — every string column goes through the same comparator, so
+    // "sort by natural order" does not quietly mean "only the name
+    // column".
+    let text = |a: &str, b: &str| -> Ordering {
+        if spec.natural {
+            crate::natural::natural_cmp(a, b)
+        } else {
+            a.cmp(b)
+        }
+    };
     let cmp = |a: &FileRow, b: &FileRow| -> Ordering {
         match spec.field {
             // `Relevance` is only meaningful inside the similarity-lens
@@ -663,8 +686,23 @@ fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
             // generic Phase-5 path it degrades to Name — matches the
             // Phase 11 UI's "Sort by Relevance" fallback for non-
             // similarity queries.
-            SortField::Name | SortField::Relevance => a.name_lower.cmp(&b.name_lower),
-            SortField::Path => a.path.cmp(&b.path),
+            SortField::Name | SortField::Relevance => text(&a.name_lower, &b.name_lower),
+            // With natural sort off this stays `PathBuf::cmp`, which
+            // orders by component rather than by byte — the ordering
+            // this column has always had. Natural sort has to read the
+            // path as text to see the digit runs at all, so the two
+            // branches are not just "same order, digits aware"; that is
+            // the one column where the toggle changes more than digits.
+            SortField::Path => {
+                if spec.natural {
+                    crate::natural::natural_cmp(
+                        &a.path.to_string_lossy(),
+                        &b.path.to_string_lossy(),
+                    )
+                } else {
+                    a.path.cmp(&b.path)
+                }
+            }
             SortField::Size => a.size.cmp(&b.size),
             SortField::Date => a.mtime_ns.cmp(&b.mtime_ns),
             // Phase 5 collapses voidtools' "Type" (display-name from
@@ -673,7 +711,12 @@ fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
             // registry restore the distinction; until then both sort
             // keys behave identically and the UI must label the two
             // entries separately for parity with Everything.
-            SortField::Type | SortField::Ext => a.ext.cmp(&b.ext),
+            // Extensionless files keep sorting first, which is what
+            // `Option::cmp` did before.
+            SortField::Type | SortField::Ext => match (a.ext.as_deref(), b.ext.as_deref()) {
+                (Some(x), Some(y)) => text(x, y),
+                (x, y) => x.is_some().cmp(&y.is_some()),
+            },
         }
     };
     match spec.order {
@@ -856,7 +899,13 @@ struct EvalCtx<'a> {
 /// over an undecidable subtree has to let the row through instead.
 fn name_decidable(node: &QueryNode) -> bool {
     match node {
-        QueryNode::Modifier(m) => matches!(m.kind, ModifierKind::Child(_) | ModifierKind::Ext(_)),
+        QueryNode::Modifier(m) => matches!(
+            m.kind,
+            ModifierKind::Child(_)
+                | ModifierKind::NamePrefix(_)
+                | ModifierKind::NameSuffix(_)
+                | ModifierKind::Ext(_)
+        ),
         QueryNode::Text(_) | QueryNode::QuickFilter(_) | QueryNode::True => true,
         QueryNode::Not(inner) => name_decidable(inner),
         QueryNode::And(parts) | QueryNode::Or(parts) => parts.iter().all(name_decidable),
@@ -888,6 +937,11 @@ fn eval_name(node: &QueryNode, name_lower: &[u8], phonetic: Option<&[u8]>, mm: &
                 substring_match(name_lower, needle, mm)
                     || phon(mm).is_some_and(|ph| substring_match(ph, needle, mm))
             }
+            // SRC-M23. No phonetic fallback: a reading is appended to
+            // the name behind a separator, so "starts with" and "ends
+            // with" against it would anchor on the wrong text.
+            ModifierKind::NamePrefix(needle) => anchored_match(name_lower, needle, mm, true),
+            ModifierKind::NameSuffix(needle) => anchored_match(name_lower, needle, mm, false),
             // Modifiers we can pre-filter by extension/name from the
             // lowercase name buffer. They still re-evaluate at the
             // full-record stage when hydration reads the canonical
@@ -993,6 +1047,8 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow, ctx: &EvalCtx<'_>) -> bool 
             .map(|s| s.to_lowercase().contains(&needle.to_lowercase()))
             .unwrap_or(false),
         ModifierKind::Child(needle) => row.name_lower.contains(&needle.to_lowercase()),
+        ModifierKind::NamePrefix(needle) => row.name_lower.starts_with(&needle.to_lowercase()),
+        ModifierKind::NameSuffix(needle) => row.name_lower.ends_with(&needle.to_lowercase()),
         ModifierKind::Similar(_) => {
             // `execute_with` routes Similar-bearing queries through the
             // similarity-lens path before reaching here. Hitting this
@@ -1179,11 +1235,48 @@ fn literal_match(target_lower_or_cased: &str, needle: &str, mm: &MatchMode) -> b
     } else {
         needle.to_lowercase()
     };
+    // SRC-M23 — strip the ignored classes from *both* sides. Stripping
+    // only the target would make `foobar` find `foo-bar` but leave
+    // `foo-bar` unable to find `foobar`, which reads as a bug rather
+    // than as a match mode.
+    if mm.rewrites_text() {
+        let t = strip_ignored(target_eff, mm);
+        let n = strip_ignored(&needle_lc, mm);
+        // Whole-word is meaningless once the separators that define word
+        // boundaries have been removed — `foo-bar` becomes one word. The
+        // stripped comparison is the more specific request, so it wins.
+        return t.contains(&n);
+    }
     if mm.whole_word {
         whole_word_contains(target_eff, &needle_lc)
     } else {
         target_eff.contains(&needle_lc)
     }
+}
+
+/// Remove the character classes the active match mode ignores.
+///
+/// Uses Unicode's own categories rather than an ASCII list, so `’`
+/// and `–` are dropped alongside `'` and `-`.
+fn strip_ignored(s: &str, mm: &MatchMode) -> String {
+    s.chars()
+        .filter(|c| {
+            let drop_punct =
+                mm.ignore_punctuation && (c.is_ascii_punctuation() || is_unicode_punctuation(*c));
+            let drop_space = mm.ignore_whitespace && c.is_whitespace();
+            !drop_punct && !drop_space
+        })
+        .collect()
+}
+
+/// Punctuation and symbols outside ASCII.
+///
+/// `char` has no `is_punctuation`, and pulling in a Unicode-category
+/// crate for this would add a dependency to satisfy one predicate. The
+/// test is "not alphanumeric, not whitespace, not a control character",
+/// which over the non-ASCII range is exactly punctuation and symbols.
+fn is_unicode_punctuation(c: char) -> bool {
+    !c.is_ascii() && !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control()
 }
 
 fn whole_word_contains(haystack: &str, needle: &str) -> bool {
@@ -1231,7 +1324,41 @@ fn substring_match(target_lower: &[u8], needle: &str, mm: &MatchMode) -> bool {
     } else {
         strip_diacritics(&needle_lc)
     };
+    // SRC-M23 — `name:foo-bar` has to behave like the bare term
+    // `foo-bar` under Ignore Punctuation. Without this, turning the mode
+    // on would change what a literal matches but not what `name:`
+    // matches, which is the same query written two ways.
+    if mm.rewrites_text() {
+        return strip_ignored(&target_eff, mm).contains(&strip_ignored(&needle_eff, mm));
+    }
     target_eff.contains(&needle_eff)
+}
+
+/// SRC-M23 — `name^:` / `name$:`. Same normalization ladder as
+/// [`substring_match`], anchored at one end instead of free-floating.
+///
+/// The ignore-punctuation / ignore-whitespace strip runs last, so
+/// `name^:foo` still matches `foo-bar.txt` when those modes are on.
+fn anchored_match(target_lower: &[u8], needle: &str, mm: &MatchMode, prefix: bool) -> bool {
+    let s = match std::str::from_utf8(target_lower) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let needle_lc = needle.to_lowercase();
+    let (mut target_eff, mut needle_eff) = if mm.match_diacritics {
+        (s.to_string(), needle_lc)
+    } else {
+        (strip_diacritics(s), strip_diacritics(&needle_lc))
+    };
+    if mm.rewrites_text() {
+        target_eff = strip_ignored(&target_eff, mm);
+        needle_eff = strip_ignored(&needle_eff, mm);
+    }
+    if prefix {
+        target_eff.starts_with(&needle_eff)
+    } else {
+        target_eff.ends_with(&needle_eff)
+    }
 }
 
 /// NFKD-decompose, drop combining marks, recompose. Cheap diacritic
@@ -1441,6 +1568,9 @@ fn execute_similar(
         SortSpec {
             field: SortField::Name,
             order: SortOrder::Asc,
+            // "Did the user leave the sort alone?" — whether digit runs
+            // read as numbers has no bearing on that.
+            ..
         }
     ) || matches!(opts.sort.field, SortField::Relevance)
     {

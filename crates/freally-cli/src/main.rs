@@ -41,6 +41,12 @@ struct Cli {
     #[arg(long, global = true)]
     socket: Option<String>,
 
+    /// SRC-M17 — talk to the portable install in the `Data/` folder
+    /// beside this binary rather than the per-user one. Also turned on
+    /// by a `portable.flag` file beside the binary.
+    #[arg(long, global = true)]
+    portable: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -200,9 +206,12 @@ fn init_tracing() {
 /// Returns the process exit code. Only `search` distinguishes
 /// hits-from-no-hits; the control commands succeed or return `Err`.
 async fn run(cli: Cli) -> Result<u8> {
+    if cli.portable {
+        freally_rpc::portable::activate();
+    }
     let socket = match cli.socket {
         Some(s) => parse_socket_arg(&s),
-        None => default_socket_path(),
+        None => freally_rpc::portable::socket_path().unwrap_or_else(default_socket_path),
     };
     match cli.command {
         Command::Search {

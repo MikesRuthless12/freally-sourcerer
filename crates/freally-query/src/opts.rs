@@ -17,6 +17,33 @@ pub struct MatchMode {
     /// keys are indexed either way, so toggling this takes effect on
     /// the next query rather than requiring a reindex.
     pub match_phonetic: bool,
+    /// SRC-M23 — drop punctuation from both sides before comparing, so
+    /// `foobar` finds `foo-bar` and `foo_bar` finds `foobar`.
+    ///
+    /// "Punctuation" is Unicode's own definition plus symbols, so it
+    /// covers `-`, `_`, `.`, `'` and their non-ASCII equivalents without
+    /// a hand-maintained list.
+    pub ignore_punctuation: bool,
+    /// SRC-M23 — drop whitespace from both sides before comparing, so
+    /// `myreport` finds `my report`.
+    pub ignore_whitespace: bool,
+}
+
+impl MatchMode {
+    /// True when a flag rewrites the text before comparing, which means
+    /// the trigram seed built over raw names can no longer be trusted to
+    /// contain the matching rows.
+    ///
+    /// `foo-bar` indexes the trigrams `foo`, `oo-`, `o-b`, `-ba`, `bar`.
+    /// The needle `foobar` asks for `oob` and `oba`, which that row does
+    /// not have — so seeding from trigrams would return nothing at all,
+    /// silently, which is the failure mode SRC-M12 hit with phonetic
+    /// readings. The executor falls back to a full scan instead; these
+    /// flags are opt-in and off by default, so nobody pays for it
+    /// without asking.
+    pub fn rewrites_text(&self) -> bool {
+        self.ignore_punctuation || self.ignore_whitespace
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +71,12 @@ pub enum SortOrder {
 pub struct SortSpec {
     pub field: SortField,
     pub order: SortOrder,
+    /// SRC-M24 — read digit runs as numbers, so `file2` precedes
+    /// `file10`. On by default because byte ordering on numbered files
+    /// is the wrong answer often enough that Everything made natural
+    /// sort its default too; Settings → Results turns it off for anyone
+    /// who wants raw ordering back.
+    pub natural: bool,
 }
 
 impl Default for SortSpec {
@@ -51,6 +84,7 @@ impl Default for SortSpec {
         Self {
             field: SortField::Name,
             order: SortOrder::Asc,
+            natural: true,
         }
     }
 }

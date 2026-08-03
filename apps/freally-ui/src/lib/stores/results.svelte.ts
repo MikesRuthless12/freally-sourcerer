@@ -24,13 +24,14 @@ import type {
 import { fileListStore } from "./file_list.svelte";
 import { refineStore } from "./refine.svelte";
 import { selectionStore } from "./selection.svelte";
+import { recentSearchesStore } from "./recent_searches.svelte";
 import { settingsStore } from "./settings.svelte";
 import { typeFilterStore } from "./type_filter.svelte";
 
 /** Lens render order, mirrored from `ResultList`. Held here too so
  *  `visibleHits` walks the lenses in the order they appear on screen —
  *  an export should come out in reading order. */
-const LENS_ORDER: LensId[] = ["filename", "content", "audio", "similarity"];
+export const LENS_ORDER: LensId[] = ["filename", "content", "audio", "similarity"];
 
 interface RunningQuery {
   handle: string;
@@ -97,6 +98,10 @@ class ResultsStore {
 
   async run(source: string) {
     const my = ++this.seq;
+    // SRC-M22 — feed the sidebar's Recent list. Fire-and-forget: a
+    // settings write must never delay a keystroke-rate search, and a
+    // failed one is not worth failing the query over.
+    void recentSearchesStore.record(source).catch(() => {});
     // Drop the previous suggestion before anything else: it belongs to
     // the query being replaced, and leaving it up while the new one
     // runs would offer a correction for a term no longer on screen.
@@ -149,7 +154,8 @@ class ResultsStore {
       ({ handle } = await ipcQuery.run(composed, {
         strict_everything: settingsStore.state.strict_everything_mode,
         per_lens_limits: settingsStore.state.default_lens_result_limits,
-        match_phonetic: settingsStore.state.search_opts?.match_phonetic ?? false
+        // SRC-M23 — the whole toggle set, not just the phonetic one.
+        search_opts: settingsStore.state.search_opts
       }));
     } catch (e) {
       console.warn("[results] run failed:", e);

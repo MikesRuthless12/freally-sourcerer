@@ -44,10 +44,12 @@ impl BookmarksStore {
 }
 
 fn data_path(app: &tauri::AppHandle, file: &str) -> PathBuf {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .unwrap_or_else(|_| std::env::temp_dir().join("freally"));
+    // SRC-M17 — a portable install keeps bookmarks beside the binary.
+    let dir = freally_rpc::portable::data_dir().unwrap_or_else(|| {
+        app.path()
+            .app_data_dir()
+            .unwrap_or_else(|_| std::env::temp_dir().join("freally"))
+    });
     let _ = std::fs::create_dir_all(&dir);
     dir.join(file)
 }

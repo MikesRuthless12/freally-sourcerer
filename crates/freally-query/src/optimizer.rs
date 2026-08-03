@@ -67,6 +67,10 @@ pub fn selectivity_rank(node: &QueryNode) -> u8 {
         QueryNode::Text(TextPattern::Literal(_)) => 10,
         QueryNode::QuickFilter(_) => 11,
         QueryNode::Modifier(m) => match &m.kind {
+            // SRC-M23 — an anchored match is strictly narrower than the
+            // substring it implies, so it earns a better rank than
+            // `child:` and gets evaluated first.
+            ModifierKind::NamePrefix(_) | ModifierKind::NameSuffix(_) => 11,
             // `child:` is `name:`-equivalent — cheap, name-buffer-only.
             ModifierKind::Child(_) => 12,
             // Extension lookup is a bytewise compare on the name's
