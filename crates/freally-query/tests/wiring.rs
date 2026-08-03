@@ -272,6 +272,7 @@ fn sort_size_desc() {
         sort: SortSpec {
             field: SortField::Size,
             order: SortOrder::Desc,
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -362,4 +363,166 @@ fn plan_cache_survives_match_path_toggle() {
         "match_path on should widen target — got {:?}",
         rs.rows().iter().map(|r| &r.name).collect::<Vec<_>>()
     );
+}
+
+// ---------- SRC-M23: ignore punctuation / whitespace -------------------
+
+#[test]
+fn ignore_punctuation_matches_across_separators() {
+    let idx = idx_with_files(vec![
+        create("/synth/foo-bar.txt", 1, 0),
+        create("/synth/foo_bar.txt", 1, 0),
+        create("/synth/foobar.txt", 1, 0),
+        create("/synth/foozbar.txt", 1, 0),
+    ]);
+    let opts = ExecOpts {
+        match_mode: MatchMode {
+            ignore_punctuation: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let q = parse("foobar").unwrap();
+    let rs = execute(&idx, &q, opts).unwrap();
+    let names: Vec<&str> = rs.rows().iter().map(|r| r.name.as_str()).collect();
+    assert!(names.contains(&"foo-bar.txt"));
+    assert!(names.contains(&"foo_bar.txt"));
+    assert!(names.contains(&"foobar.txt"));
+    // A letter between the halves is not punctuation — still no match.
+    assert!(!names.contains(&"foozbar.txt"));
+}
+
+#[test]
+fn ignore_punctuation_strips_the_needle_too() {
+    // Stripping only the target would make `foobar` find `foo-bar` but
+    // leave `foo-bar` unable to find `foobar`, which reads as a bug.
+    let idx = idx_with_files(vec![create("/synth/foobar.txt", 1, 0)]);
+    let opts = ExecOpts {
+        match_mode: MatchMode {
+            ignore_punctuation: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let q = parse("foo-bar").unwrap();
+    let rs = execute(&idx, &q, opts).unwrap();
+    assert_eq!(rs.rows().len(), 1);
+}
+
+#[test]
+fn ignore_whitespace_matches_across_spaces() {
+    let idx = idx_with_files(vec![
+        create("/synth/my report.txt", 1, 0),
+        create("/synth/myreport.txt", 1, 0),
+        create("/synth/my-report.txt", 1, 0),
+    ]);
+    let opts = ExecOpts {
+        match_mode: MatchMode {
+            ignore_whitespace: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let q = parse("myreport").unwrap();
+    let rs = execute(&idx, &q, opts).unwrap();
+    let names: Vec<&str> = rs.rows().iter().map(|r| r.name.as_str()).collect();
+    assert!(names.contains(&"my report.txt"));
+    assert!(names.contains(&"myreport.txt"));
+    // Whitespace only — a hyphen is punctuation and stays.
+    assert!(!names.contains(&"my-report.txt"));
+}
+
+#[test]
+fn ignore_punctuation_is_off_by_default() {
+    // The flags widen what a query hits, so they must never be implied.
+    let idx = idx_with_files(vec![create("/synth/foo-bar.txt", 1, 0)]);
+    let q = parse("foobar").unwrap();
+    let rs = execute(&idx, &q, ExecOpts::default()).unwrap();
+    assert!(rs.rows().is_empty());
+}
+
+#[test]
+fn ignoring_text_drops_the_trigram_seed() {
+    // The seed is built from the raw name's trigrams; `foo-bar` has no
+    // `oob` or `oba`, so seeding from it would return nothing at all
+    // for the needle `foobar`. The executor must fall back to a scan.
+    let idx = idx_with_files(vec![create("/synth/foo-bar.txt", 1, 0)]);
+    let opts = ExecOpts {
+        match_mode: MatchMode {
+            ignore_punctuation: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let q = parse("foobar").unwrap();
+    let rs = execute(&idx, &q, opts).unwrap();
+    assert_eq!(
+        rs.rows().len(),
+        1,
+        "ignore_punctuation must not be filtered out by the trigram seed"
+    );
+}
+
+// ---------- SRC-M23: anchored name matching ----------------------------
+
+#[test]
+fn name_prefix_anchors_at_the_start() {
+    let idx = idx_with_files(vec![
+        create("/synth/report-final.md", 1, 0),
+        create("/synth/draft-report.md", 1, 0),
+        create("/synth/report.md", 1, 0),
+    ]);
+    let q = parse("name^:report").unwrap();
+    let rs = execute(&idx, &q, ExecOpts::default()).unwrap();
+    let names: Vec<&str> = rs.rows().iter().map(|r| r.name.as_str()).collect();
+    assert!(names.contains(&"report-final.md"));
+    assert!(names.contains(&"report.md"));
+    assert!(!names.contains(&"draft-report.md"));
+}
+
+#[test]
+fn name_suffix_anchors_at_the_end_including_the_extension() {
+    let idx = idx_with_files(vec![
+        create("/synth/alpha-final.md", 1, 0),
+        create("/synth/final-alpha.md", 1, 0),
+        create("/synth/beta-final.txt", 1, 0),
+    ]);
+    // The anchor is the whole name, so the extension is part of it.
+    let q = parse("name$:final.md").unwrap();
+    let rs = execute(&idx, &q, ExecOpts::default()).unwrap();
+    let names: Vec<&str> = rs.rows().iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, vec!["alpha-final.md"]);
+}
+
+#[test]
+fn anchored_matching_composes_with_ignore_punctuation() {
+    let idx = idx_with_files(vec![
+        create("/synth/my-report.md", 1, 0),
+        create("/synth/summary.md", 1, 0),
+    ]);
+    let opts = ExecOpts {
+        match_mode: MatchMode {
+            ignore_punctuation: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let q = parse("name^:myreport").unwrap();
+    let rs = execute(&idx, &q, opts).unwrap();
+    assert_eq!(rs.rows().len(), 1);
+    assert_eq!(rs.rows()[0].name, "my-report.md");
+}
+
+#[test]
+fn anchored_matching_survives_a_negation() {
+    // `name_decidable` has to know about the new variants, or `NOT`
+    // over them silently rejects every row.
+    let idx = idx_with_files(vec![
+        create("/synth/report-a.md", 1, 0),
+        create("/synth/draft-b.md", 1, 0),
+    ]);
+    let q = parse("!name^:report").unwrap();
+    let rs = execute(&idx, &q, ExecOpts::default()).unwrap();
+    let names: Vec<&str> = rs.rows().iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, vec!["draft-b.md"]);
 }

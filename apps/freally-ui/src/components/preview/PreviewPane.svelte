@@ -3,12 +3,30 @@
   import { selectionStore } from "../../lib/stores/selection.svelte";
   import { settingsStore } from "../../lib/stores/settings.svelte";
   import * as files from "../../lib/ipc/files";
+  import { mediaKind } from "../../lib/ipc/media";
+  import MediaPlayer from "./MediaPlayer.svelte";
   import { t } from "../../lib/i18n/t";
   import type { PreviewPayload } from "../../lib/ipc/types";
 
   let payload = $state<PreviewPayload | null>(null);
   let loading = $state(false);
   let lastPath = "";
+
+  // SRC-M18 — the selected row, when it is something we can play. Read
+  // from the hit rather than from the preview payload: the payload is
+  // whatever the preview host could render, and a media file's payload
+  // is "unsupported", which is precisely the case worth playing.
+  const playable = $derived.by(() => {
+    const id = [...selectionStore.ids][0];
+    if (!id) return null;
+    for (const batch of resultsStore.batches) {
+      const hit = batch.hits.find((h) => h.file_id === id);
+      if (!hit) continue;
+      const kind = mediaKind(hit.ext ?? "");
+      return kind ? { path: hit.path, name: hit.name, kind } : null;
+    }
+    return null;
+  });
 
   $effect(() => {
     if (!settingsStore.state.show_preview) return;
@@ -66,7 +84,9 @@
   <aside class="preview" aria-label={t("preview-header")}>
     <header>{t("preview-header")}</header>
     <div class="body">
-      {#if loading}
+      {#if playable}
+        <MediaPlayer path={playable.path} name={playable.name} kind={playable.kind} />
+      {:else if loading}
         <div class="hint">{t("preview-loading")}</div>
       {:else if !payload}
         <div class="hint">{t("preview-select-file")}</div>

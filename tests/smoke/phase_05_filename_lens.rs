@@ -181,6 +181,7 @@ fn sort_specs_reorder_results() {
         sort: SortSpec {
             field: SortField::Size,
             order: SortOrder::Desc,
+            ..Default::default()
         },
         ..Default::default()
     };

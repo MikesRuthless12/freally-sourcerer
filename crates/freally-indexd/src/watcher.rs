@@ -291,7 +291,15 @@ impl WatcherSupervisor {
         let stop = Arc::new(AtomicBool::new(false));
         let (stop_tx, stop_rx) = futures::channel::oneshot::channel::<()>();
 
-        let opened = freally_journal::open(&root);
+        // SRC-M17 — journal cursors are the one piece of daemon state
+        // that does not hang off the index root: each OS subscriber
+        // defaults to its own per-user location. A portable install has
+        // to redirect them explicitly or it leaves cursors behind on
+        // every machine it is plugged into.
+        let opened = match freally_rpc::portable::data_dir() {
+            Some(data) => freally_journal::open_with_cursor_root(&root, &data.join("cursors")),
+            None => freally_journal::open(&root),
+        };
         let (state, subscriber, opened_generation) = match opened {
             Ok(sub) => {
                 let sub = Arc::new(sub);

@@ -14,7 +14,17 @@ use tauri_plugin_deep_link::DeepLinkExt;
 
 pub fn register<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     // Register the scheme at runtime (Tauri 2 handles per-OS plumbing).
-    let _ = app.deep_link().register("freally");
+    //
+    // SRC-M17 — not in portable mode. This writes a machine-level
+    // handler (registry on Windows, LaunchServices on macOS, a .desktop
+    // entry on Linux) pointing at the executable's current path. Unplug
+    // the stick and every `freally://` link on that machine is a dangling
+    // handler. The in-process listener below still runs, so a portable
+    // instance handles URLs it is handed — it just does not claim the
+    // scheme.
+    if !freally_rpc::portable::is_active() {
+        let _ = app.deep_link().register("freally");
+    }
 
     let app_clone = app.clone();
     app.deep_link().on_open_url(move |event| {

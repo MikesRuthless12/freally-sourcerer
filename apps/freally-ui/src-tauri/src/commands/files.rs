@@ -23,7 +23,7 @@ use crate::preview;
 /// JS-opened dialog. Destructive commands ask for [`Provenance::QueryHit`]
 /// (daemon-attested) and content-writing ones for
 /// [`Provenance::UserChosen`].
-fn verify_path(path: &str, known: &KnownPaths) -> Result<(), String> {
+pub(super) fn verify_readable(path: &str, known: &KnownPaths) -> Result<(), String> {
     known.verify(path, Provenance::FrontendAsserted).map(|_| ())
 }
 
@@ -53,7 +53,7 @@ pub async fn files_open(
     app: AppHandle,
     known: State<'_, KnownPaths>,
 ) -> Result<(), String> {
-    verify_path(&path, &known)?;
+    verify_readable(&path, &known)?;
     app.opener()
         .open_path(&path, None::<&str>)
         .map_err(|e| e.to_string())
@@ -65,7 +65,7 @@ pub async fn files_reveal(
     app: AppHandle,
     known: State<'_, KnownPaths>,
 ) -> Result<(), String> {
-    verify_path(&path, &known)?;
+    verify_readable(&path, &known)?;
     let parent = std::path::Path::new(&path)
         .parent()
         .map(|p| p.to_string_lossy().to_string())
@@ -75,6 +75,39 @@ pub async fn files_reveal(
         .map_err(|e| e.to_string())
 }
 
+/// SRC-M19 — hand the file to macOS's own Quick Look.
+///
+/// The in-app modal is the cross-platform surface and is what the
+/// arrow-key flow drives; this is the escape hatch for a format macOS
+/// can render and Freally's preview host cannot (Keynote, Sketch, a
+/// signed PDF with an embedded form). It opens a separate OS window, so
+/// it is a deliberate action rather than the default: `qlmanage` cannot
+/// be driven from Freally's key handling, and silently replacing the
+/// modal with it would break the flow the feature exists for.
+///
+/// The path is gated by the same registry as every other file command,
+/// and passed as an argument to `Command` — never through a shell — so
+/// a name containing spaces or shell metacharacters is inert.
+#[tauri::command]
+pub fn quick_look_native(path: String, known: State<'_, KnownPaths>) -> Result<(), String> {
+    verify_readable(&path, &known)?;
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("qlmanage")
+            .arg("-p")
+            .arg(&path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("could not start Quick Look: {e}"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("native Quick Look is a macOS feature".to_string())
+    }
+}
+
 #[tauri::command]
 pub fn files_copy_path(
     paths: Vec<String>,
@@ -82,7 +115,7 @@ pub fn files_copy_path(
     known: State<'_, KnownPaths>,
 ) -> Result<(), String> {
     for p in &paths {
-        verify_path(p, &known)?;
+        verify_readable(p, &known)?;
     }
     app.clipboard()
         .write_text(paths.join("\n"))
@@ -96,7 +129,7 @@ pub fn files_copy_name(
     known: State<'_, KnownPaths>,
 ) -> Result<(), String> {
     for p in &paths {
-        verify_path(p, &known)?;
+        verify_readable(p, &known)?;
     }
     let names: Vec<String> = paths
         .iter()
@@ -136,7 +169,7 @@ pub async fn files_thumbnail(
     size: u32,
     known: State<'_, KnownPaths>,
 ) -> Result<String, String> {
-    verify_path(&path, &known)?;
+    verify_readable(&path, &known)?;
     // Clamp size so a hostile caller can't request a 4-billion-pixel SVG.
     let size = size.clamp(16, 512);
     let path_for_task = path.clone();
@@ -155,9 +188,9 @@ pub async fn files_preview(
 ) -> Result<PreviewPayload, String> {
     let t0 = std::time::Instant::now();
     tracing::info!(target: "freally::preview", path = %path, "files_preview ENTER");
-    if let Err(e) = verify_path(&path, &known) {
+    if let Err(e) = verify_readable(&path, &known) {
         tracing::warn!(target: "freally::preview", path = %path, error = %e,
-            "files_preview verify_path REJECTED");
+            "files_preview verify_readable REJECTED");
         return Err(e);
     }
     // The actual preview work (file read + base64 encode for images,

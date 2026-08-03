@@ -1,12 +1,16 @@
 <script lang="ts">
   import Section from "../controls/Section.svelte";
   import { t } from "../../../lib/i18n/t";
+  import { environment, type AppEnvironment } from "../../../lib/ipc/app_env";
 
-  const VERSION = "0.19.84";
   const VENDOR_URL = "https://github.com/MikesRuthless12/freally-sourcerer";
   const VOIDTOOLS_URL = "https://www.voidtools.com/";
 
   let osVer = $state<string | null>(null);
+  // Read from the running process. This used to be a hardcoded constant
+  // and had drifted three releases behind what shipped.
+  let env = $state<AppEnvironment | null>(null);
+
   $effect(() => {
     void (async () => {
       try {
@@ -15,6 +19,16 @@
         osVer = v;
       } catch {
         osVer = null;
+      }
+    })();
+  });
+
+  $effect(() => {
+    void (async () => {
+      try {
+        env = await environment();
+      } catch {
+        env = null;
       }
     })();
   });
@@ -42,8 +56,13 @@
 <h1>{t("settings-node-about")}</h1>
 
 <Section title={t("about-section-version")}>
-  <p>{t("settings-about-version", { version: `v${VERSION}` })}</p>
+  <p>{t("settings-about-version", { version: env ? `v${env.version}` : "…" })}</p>
   <p class="muted">{osVer ?? "Detecting OS…"}</p>
+  {#if env?.portable}
+    <p><strong>{t("about-portable-on")}</strong></p>
+    <p class="muted">{t("about-portable-hint")}</p>
+    <p class="path">{env.data_dir}</p>
+  {/if}
 </Section>
 
 <Section title={t("about-section-license")}>
@@ -67,5 +86,6 @@
   h1 { margin: 0 0 4px; font-size: 18px; color: var(--text-primary); }
   p { color: var(--text-primary); font-size: 13px; line-height: 1.5; margin: 4px 0; }
   p.muted { color: var(--text-secondary); font-size: 12px; }
+  p.path { font-family: var(--font-mono, monospace); font-size: 12px; word-break: break-all; }
   button.link { background: none; border: 0; color: var(--accent-cyan); cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
 </style>

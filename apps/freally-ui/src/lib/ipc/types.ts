@@ -388,6 +388,11 @@ export interface SearchOpts {
    *  jamo matches Hangul. Off by default: it widens what a query can
    *  hit, so it is opt-in like Match Diacritics beside it. */
   match_phonetic: boolean;
+  /** SRC-M23 — `foobar` finds `foo-bar`, and `foo-bar` finds `foobar`.
+   *  Punctuation is dropped from both sides before comparing. */
+  ignore_punctuation: boolean;
+  /** SRC-M23 — `myreport` finds `my report`. */
+  ignore_whitespace: boolean;
   enable_regex: boolean;
 }
 
@@ -629,6 +634,14 @@ export interface SettingsState {
   do_not_select_extension_when_renaming: boolean;
   sort_date_descending_first: boolean;
   sort_size_descending_first: boolean;
+  /** SRC-M24 — read digit runs as numbers, so `file2` precedes `file10`. */
+  natural_sort: boolean;
+  /** SRC-M22 — the optional left sidebar (View → Sidebar). */
+  show_sidebar: boolean;
+  /** SRC-M22 — most-recent-first; empty when history is off. */
+  recent_searches: string[];
+  /** SRC-M22 — bookmark ids in the sidebar's drag order. */
+  sidebar_bookmark_order: string[];
   result_list_focus: ResultListFocusChoice;
   load_icon_priority: LoadPriorityChoice;
   load_thumbnail_priority: LoadPriorityChoice;

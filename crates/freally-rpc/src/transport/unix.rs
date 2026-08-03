@@ -5,6 +5,7 @@
 //! on the socket file, this ensures only the same user can connect.
 
 use std::io;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -54,10 +55,20 @@ pub fn listen(path: &Path) -> RpcResult<UnixListener> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
         // 0700 on the parent directory belt-and-suspenders the socket's
-        // own 0600 permission.
+        // own 0600 permission — but only when we can actually set it.
+        // A caller may legitimately hand us a path whose parent is not
+        // ours to chmod (`/tmp`, a smoke test's scratch dir), and
+        // `chmod 0700 /tmp` fails with EPERM for every non-root user.
+        // Hard-failing there took the whole daemon down rather than the
+        // hardening step.
         let mut perms = std::fs::metadata(parent)?.permissions();
         perms.set_mode(0o700);
-        std::fs::set_permissions(parent, perms)?;
+        if let Err(e) = std::fs::set_permissions(parent, perms) {
+            tracing::debug!(
+                parent = %parent.display(), error = %e,
+                "could not tighten the socket directory; relying on the socket's own 0600"
+            );
+        }
     }
     // Remove any stale socket left over from a previous run.
     match std::fs::remove_file(path) {
@@ -72,7 +83,41 @@ pub fn listen(path: &Path) -> RpcResult<UnixListener> {
     Ok(listener)
 }
 
+/// Connect to a UDS, refusing one this user does not own.
+///
+/// The counterpart of [`accept_authenticated`]'s peer-uid check. That
+/// one stops a foreign process reaching *our* listener; this one stops
+/// *us* reaching a foreign listener. Without it, any socket path an
+/// attacker can pre-create is an impersonation of the daemon — and the
+/// shell trusts whatever comes back over that connection enough to mint
+/// `Provenance::QueryHit` from it, which is the gate on every
+/// destructive file command.
 pub async fn connect(path: &Path) -> RpcResult<UnixStream> {
+    // `symlink_metadata`, not `metadata`: a symlink pointing at a
+    // socket we *do* own would otherwise pass while the link itself is
+    // attacker-controlled.
+    let md = std::fs::symlink_metadata(path)?;
+    let me = unsafe { libc::getuid() };
+    if md.uid() != me {
+        return Err(RpcError::Io(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "refusing to connect to {}: owned by uid {}, not {me}",
+                path.display(),
+                md.uid()
+            ),
+        )));
+    }
+    if md.mode() & 0o077 != 0 {
+        return Err(RpcError::Io(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "refusing to connect to {}: mode {:o} is reachable by other users",
+                path.display(),
+                md.mode() & 0o777
+            ),
+        )));
+    }
     let stream = UnixStream::connect(path).await?;
     Ok(stream)
 }

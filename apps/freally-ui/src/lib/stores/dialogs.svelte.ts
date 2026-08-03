@@ -11,6 +11,7 @@ export type ModalId =
   | "connect_endpoint"
   | "custom_extractor_manager"
   | "index_health"
+  | "permission_health"
   | "bulk_rename"
   | "more_freally_apps";
 

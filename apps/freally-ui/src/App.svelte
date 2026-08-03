@@ -12,16 +12,19 @@
   import AboutDialog from "./components/dialogs/AboutDialog.svelte";
   import BulkRenameDialog from "./components/dialogs/BulkRenameDialog.svelte";
   import IndexHealthDialog from "./components/dialogs/IndexHealthDialog.svelte";
+  import PermissionHealthDialog from "./components/dialogs/PermissionHealthDialog.svelte";
   import MoreFreallyAppsDialog from "./components/dialogs/MoreFreallyAppsDialog.svelte";
   import ConnectEndpointDialog from "./components/dialogs/ConnectEndpointDialog.svelte";
   import SettingsDialog from "./components/settings/SettingsDialog.svelte";
   import ToastHost from "./components/ToastHost.svelte";
   import ResultContextMenu from "./components/results/ResultContextMenu.svelte";
   import HitViewer from "./components/preview/HitViewer.svelte";
+  import QuickLook from "./components/preview/QuickLook.svelte";
   import { bootstrap } from "./lib/bootstrap";
   import { dialogsStore } from "./lib/stores/dialogs.svelte";
   import { settingsStore } from "./lib/stores/settings.svelte";
   import { queryStore } from "./lib/stores/query.svelte";
+  import { quickLookStore } from "./lib/stores/quicklook.svelte";
 
   onMount(() => {
     void bootstrap();
@@ -89,12 +92,19 @@
   open={dialogsStore.active === "index_health"}
   onClose={() => dialogsStore.close()}
 />
+<PermissionHealthDialog
+  open={dialogsStore.active === "permission_health"}
+  onClose={() => dialogsStore.close()}
+/>
 <MoreFreallyAppsDialog
   open={dialogsStore.active === "more_freally_apps"}
   onClose={() => dialogsStore.close()}
 />
 <ResultContextMenu />
 <HitViewer />
+{#if quickLookStore.open}
+  <QuickLook />
+{/if}
 <ToastHost />
 
 <style>

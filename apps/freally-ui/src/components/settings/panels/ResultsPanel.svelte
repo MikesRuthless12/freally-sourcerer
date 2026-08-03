@@ -34,6 +34,8 @@
     checked={settingsStore.state.sort_date_descending_first} onChange={(v) => patch("sort_date_descending_first", v)} />
   <Checkbox id="rs-sort-size-desc" label={t("settings-results-sort-size-desc")}
     checked={settingsStore.state.sort_size_descending_first} onChange={(v) => patch("sort_size_descending_first", v)} />
+  <Checkbox id="rs-natural-sort" label={t("settings-results-natural-sort")}
+    checked={settingsStore.state.natural_sort} onChange={(v) => patch("natural_sort", v)} />
   <Dropdown id="rs-focus" label={t("settings-results-list-focus")}
     value={settingsStore.state.result_list_focus}
     options={[ { value: "clamp", label: t("opt-clamp-default") }, { value: "wrap", label: t("opt-wrap") }, { value: "none", label: t("opt-none") } ]}

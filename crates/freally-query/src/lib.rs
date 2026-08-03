@@ -32,6 +32,7 @@ pub mod cache;
 pub mod error;
 pub mod exec;
 pub mod keywords;
+pub mod natural;
 pub mod optimizer;
 pub mod opts;
 pub mod parser;

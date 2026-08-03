@@ -31,6 +31,11 @@ mod windows_service;
 #[derive(Debug, Parser)]
 #[command(name = "freally-indexd", about = "Freally indexer daemon", version)]
 struct Cli {
+    /// SRC-M17 — keep the index, config and logs in a `Data/` folder
+    /// beside this binary, and refuse to register anything with the OS.
+    /// Also turned on by a `portable.flag` file beside the binary.
+    #[arg(long, global = true)]
+    portable: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -60,12 +65,32 @@ enum Command {
 }
 
 fn main() -> Result<()> {
-    init_tracing();
+    // Parse before logging: portable mode decides where the log goes,
+    // and `--portable` is only visible after the parse.
     let cli = Cli::parse();
+    if cli.portable {
+        freally_rpc::portable::activate();
+    }
+    init_tracing();
     let cmd = cli.command.unwrap_or(Command::Run {
         index_root: None,
         socket: None,
     });
+    // SRC-M17 — a portable install owns nothing outside its own `Data/`
+    // folder. Registering a service would write to the SCM, a LaunchAgent
+    // plist, or a systemd unit, all of which outlive the USB stick and
+    // point at a path that will not be there next boot.
+    if matches!(
+        cmd,
+        Command::Install { .. } | Command::Uninstall | Command::Service
+    ) && freally_rpc::portable::is_active()
+    {
+        anyhow::bail!(
+            "portable mode does not register an OS service. Run `freally-indexd run` \
+             instead, or remove the `portable.flag` file beside this binary to install \
+             normally."
+        );
+    }
     match cmd {
         Command::Run { index_root, socket } => run_foreground(index_root, socket),
         #[cfg(windows)]
@@ -105,13 +130,33 @@ fn main() -> Result<()> {
 }
 
 fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    // A portable install is normally double-clicked, so stderr goes
+    // nowhere a user can read. Log to `Data/logs/` instead — and fall
+    // back to stderr if that file cannot be opened, rather than losing
+    // the diagnostics that would explain why.
+    if let Some(file) = freally_rpc::portable::log_dir().and_then(open_log_file) {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_ansi(false)
+            .with_writer(std::sync::Mutex::new(file))
+            .try_init();
+        return;
+    }
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
+        .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .try_init();
+}
+
+fn open_log_file(dir: std::path::PathBuf) -> Option<std::fs::File> {
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("indexd.log"))
+        .ok()
 }
 
 fn run_foreground(index_root: Option<String>, socket: Option<String>) -> Result<()> {
@@ -119,14 +164,20 @@ fn run_foreground(index_root: Option<String>, socket: Option<String>) -> Result<
         .enable_all()
         .build()?;
     rt.block_on(async {
+        // An explicit `--index-root` still wins in portable mode: the
+        // Tauri shell always passes one, and a smoke test needs to be
+        // able to point a portable daemon at a scratch directory.
         let opts = DaemonOptions {
-            index_root: index_root.map(Into::into),
+            index_root: index_root
+                .map(Into::into)
+                .or_else(freally_rpc::portable::index_root),
             ..Default::default()
         };
         let state: Arc<DaemonState> = DaemonState::open(opts)?;
         let socket_path = match socket {
             Some(s) => parse_socket_arg(&s),
-            None => freally_rpc::default_socket_path(),
+            None => freally_rpc::portable::socket_path()
+                .unwrap_or_else(freally_rpc::default_socket_path),
         };
         tracing::info!("freally-indexd starting; socket={socket_path:?}");
         let handle = freally_indexd::spawn_at(state.clone(), socket_path).await?;

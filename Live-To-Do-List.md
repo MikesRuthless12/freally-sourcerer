@@ -28,6 +28,17 @@ Run it with `pnpm build && PW_CHANNEL=msedge pnpm test:e2e` from
 - [x] Connect-to-FTP-Server dialog via Tools menu (`06-connect-endpoint`)
 - [x] First-run wizard for a fresh install (`07-first-run-wizard`)
 - [x] Bulk Rename dialog: preview table renders `Will rename` / `Unchanged` / collision, Apply disabled while blocked (`09-bulk-rename`) — SRC-M15
+- [x] Regex builder popover: pattern field, live match count against the shown names, cheat sheet (`10-regex-builder`) — SRC-M20
+- [x] Regex builder rejects an invalid pattern with the engine's own error and disables *Use this pattern* — SRC-M20 (assertion only, no shot)
+- [x] Permission health report: status-bar badge opens it, volume group expands to the skipped subtrees (`11-permission-health`) — SRC-M21
+- [x] Sidebar renders bookmarks, filters, volumes and recent searches via View → Sidebar (`12-sidebar`) — SRC-M22
+
+**Build 3 run, 2026-08-02: `12 passed, 1 skipped`.** The four new specs
+drive real UI paths — the two regex ones go through the search-bar
+button rather than the menu bar, so they sidestep the submenu problem
+below entirely. The sidebar spec had to query `menuitemcheckbox`, not
+`menuitem`: `MenuBar` gives checkable entries the checkbox role, and a
+`menuitem` query matches nothing at all rather than failing loudly.
 - [ ] **Index Health panel** (`08-index-health`) — SRC-M13. Marked `test.fixme`;
       the panel is fine, the *spec* cannot drive the one submenu in the menu
       bar. It opens on `mouseenter` and closes on `mouseleave`, so the item is

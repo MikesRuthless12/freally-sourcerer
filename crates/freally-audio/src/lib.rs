@@ -48,12 +48,14 @@ pub mod attributes;
 pub mod cache;
 pub mod error;
 pub mod measure;
+pub mod peaks;
 pub mod provider;
 
-pub use analyze::{AnalysisOpts, analyze_file, analyze_with_opts};
+pub use analyze::{AnalysisOpts, analyze_file, analyze_with_opts, analyze_with_peaks};
 pub use attributes::{AudioAttributes, AudioCodec};
 pub use cache::AudioCache;
 pub use error::AudioError;
+pub use peaks::PeakCollector;
 pub use provider::{AudioAttributesProvider, NullProvider};
 
 /// Set of file extensions the analyzer claims. Mirrors symphonia's
