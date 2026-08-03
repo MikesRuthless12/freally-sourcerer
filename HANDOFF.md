@@ -2,7 +2,8 @@
 
 **Written:** 2026-08-03, at the close of Build 3.
 **State:** `v0.23.0` is tagged and merged to `main`. All 24 Must-Haves
-(SRC-M01 … SRC-M24) are closed. Three-OS CI green on run 30779141435.
+(SRC-M01 … SRC-M24) are closed. Three-OS CI green on `main`.
+**Not finished:** `docs/index.html` still needs promoting to 0.23.0 — see §5.2.
 
 Read this alongside `docs/ROADMAP.md` (the task list) and
 `Freally-Sourcerer-Feature-Roadmap.md` (the feature specs). This file
@@ -225,7 +226,70 @@ Still open from Build 2, unchanged:
 
 ---
 
-## 5. What comes next in the plan
+## 5. Releasing — what bit this build, and will bit the next one
+
+### 5.1 Tag with no changelog section = four failed jobs, zero artifacts
+
+`.github/workflows/release.yml` extracts release notes from
+`## [<version>]` in `docs/CHANGELOG.md` and **refuses to publish without
+them**. Build 3's entries were written under `## [Unreleased]`, so
+pushing `v0.23.0` failed all four platform jobs at
+*"refusing to ship empty release notes"* before compiling anything.
+
+Before tagging `v0.24.0`, rename the `## [Unreleased]` heading to
+`## [0.24.0] — …` and open a fresh `## [Unreleased]` **below** it. The
+extractor runs from the version heading to the next `## `, so anything
+left underneath — the stale TASK-098 entry, for one — gets swallowed
+into the published notes and the updater dialog if the boundary is
+missing.
+
+Because nothing had been published, the fix was to move the tag onto the
+corrected commit rather than bump the version. That is only safe while
+no release exists. Once artifacts are out, the repo's own rule applies:
+a patch release must bump the version, because re-tagging reaches nobody
+who already installed.
+
+### 5.2 Promoting `docs/index.html` is a separate manual step, after the build
+
+The site's download rows carry **real byte sizes**, read from the
+published assets — v0.22.0's promotion commit says so explicitly, and
+every size moved between 0.21.0 and 0.22.0, so carrying them over is
+always wrong. So the order is:
+
+1. Merge → tag → release workflow builds and publishes.
+2. `gh release view v<version> --json assets` for the real sizes.
+3. Edit `docs/index.html`: new `<article class="release latest">` block
+   with seven installer links, demote the previous release to a short
+   `<article class="release">` entry under `<!-- Previous releases -->`,
+   and flip that version's row in the "Road to v1.0.0" `<ol
+   class="timeline">` from `badge upcoming` / *Next* to `badge` /
+   *Shipped &lt;date&gt; · Latest*.
+4. Verify every link resolves before committing.
+
+**This was not finished for v0.23.0.** At the time of writing the
+release build (run `30780452254`) had `windows-x86_64` and
+`macos-aarch64` green with the two remaining jobs still queued on runner
+availability. If `docs/index.html` still shows `0.22.0` as latest, this
+step is the outstanding one — and `docs/ROADMAP.md`'s "Build 3 release"
+tick is ahead of reality until it is done.
+
+### 5.3 The Windows Tantivy flake is real and will recur
+
+`cargo test` on `windows-latest` intermittently fails with
+`Tantivy("An IO error occurred: 'Access is denied. (os error 5)'")` —
+Defender opening a freshly written segment while Tantivy renames it.
+The CI workflow already excludes the workspace, `$RUNNER_TEMP` and the
+process temp dir from real-time scanning (see the long comment on that
+step; it has been hit and patched twice before), and it still happens.
+
+It bit `wiring.rs:37` on the merge commit. The same code had passed on
+the PR branch and passed again on the next `main` run, all three OSes.
+**Re-run before investigating** — but if it becomes frequent rather than
+occasional, the honest fix is fewer parallel Tantivy indexes in that
+test file. Build 3 took `wiring.rs` from 18 tests to 27, each building
+its own index, which is more concurrent pressure than it used to apply.
+
+## 6. What comes next in the plan
 
 `v0.23.0` closed the Must-Have gate. Per
 `Freally-Sourcerer-Feature-Roadmap.md`, Build 4 is **v0.24.0 — Phase 15,
@@ -254,7 +318,7 @@ v0.23.1 before any Nice-to-Have work begins.
 
 ---
 
-## 6. Verification commands
+## 7. Verification commands
 
 ```
 cargo fmt --all -- --check
