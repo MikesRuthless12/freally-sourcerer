@@ -28,8 +28,56 @@ const DAEMON: &str = env!("CARGO_BIN_EXE_freally-indexd");
 fn staged_daemon(dir: &Path) -> PathBuf {
     let src = PathBuf::from(DAEMON);
     let dst = dir.join(src.file_name().expect("daemon binary has a file name"));
+    // A copy, not a hard link. Linking would avoid the write that
+    // causes the ETXTBSY race below, but portable mode keys off
+    // `current_exe()`, and what that reports for a hard link is a
+    // question about how the kernel recorded the exec — not something
+    // to bet the test's meaning on. `spawn_staged` handles the race.
     std::fs::copy(&src, &dst).expect("stage the daemon binary into the scratch dir");
     dst
+}
+
+/// Spawn a freshly staged binary, retrying on `ETXTBSY`.
+///
+/// Linux refuses to `execve` a file that any process still holds open
+/// for writing. The test harness runs these cases on parallel threads,
+/// and a `fork` in one thread inherits whatever write descriptors the
+/// others happen to have open at that instant — so a sibling test
+/// staging *its* copy can make this one's exec fail with "Text file
+/// busy". It is a race in the harness, not in the daemon, and the
+/// window is microseconds; a bounded retry closes it without pretending
+/// the first failure did not happen.
+fn spawn_staged(bin: &Path, args: &[&str], piped: bool) -> std::process::Child {
+    let mut last = None;
+    for attempt in 0..50 {
+        let mut cmd = Command::new(bin);
+        cmd.args(args);
+        if piped {
+            cmd.stdout(std::process::Stdio::piped());
+            cmd.stderr(std::process::Stdio::piped());
+        }
+        match cmd.spawn() {
+            Ok(child) => return child,
+            // ETXTBSY.
+            Err(e) if e.raw_os_error() == Some(26) => {
+                last = Some(e);
+                std::thread::sleep(Duration::from_millis(20 * (attempt + 1)));
+            }
+            Err(e) => panic!("spawn {} failed: {e}", bin.display()),
+        }
+    }
+    panic!(
+        "spawn {} still ETXTBSY after retrying: {:?}",
+        bin.display(),
+        last
+    );
+}
+
+/// Same retry, for the short-lived commands that only need their output.
+fn output_staged(bin: &Path, args: &[&str]) -> std::process::Output {
+    spawn_staged(bin, args, true)
+        .wait_with_output()
+        .expect("collect the staged binary's output")
 }
 
 /// The daemon opens its index during boot, so the directory appears
@@ -53,7 +101,7 @@ fn a_flag_file_beside_the_binary_blocks_service_registration() {
     let bin = staged_daemon(tmp.path());
     std::fs::write(tmp.path().join("portable.flag"), b"").unwrap();
 
-    let out = Command::new(&bin).arg("install").output().unwrap();
+    let out = output_staged(&bin, &["install"]);
 
     assert!(
         !out.status.success(),
@@ -71,11 +119,7 @@ fn the_portable_switch_blocks_service_registration_too() {
     let tmp = tempfile::tempdir().unwrap();
     let bin = staged_daemon(tmp.path());
     // No flag file this time — the switch alone must be enough.
-    let out = Command::new(&bin)
-        .arg("--portable")
-        .arg("install")
-        .output()
-        .unwrap();
+    let out = output_staged(&bin, &["--portable", "install"]);
 
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
@@ -92,11 +136,7 @@ fn uninstall_is_refused_as_well() {
     // host machine — the opposite of leaving no trace.
     let tmp = tempfile::tempdir().unwrap();
     let bin = staged_daemon(tmp.path());
-    let out = Command::new(&bin)
-        .arg("--portable")
-        .arg("uninstall")
-        .output()
-        .unwrap();
+    let out = output_staged(&bin, &["--portable", "uninstall"]);
 
     assert!(!out.status.success());
     assert!(
@@ -118,12 +158,7 @@ fn a_portable_daemon_keeps_its_index_and_log_beside_the_binary() {
     } else {
         tmp.path().join("smoke.sock").display().to_string()
     };
-    let mut child = Command::new(&bin)
-        .arg("run")
-        .arg("--socket")
-        .arg(&socket)
-        .spawn()
-        .expect("spawn the portable daemon");
+    let mut child = spawn_staged(&bin, &["run", "--socket", &socket], false);
 
     let data = tmp.path().join("Data");
     let index = data.join("index");
