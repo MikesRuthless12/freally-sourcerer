@@ -209,6 +209,15 @@ pub enum ModifierKind {
     Parent(String),
     /// `child:src` — substring on the filename.
     Child(String),
+    /// SRC-M23 `name^:report` — the filename *starts with* the needle.
+    NamePrefix(String),
+    /// SRC-M23 `name$:final` — the filename *ends with* the needle.
+    ///
+    /// Note this anchors on the whole name, extension included, so
+    /// `name$:report` does not match `report.txt`. That is the literal
+    /// reading of "ends with", and `name$:report.txt` or `ext:` express
+    /// the other intent.
+    NameSuffix(String),
     /// `similar:report-final` — Phase-6 LSH-backed near-duplicate
     /// search. The needle is the comparison name; the executor routes
     /// it to the `SimilarityIndex` candidate set.

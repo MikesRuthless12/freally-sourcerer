@@ -39,20 +39,28 @@ use crate::measure::silence::SilenceCounter;
 pub struct AnalysisOpts {
     pub cancel: Option<Arc<AtomicBool>>,
     pub time_budget: Option<std::time::Duration>,
+    /// SRC-M18 — collect a waveform envelope of this many buckets
+    /// during the same decode.
+    ///
+    /// Private on purpose: peaks come back through
+    /// [`analyze_with_peaks`], and a `pub` field here would let a caller
+    /// set it on `analyze_with_opts`, which has nowhere to return them
+    /// and would silently throw them away.
+    peak_buckets: Option<usize>,
 }
 
 impl AnalysisOpts {
     pub fn with_cancel(cancel: Arc<AtomicBool>) -> Self {
         Self {
             cancel: Some(cancel),
-            time_budget: None,
+            ..Self::default()
         }
     }
 
     pub fn with_time_budget(budget: std::time::Duration) -> Self {
         Self {
-            cancel: None,
             time_budget: Some(budget),
+            ..Self::default()
         }
     }
 }
@@ -112,6 +120,36 @@ pub fn analyze_file(path: &Path) -> Result<AudioAttributes, AudioError> {
 }
 
 pub fn analyze_with_opts(path: &Path, opts: AnalysisOpts) -> Result<AudioAttributes, AudioError> {
+    analyze_inner(path, opts, &mut None)
+}
+
+/// SRC-M18 — attributes **and** a waveform envelope from a single
+/// decode.
+///
+/// The preview pane needs both, and decoding a track twice to get them
+/// separately is the obvious wrong answer for a pane that opens on every
+/// selection change.
+pub fn analyze_with_peaks(
+    path: &Path,
+    buckets: usize,
+) -> Result<(AudioAttributes, Vec<f32>), AudioError> {
+    let mut peaks = None;
+    let attrs = analyze_inner(
+        path,
+        AnalysisOpts {
+            peak_buckets: Some(buckets),
+            ..AnalysisOpts::default()
+        },
+        &mut peaks,
+    )?;
+    Ok((attrs, peaks.unwrap_or_default()))
+}
+
+fn analyze_inner(
+    path: &Path,
+    opts: AnalysisOpts,
+    peaks_out: &mut Option<Vec<f32>>,
+) -> Result<AudioAttributes, AudioError> {
     // Resolve the cancel flag early so the time-budget supervisor (if
     // any) can flip it. If the caller did not supply one, allocate a
     // private flag so the supervisor still has a wire to pull.
@@ -126,11 +164,16 @@ pub fn analyze_with_opts(path: &Path, opts: AnalysisOpts) -> Result<AudioAttribu
     let opts = AnalysisOpts {
         cancel: Some(cancel),
         time_budget: None,
+        peak_buckets: opts.peak_buckets,
     };
-    do_analyze(path, opts)
+    do_analyze(path, opts, peaks_out)
 }
 
-fn do_analyze(path: &Path, opts: AnalysisOpts) -> Result<AudioAttributes, AudioError> {
+fn do_analyze(
+    path: &Path,
+    opts: AnalysisOpts,
+    peaks_out: &mut Option<Vec<f32>>,
+) -> Result<AudioAttributes, AudioError> {
     // Extension gate — keeps the analyzer from probing arbitrary
     // binaries on a Phase-9 lazy lookup. Ext is checked case-insensitively.
     let ext = path
@@ -202,6 +245,11 @@ fn do_analyze(path: &Path, opts: AnalysisOpts) -> Result<AudioAttributes, AudioE
 
     let mut loudness = LoudnessAccumulator::new(channels, sample_rate)?;
     let mut silence = SilenceCounter::new();
+    // SRC-M18 — rides along with the same decode rather than costing a
+    // second pass over the file.
+    let mut peaks = opts
+        .peak_buckets
+        .map(|b| crate::peaks::PeakCollector::new(b, params.n_frames.unwrap_or(0), channels));
     let mut packet_idx = 0usize;
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
 
@@ -268,6 +316,9 @@ fn do_analyze(path: &Path, opts: AnalysisOpts) -> Result<AudioAttributes, AudioE
                     let interleaved = sb.samples();
                     silence.add(interleaved);
                     loudness.feed(interleaved)?;
+                    if let Some(p) = peaks.as_mut() {
+                        p.push(interleaved);
+                    }
                 }
             }
             Err(SymphoniaError::DecodeError(_)) => {
@@ -303,6 +354,8 @@ fn do_analyze(path: &Path, opts: AnalysisOpts) -> Result<AudioAttributes, AudioE
     } else {
         0.0
     };
+
+    *peaks_out = peaks.map(|p| p.finish());
 
     Ok(AudioAttributes {
         codec,

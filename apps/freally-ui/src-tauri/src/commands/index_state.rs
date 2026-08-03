@@ -19,6 +19,21 @@ pub fn index_health() -> Result<freally_rpc::IndexHealth, String> {
         .map_err(|e| e.to_string())
 }
 
+/// SRC-M21 — the permission health report.
+///
+/// Typed as raw JSON rather than a mirrored struct: the shape lives in
+/// `freally_indexd::permissions`, which the Tauri shell deliberately
+/// does not depend on (that would pull tantivy through the daemon's dep
+/// tree into every CI matrix entry). The TypeScript side owns the
+/// schema, exactly as it does for the settings extras.
+#[tauri::command]
+pub fn index_permissions() -> Result<serde_json::Value, String> {
+    let daemon = daemon::get().ok_or_else(|| "daemon not initialized".to_string())?;
+    daemon
+        .call("index.permissions", serde_json::Value::Null)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn index_verify() -> Result<(), String> {
     let daemon = daemon::get().ok_or_else(|| "daemon not initialized".to_string())?;

@@ -90,10 +90,19 @@ mod portable_stub {
     pub fn open(_root: &Path) -> Result<JournalSubscriber, JournalError> {
         Err(JournalError::Unimplemented)
     }
+
+    pub fn open_with_cursor_root(
+        _root: &Path,
+        _cursor_root: &Path,
+    ) -> Result<JournalSubscriber, JournalError> {
+        Err(JournalError::Unimplemented)
+    }
 }
 
 #[cfg(all(not(windows), not(target_os = "macos"), not(target_os = "linux")))]
-pub use portable_stub::{JournalError, JournalEvent, JournalPosition, JournalSubscriber, open};
+pub use portable_stub::{
+    JournalError, JournalEvent, JournalPosition, JournalSubscriber, open, open_with_cursor_root,
+};
 
 #[cfg(test)]
 mod tests {

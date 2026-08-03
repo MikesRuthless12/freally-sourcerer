@@ -38,12 +38,55 @@ use commands::bookmarks::BookmarksStore;
 use commands::known_paths::KnownPaths;
 use commands::settings::SettingsStore;
 
+/// Default raises the floor to `info` for our own crates so the targeted
+/// instrumentation (freally::preview, freally::icons, freally_ui_lib) is
+/// visible without forcing RUST_LOG. Third-party noisy crates stay at
+/// `warn` so the console doesn't get swamped.
+///
+/// A portable install is normally double-clicked and has no console, so
+/// it logs to `Data/logs/freally-ui.log` instead — falling back to the
+/// console if that file cannot be opened, rather than losing the
+/// diagnostics that would explain why.
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new(
+            "warn,freally=info,freally_ui_lib=info,freally_indexd=info",
+        )
+    });
+    if let Some(file) = freally_rpc::portable::log_dir().and_then(open_log_file) {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_ansi(false)
+            .with_writer(std::sync::Mutex::new(file))
+            .try_init();
+        return;
+    }
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+}
+
+fn open_log_file(dir: std::path::PathBuf) -> Option<std::fs::File> {
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("freally-ui.log"))
+        .ok()
+}
+
 /// Single-instance enforcement: kill any other live `freally-ui` /
 /// `freally-indexd` processes before this one boots, so the new launch
 /// can take ownership of the tantivy writer lock + the RPC pipe.
 #[cfg(windows)]
 fn kill_other_freally_instances() {
     use std::process::{Command, Stdio};
+    // SRC-M17 — never in portable mode. This kills by image name, so a
+    // stick plugged into a machine that already runs Freally would take
+    // down the installed app the user was in the middle of using. A
+    // portable instance binds its own pipe and its own index, so it has
+    // nothing to take ownership of.
+    if freally_rpc::portable::is_active() {
+        return;
+    }
     let me = std::process::id();
     let filter = format!("PID ne {me}");
     for name in ["freally-ui.exe", "freally-indexd.exe"] {
@@ -65,19 +108,16 @@ fn kill_other_freally_instances() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env()
-                // Default raises the floor to `info` for our own crates
-                // so the targeted instrumentation (freally::preview,
-                // freally::icons, freally_ui_lib) is visible without
-                // forcing RUST_LOG. Third-party noisy crates stay at
-                // `warn` so the console doesn't get swamped.
-                .unwrap_or_else(|_| {
-                    tracing_subscriber::EnvFilter::new(
-                        "warn,freally=info,freally_ui_lib=info,freally_indexd=info",
-                    )
-                }))
-        .try_init();
+    // SRC-M17 — `--portable` has to be read before anything resolves a
+    // path. Tauri owns the argv it forwards to the webview, so this is a
+    // raw scan rather than a clap parse: the shell takes no other
+    // arguments, and adding a parser here would mean rejecting the
+    // OS-supplied ones (`freally://…` deep links on Linux, `-psn_…` on
+    // macOS) that Tauri expects to see.
+    if std::env::args_os().any(|a| a == "--portable") {
+        freally_rpc::portable::activate();
+    }
+    init_tracing();
 
     // Surface Rust panics in the console with the panic message + a
     // best-effort backtrace location, so a panicking command thread
@@ -105,8 +145,17 @@ pub fn run() {
             // the updater plugin has no mobile target, so guard the
             // registration. Endpoints + pubkey live in tauri.conf.json;
             // CI signs the artifacts via TAURI_SIGNING_PRIVATE_KEY.
+            //
+            // SRC-M17 — off in portable mode. The updater applies an
+            // *installer* (NSIS/MSI on Windows, a bundle swap on macOS);
+            // pointing that at a USB stick would install the app onto the
+            // host machine, which is the one thing a portable user is
+            // trying to avoid. Portable installs update by replacing the
+            // folder.
             #[cfg(desktop)]
-            handle.plugin(tauri_plugin_updater::Builder::new().build())?;
+            if !freally_rpc::portable::is_active() {
+                handle.plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
             // Boot the daemon + RPC client on a background thread so the
             // Tauri setup hook returns immediately and the window can
             // appear right away. Blocking the setup hook on a 10-15s
@@ -149,8 +198,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_exit,
+            // Version + portable-mode status, read from the process.
+            commands::app_env::app_environment,
             // Real-but-local: parse runs in-process at keystroke rate.
             commands::query::query_parse,
+            // SRC-M20 regex builder — same engine as the executor.
+            commands::regex_test::regex_test,
             // Daemon-routed query lifecycle.
             commands::query::query_run,
             commands::query::query_cancel,
@@ -158,6 +211,7 @@ pub fn run() {
             // Daemon-routed index controls.
             commands::index_state::index_state,
             commands::index_state::index_health,
+            commands::index_state::index_permissions,
             commands::index_state::index_verify,
             commands::index_state::index_compact,
             commands::index_state::index_rebuild,
@@ -184,6 +238,11 @@ pub fn run() {
             commands::files::files_preview,
             commands::files::files_copy_text,
             commands::files::files_whitelist_user_chosen,
+            // SRC-M19 — macOS-only escape hatch out of the modal.
+            commands::files::quick_look_native,
+            // SRC-M18 inline media playback.
+            commands::media::media_waveform,
+            commands::media::media_bytes,
             // Build 1 (SRC-M03) file-list interop.
             commands::file_lists::file_list_export,
             commands::file_lists::file_list_import,

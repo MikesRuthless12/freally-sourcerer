@@ -41,3 +41,8 @@ export function copyText(text: string): Promise<void> {
 export function whitelistUserChosen(path: string): Promise<void> {
   return call<void>("files_whitelist_user_chosen", { path });
 }
+
+/** SRC-M19 — macOS only; rejects elsewhere. */
+export function quickLookNative(path: string): Promise<void> {
+  return call<void>("quick_look_native", { path });
+}

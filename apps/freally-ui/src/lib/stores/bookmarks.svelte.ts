@@ -1,6 +1,9 @@
 // Bookmarks store — backed by IPC; loads on hydrate.
 
 import * as ipcBookmarks from "../ipc/bookmarks";
+import { typeFilterStore } from "./type_filter.svelte";
+import { queryStore } from "./query.svelte";
+import { resultsStore } from "./results.svelte";
 import type { Bookmark } from "../ipc/types";
 
 class BookmarksStore {
@@ -21,6 +24,22 @@ class BookmarksStore {
       }
     }
     console.warn("[bookmarks] hydrate gave up after 10s");
+  }
+
+  /**
+   * Load a bookmark into the search bar.
+   *
+   * Lives here rather than in each component because the chip
+   * selection has to be restored *before* the query runs — otherwise
+   * `resultsStore.run()` composes a different lens prefix than the one
+   * the bookmark was saved with, and the saved filters are silently
+   * discarded. The sidebar (SRC-M22) got that wrong by re-implementing
+   * the dropdown's flow instead of sharing it.
+   */
+  async apply(bm: Bookmark) {
+    typeFilterStore.setFromIds(bm.filters ?? []);
+    await queryStore.setSource(bm.query);
+    await resultsStore.run(bm.query);
   }
 
   async add(name: string, query: string, filters?: string[]) {

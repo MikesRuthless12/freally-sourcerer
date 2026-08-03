@@ -24,13 +24,15 @@ import type {
 import { fileListStore } from "./file_list.svelte";
 import { refineStore } from "./refine.svelte";
 import { selectionStore } from "./selection.svelte";
+import { sortStore } from "./sort.svelte";
+import { recentSearchesStore } from "./recent_searches.svelte";
 import { settingsStore } from "./settings.svelte";
 import { typeFilterStore } from "./type_filter.svelte";
 
 /** Lens render order, mirrored from `ResultList`. Held here too so
  *  `visibleHits` walks the lenses in the order they appear on screen —
  *  an export should come out in reading order. */
-const LENS_ORDER: LensId[] = ["filename", "content", "audio", "similarity"];
+export const LENS_ORDER: LensId[] = ["filename", "content", "audio", "similarity"];
 
 interface RunningQuery {
   handle: string;
@@ -97,6 +99,10 @@ class ResultsStore {
 
   async run(source: string) {
     const my = ++this.seq;
+    // SRC-M22 — feed the sidebar's Recent list. Fire-and-forget: a
+    // settings write must never delay a keystroke-rate search, and a
+    // failed one is not worth failing the query over.
+    void recentSearchesStore.record(source).catch(() => {});
     // Drop the previous suggestion before anything else: it belongs to
     // the query being replaced, and leaving it up while the new one
     // runs would offer a correction for a term no longer on screen.
@@ -149,7 +155,8 @@ class ResultsStore {
       ({ handle } = await ipcQuery.run(composed, {
         strict_everything: settingsStore.state.strict_everything_mode,
         per_lens_limits: settingsStore.state.default_lens_result_limits,
-        match_phonetic: settingsStore.state.search_opts?.match_phonetic ?? false
+        // SRC-M23 — the whole toggle set, not just the phonetic one.
+        search_opts: settingsStore.state.search_opts
       }));
     } catch (e) {
       console.warn("[results] run failed:", e);
@@ -206,9 +213,17 @@ class ResultsStore {
    *  would count hits in a lens the user has switched off, and
    *  duplicate-cluster members that grouping dropped. */
   get visibleHits(): QueryHit[] {
-    return LENS_ORDER.flatMap((lens) =>
-      settingsStore.state.lens_visibility[lens] === false ? [] : this.viewForLens(lens).hits
-    );
+    return LENS_ORDER.flatMap((lens) => {
+      if (settingsStore.state.lens_visibility[lens] === false) return [];
+      const view = this.viewForLens(lens);
+      // Sorted the way `LensSection` renders it, so this really is the
+      // order on screen — export, select-all, the status-bar count and
+      // Quick Look's arrow keys all read this, and before SRC-M22 they
+      // disagreed the moment a column sort was active. Grouped
+      // (duplicate-cluster) batches keep the daemon's order: re-sorting
+      // them would break the clusters apart.
+      return view.groups.length > 0 ? view.hits : sortStore.applied(view.hits);
+    });
   }
 
   get total(): number {
