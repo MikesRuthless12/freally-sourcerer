@@ -102,6 +102,7 @@ impl Service for IndexdService {
                 "query.lens_timings" => query_lens_timings(&self, params).await,
                 "index.state" => index_state(&self).await,
                 "index.health" => index_health(&self).await,
+                "index.permissions" => index_permissions(&self).await,
                 "index.verify" => index_verify(&self).await,
                 "index.compact" => index_compact(&self).await,
                 "index.rebuild" => index_rebuild(&self).await,
@@ -164,16 +165,41 @@ struct QueryRunParams {
     strict_everything: bool,
     #[serde(default)]
     per_lens_limits: Option<freally_rpc::PerLensLimits>,
-    /// SRC-M12 — let latin/jamo terms match CJK names phonetically.
+    /// SRC-M23 — the full match-mode set now crosses the wire.
     ///
-    /// Only this match-mode flag crosses the wire. The other four
-    /// (case / whole-word / path / diacritics) are still UI-local and
-    /// never reached the executor, which uses `ExecOpts::default()`;
-    /// sending them now would silently change what existing queries
-    /// return. That gap is real but pre-dates Build 2 and is left
-    /// alone deliberately.
+    /// Through Build 2 only `match_phonetic` did: the other four were
+    /// UI-local, so `Search → Match Case` and friends changed a
+    /// checkmark and nothing else. Every flag defaults to `false`, which
+    /// is what `MatchMode::default()` already was, so a client that
+    /// sends none of them gets exactly the previous behaviour.
     #[serde(default)]
     match_phonetic: bool,
+    #[serde(default)]
+    match_case: bool,
+    #[serde(default)]
+    whole_word: bool,
+    #[serde(default)]
+    match_path: bool,
+    #[serde(default)]
+    match_diacritics: bool,
+    #[serde(default)]
+    ignore_punctuation: bool,
+    #[serde(default)]
+    ignore_whitespace: bool,
+}
+
+impl QueryRunParams {
+    fn match_mode(&self) -> freally_query::MatchMode {
+        freally_query::MatchMode {
+            match_case: self.match_case,
+            whole_word: self.whole_word,
+            match_path: self.match_path,
+            match_diacritics: self.match_diacritics,
+            match_phonetic: self.match_phonetic,
+            ignore_punctuation: self.ignore_punctuation,
+            ignore_whitespace: self.ignore_whitespace,
+        }
+    }
 }
 
 async fn query_run(
@@ -236,11 +262,12 @@ async fn run_query_streaming(
     cancel: Arc<AtomicBool>,
     sink: NotificationSink,
 ) -> LensTimings {
+    let match_mode = p.match_mode();
     let QueryRunParams {
         source,
         strict_everything,
         per_lens_limits,
-        match_phonetic,
+        ..
     } = p;
     let started = std::time::Instant::now();
     let mut timings = LensTimings::default();
@@ -277,7 +304,7 @@ async fn run_query_streaming(
                     &svc.state,
                     query,
                     per_lens_limits.as_ref().map(|l| l.filename).unwrap_or(200),
-                    match_phonetic,
+                    match_mode,
                 )
                 .await
             }
@@ -421,15 +448,12 @@ async fn filename_lens_hits(
     state: &DaemonState,
     query: &freally_query::Query,
     limit: u32,
-    match_phonetic: bool,
+    match_mode: freally_query::MatchMode,
 ) -> (Vec<freally_rpc::QueryHit>, Vec<freally_rpc::HitGroup>) {
     let _ = handle;
     let opts = freally_query::ExecOpts {
         limit: limit as usize,
-        match_mode: freally_query::MatchMode {
-            match_phonetic,
-            ..Default::default()
-        },
+        match_mode,
         ..Default::default()
     };
     // SRC-M14: snapshot the registry once so `volume:` can be typed as a
@@ -527,6 +551,19 @@ async fn index_health(svc: &IndexdService) -> Result<Value, RpcError> {
     ))?)
 }
 
+/// SRC-M21 — the permission health report.
+async fn index_permissions(svc: &IndexdService) -> Result<Value, RpcError> {
+    let ledger = {
+        let guard = svc
+            .state
+            .permissions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        guard.clone()
+    };
+    Ok(serde_json::to_value(crate::permissions::report(&ledger))?)
+}
+
 async fn index_verify(_svc: &IndexdService) -> Result<Value, RpcError> {
     // The Phase 4 index already runs corruption detection on open; an
     // explicit verify rebuilds the manifest checksum table.
@@ -551,7 +588,11 @@ async fn index_rebuild(svc: &IndexdService) -> Result<Value, RpcError> {
         // indexed with no volume, or worse, with the id of whatever used to
         // hold that drive letter.
         svc.state.reconcile_catalogs().await;
-        crate::scanner::spawn_scan(svc.state.index.clone(), &scan_path);
+        crate::scanner::spawn_scan(
+            svc.state.index.clone(),
+            &scan_path,
+            Some(svc.state.permissions.clone()),
+        );
     }
     Ok(json!({ "ok": true }))
 }
@@ -835,7 +876,11 @@ async fn volumes_update(svc: &IndexdService, params: Value) -> Result<Value, Rpc
                 "volumes.update: indexing newly-included volume"
             );
             let mount = std::path::PathBuf::from(&v.mount_point);
-            crate::scanner::spawn_scan(svc.state.index.clone(), &mount);
+            crate::scanner::spawn_scan(
+                svc.state.index.clone(),
+                &mount,
+                Some(svc.state.permissions.clone()),
+            );
         } else {
             tracing::warn!(id = %p.id, "volumes.update: no matching volume to scan");
         }
@@ -901,7 +946,11 @@ async fn folders_add(svc: &IndexdService, params: Value) -> Result<Value, RpcErr
         .persist()
         .await
         .map_err(|e| RpcError::Other(e.to_string()))?;
-    crate::scanner::spawn_scan(svc.state.index.clone(), &scan_path);
+    crate::scanner::spawn_scan(
+        svc.state.index.clone(),
+        &scan_path,
+        Some(svc.state.permissions.clone()),
+    );
     svc.state.reconcile_watchers().await;
     Ok(json!({ "ok": true }))
 }
@@ -949,7 +998,11 @@ async fn folders_rescan(svc: &IndexdService, params: Value) -> Result<Value, Rpc
     drop(cur);
     if let Some(f) = target {
         let scan_path = std::path::PathBuf::from(&f.path);
-        crate::scanner::spawn_scan(svc.state.index.clone(), &scan_path);
+        crate::scanner::spawn_scan(
+            svc.state.index.clone(),
+            &scan_path,
+            Some(svc.state.permissions.clone()),
+        );
     } else {
         tracing::warn!(id = %p.id, "folders.rescan: no folder with that id");
     }
@@ -962,7 +1015,11 @@ async fn folders_rescan_all(svc: &IndexdService) -> Result<Value, RpcError> {
     tracing::info!(count = folders.len(), "folders.rescan_all received");
     for f in folders {
         let scan_path = std::path::PathBuf::from(&f.path);
-        crate::scanner::spawn_scan(svc.state.index.clone(), &scan_path);
+        crate::scanner::spawn_scan(
+            svc.state.index.clone(),
+            &scan_path,
+            Some(svc.state.permissions.clone()),
+        );
     }
     Ok(json!({ "ok": true }))
 }

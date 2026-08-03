@@ -41,9 +41,13 @@ anyhow = "1"
 thiserror = "2"
 parking_lot = "0.12"
 freally-extractors = { path = "../../../crates/freally-extractors" }
+freally-audio = { path = "../../../crates/freally-audio" }
 freally-query = { path = "../../../crates/freally-query" }
 freally-rpc = { path = "../../../crates/freally-rpc" }
 base64 = "0.22"
+# SRC-M20 — the regex builder tests patterns with the same engine the
+# query executor uses, so "it matches here" means "it will match there".
+regex = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(windows)'.dependencies]

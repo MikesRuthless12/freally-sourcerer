@@ -12,6 +12,7 @@
 //! exactly, and round-tripping through the daemon would add a
 //! sub-millisecond keystroke-rate cost we don't need.
 
+pub mod app_env;
 pub mod bookmarks;
 pub mod content_view;
 pub mod custom_extractors;
@@ -24,8 +25,10 @@ pub mod history;
 pub mod icons;
 pub mod index_state;
 pub mod known_paths;
+pub mod media;
 pub mod network;
 pub mod query;
+pub mod regex_test;
 pub mod rename;
 pub mod settings;
 pub mod shell_verbs;

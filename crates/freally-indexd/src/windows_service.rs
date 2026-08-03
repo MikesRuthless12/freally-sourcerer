@@ -280,7 +280,7 @@ async fn run_service_daemon() -> Result<()> {
             tracing::info!(count = folders.len(), "service: starting initial scans");
             for f in folders {
                 let path = std::path::PathBuf::from(&f.path);
-                scanner::spawn_scan(state.index.clone(), &path);
+                scanner::spawn_scan(state.index.clone(), &path, Some(state.permissions.clone()));
             }
         }
     }

@@ -71,6 +71,13 @@ pub struct DaemonState {
     /// mean that. It would also let any local peer queue a rename that
     /// another user's Ctrl+Z executes under their own account.
     pub shared_multi_user: bool,
+    /// SRC-M21 — what the scanner could not read.
+    ///
+    /// A `std::sync::Mutex` rather than the `tokio::sync::RwLock` its
+    /// neighbours use, because the writer is the scanner, which runs
+    /// inside `spawn_blocking` and has no runtime to await on. Held for
+    /// the length of a push; there is no contention to speak of.
+    pub permissions: Arc<std::sync::Mutex<crate::permissions::PermissionLedger>>,
     pub config_dir: PathBuf,
 }
 
@@ -187,6 +194,12 @@ impl DaemonState {
         let history = load_or_default::<HistoryConfig>(&config_dir.join("history.json"));
         let catalogs = load_or_default::<CatalogRegistry>(&config_dir.join("catalogs.json"));
         let operations = load_or_default::<OperationJournal>(&config_dir.join("operations.json"));
+        // SRC-M21 — persisted so "files I couldn't index" survives a
+        // restart. A user who fixes a permission tomorrow still needs to
+        // see what was unreadable yesterday.
+        let permissions = load_or_default::<crate::permissions::PermissionLedger>(
+            &config_dir.join("permissions.json"),
+        );
         Ok(Arc::new(Self {
             watchers: WatcherSupervisor::new(index.clone()),
             index,
@@ -201,6 +214,7 @@ impl DaemonState {
             catalogs: RwLock::new(catalogs),
             operations: RwLock::new(operations),
             shared_multi_user: opts.shared_multi_user,
+            permissions: Arc::new(std::sync::Mutex::new(permissions)),
             config_dir,
         }))
     }
@@ -298,6 +312,14 @@ impl DaemonState {
             &self.config_dir.join("operations.json"),
             &*self.operations.read().await,
         )?;
+        // Cloned out of the lock before writing: `write_json` does file
+        // I/O, and holding a std Mutex across it would block the
+        // scanner thread that is trying to record the next skip.
+        let permissions = {
+            let guard = self.permissions.lock().unwrap_or_else(|e| e.into_inner());
+            guard.clone()
+        };
+        write_json(&self.config_dir.join("permissions.json"), &permissions)?;
         Ok(())
     }
 }

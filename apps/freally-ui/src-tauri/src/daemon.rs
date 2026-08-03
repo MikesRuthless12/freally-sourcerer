@@ -90,8 +90,13 @@ impl Daemon {
 
         // 1) Service-pipe fast path. If the elevated service is
         //    running, connect to it and skip spawning a child entirely.
+        //
+        //    Not in portable mode: the service owns the *installed*
+        //    index under %PROGRAMDATA%, so adopting it would silently
+        //    give a USB-stick launch the host machine's index and write
+        //    the stick's searches into it.
         #[cfg(windows)]
-        {
+        if !freally_rpc::portable::is_active() {
             let service_socket = SocketPath::Pipe(freally_rpc::service_pipe_name());
             let probe = runtime.block_on(async {
                 tokio::time::timeout(
@@ -141,13 +146,24 @@ impl Daemon {
         };
         let mut command = Command::new(&bin);
         command.arg("run").arg("--socket").arg(&socket_arg);
-        if let Some(d) = app.path().app_data_dir().ok().map(|d| d.join("index")) {
+        // SRC-M17 — tell the child explicitly rather than letting it
+        // re-detect. The child is a different executable, and on macOS
+        // it is not even in the same directory as the shell that
+        // spawned it, so `portable.flag` detection would not agree.
+        let portable_index = freally_rpc::portable::index_root();
+        if portable_index.is_some() {
+            command.arg("--portable");
+        }
+        let index_root =
+            portable_index.or_else(|| app.path().app_data_dir().ok().map(|d| d.join("index")));
+        if let Some(d) = index_root {
             command.arg("--index-root").arg(d);
         }
         command.stdin(Stdio::null());
         // Inherit stdout/stderr so the daemon's logs flow into the
-        // Tauri app's console. In production the sidecar bundling
-        // story will redirect them to `<index_root>/logs/`.
+        // Tauri app's console. A portable install has no console to
+        // inherit — the daemon writes its own `Data/logs/indexd.log`
+        // instead, so the inherited handles would only be noise.
         command.stdout(Stdio::inherit());
         command.stderr(Stdio::inherit());
         let child = command
@@ -250,7 +266,9 @@ fn pick_socket(app: &AppHandle) -> SocketPath {
         return SocketPath::Path(PathBuf::from(path));
     }
     let _ = app;
-    default_socket_path()
+    // SRC-M17 — a portable instance binds its own endpoint so it never
+    // collides with an installed one, or with a second stick.
+    freally_rpc::portable::socket_path().unwrap_or_else(default_socket_path)
 }
 
 /// Locate the `freally-indexd` executable. Order:

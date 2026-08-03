@@ -20,6 +20,7 @@ pub mod bookmarks;
 pub mod catalogs;
 pub mod health;
 pub mod history;
+pub mod permissions;
 pub mod scanner;
 pub mod service;
 pub mod settings;

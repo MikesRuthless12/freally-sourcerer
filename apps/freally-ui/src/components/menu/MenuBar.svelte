@@ -59,7 +59,10 @@
     if (id === "search.match_path") return searchOptsStore.get("match_path");
     if (id === "search.match_diacritics") return searchOptsStore.get("match_diacritics");
     if (id === "search.match_phonetic") return searchOptsStore.get("match_phonetic");
+    if (id === "search.ignore_punctuation") return searchOptsStore.get("ignore_punctuation");
+    if (id === "search.ignore_whitespace") return searchOptsStore.get("ignore_whitespace");
     if (id === "search.enable_regex") return searchOptsStore.get("enable_regex");
+    if (id === "view.sidebar") return settingsStore.state.show_sidebar === true;
     if (id === "view.theme.system") return settingsStore.state.theme === "system";
     if (id === "view.theme.light") return settingsStore.state.theme === "light";
     if (id === "view.theme.dark") return settingsStore.state.theme === "dark";

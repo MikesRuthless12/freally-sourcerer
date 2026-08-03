@@ -108,6 +108,7 @@ export const MENU_BAR: MenuRoot[] = [
     children: [
       { kind: "item", id: "view.filters", label: "Filters", l10n: "menu-view-filters" },
       { kind: "item", id: "view.preview", label: "Preview", l10n: "menu-view-preview", accelerator: "Alt+P", checkable: true },
+      { kind: "item", id: "view.sidebar", label: "Sidebar", l10n: "menu-view-sidebar", checkable: true },
       { kind: "item", id: "view.status_bar", label: "Status Bar", l10n: "menu-view-status-bar", checkable: true },
       { kind: "item", id: "view.thumbs.xl", label: "Extra Large Thumbnails", l10n: "menu-view-thumbs-xl", accelerator: "Ctrl+Shift+1" },
       { kind: "item", id: "view.thumbs.l", label: "Large Thumbnails", l10n: "menu-view-thumbs-l", accelerator: "Ctrl+Shift+2" },
@@ -218,6 +219,8 @@ export const MENU_BAR: MenuRoot[] = [
       { kind: "item", id: "search.match_path", label: "Match Path", l10n: "menu-search-match-path", accelerator: "Ctrl+U", checkable: true },
       { kind: "item", id: "search.match_diacritics", label: "Match Diacritics", l10n: "menu-search-match-diacritics", accelerator: "Ctrl+M", checkable: true },
       { kind: "item", id: "search.match_phonetic", label: "Match CJK Phonetics", l10n: "menu-search-match-phonetic", checkable: true },
+      { kind: "item", id: "search.ignore_punctuation", label: "Ignore Punctuation", l10n: "menu-search-ignore-punctuation", checkable: true },
+      { kind: "item", id: "search.ignore_whitespace", label: "Ignore Whitespace", l10n: "menu-search-ignore-whitespace", checkable: true },
       { kind: "item", id: "search.enable_regex", label: "Enable Regex", l10n: "menu-search-enable-regex", accelerator: "Ctrl+R", checkable: true },
       { kind: "item", id: "search.advanced", label: "Advanced Search…", l10n: "menu-search-advanced" },
       { kind: "item", id: "search.within_results", label: "Search Within Results", l10n: "menu-search-within-results", accelerator: "Ctrl+Shift+F" },
@@ -264,6 +267,7 @@ export const MENU_BAR: MenuRoot[] = [
         hintL10n: "menu-tools-index-maintenance-hint",
         children: [
           { kind: "item", id: "tools.index_health", label: "Index Health…", l10n: "menu-tools-index-health" },
+          { kind: "item", id: "tools.permission_health", label: "Permission Health…", l10n: "menu-tools-permission-health" },
           { kind: "item", id: "tools.verify_index", label: "Verify Index…", l10n: "menu-tools-verify-index" },
           { kind: "item", id: "tools.compact_index", label: "Compact Index…", l10n: "menu-tools-compact-index" },
           { kind: "item", id: "tools.rebuild_index", label: "Force Rebuild Index…", l10n: "menu-tools-rebuild-index" }

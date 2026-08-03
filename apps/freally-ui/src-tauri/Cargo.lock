@@ -1779,11 +1779,13 @@ version = "0.21.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "freally-audio",
  "freally-extractors",
  "freally-query",
  "freally-rpc",
  "image",
  "parking_lot",
+ "regex",
  "serde",
  "serde_json",
  "tauri",

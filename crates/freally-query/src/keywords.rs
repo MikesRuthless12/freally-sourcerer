@@ -34,7 +34,11 @@ pub const MODIFIER_KEYS: &[&str] = &[
     "length",
     "lufs",
     "name",
+    // Byte-sorted, which the list's own test enforces: `$` (0x24) then
+    // `-` (0x2D) then `^` (0x5E).
+    "name$",
     "name-dupe",
+    "name^",
     "parent",
     "path",
     "rate",
@@ -74,6 +78,30 @@ mod tests {
             let source = format!("{key}:");
             if let Err(ParseError::UnknownModifier { name, .. }) = parse(&source) {
                 panic!("advertised modifier `{name}:` is not known to the parser");
+            }
+        }
+    }
+
+    /// The test above cannot catch a key whose sigils fall outside the
+    /// parser's key charset: `name^:` degrades to a *literal term*
+    /// rather than to `UnknownModifier`, so advertising it with no
+    /// parser support would pass silently. This asserts the positive —
+    /// the key actually produces a modifier node.
+    #[test]
+    fn every_advertised_modifier_actually_parses_as_a_modifier() {
+        use crate::ast::QueryNode;
+        for key in MODIFIER_KEYS {
+            // A value that is valid for every key: non-empty, and not a
+            // comparator-requiring shape for the numeric ones.
+            let source = format!("{key}:1");
+            // An invalid *value* is fine; a literal is not.
+            if let Ok(q) = parse(&source) {
+                assert!(
+                    matches!(q.root(), QueryNode::Modifier(_) | QueryNode::And(_)),
+                    "`{source}` parsed as {:?}, not a modifier — the key charset \
+                     does not accept `{key}`",
+                    q.root()
+                );
             }
         }
     }

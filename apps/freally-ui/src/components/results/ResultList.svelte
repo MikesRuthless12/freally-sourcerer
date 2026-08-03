@@ -2,6 +2,7 @@
   import DidYouMeanStrip from "./DidYouMeanStrip.svelte";
   import LensSection from "./LensSection.svelte";
   import PreviewPane from "../preview/PreviewPane.svelte";
+  import Sidebar from "../sidebar/Sidebar.svelte";
   import { resultsStore } from "../../lib/stores/results.svelte";
   import { queryStore } from "../../lib/stores/query.svelte";
   import { settingsStore } from "../../lib/stores/settings.svelte";
@@ -32,6 +33,12 @@
 </script>
 
 <div class="result-area">
+  <!-- SRC-M22 — lives inside `.result-area` so the sidebar, the list
+       and the preview pane share one flex row, and so toggling it does
+       not disturb the menu / search / status chrome above and below. -->
+  {#if settingsStore.state.show_sidebar}
+    <Sidebar />
+  {/if}
   <div class="result-list">
     {#if !queryStore.source.trim() && typeFilterStore.isNoneSelected()}
       <div class="empty-state">

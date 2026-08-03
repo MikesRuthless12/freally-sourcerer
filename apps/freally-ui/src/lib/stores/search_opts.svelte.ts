@@ -11,6 +11,8 @@ export type SearchOptKey =
   | "match_path"
   | "match_diacritics"
   | "match_phonetic"
+  | "ignore_punctuation"
+  | "ignore_whitespace"
   | "enable_regex";
 
 class SearchOptsStore {
@@ -25,6 +27,8 @@ class SearchOptsStore {
       match_path: false,
       match_diacritics: false,
       match_phonetic: false,
+      ignore_punctuation: false,
+      ignore_whitespace: false,
       enable_regex: false
     };
     await settingsStore.patch({

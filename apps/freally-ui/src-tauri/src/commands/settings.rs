@@ -72,12 +72,28 @@ pub enum OnTopMode {
     WhileSearching,
 }
 
+/// The `Search →` menu's toggles.
+///
+/// Every field here is round-tripped through `settings_set`, which
+/// re-serializes this struct and parses the result back. A flag the UI
+/// knows about but this struct does not is therefore *dropped on every
+/// settings write* — which is what had been happening to
+/// `match_phonetic` since Build 2 added it to the TypeScript side only.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchOpts {
     pub match_case: bool,
     pub match_whole_word: bool,
     pub match_path: bool,
     pub match_diacritics: bool,
+    /// SRC-M12 — match CJK names through their phonetic reading.
+    #[serde(default)]
+    pub match_phonetic: bool,
+    /// SRC-M23 — `foobar` finds `foo-bar`.
+    #[serde(default)]
+    pub ignore_punctuation: bool,
+    /// SRC-M23 — `myreport` finds `my report`.
+    #[serde(default)]
+    pub ignore_whitespace: bool,
     pub enable_regex: bool,
 }
 
@@ -272,12 +288,28 @@ fn phase_12_default_extras() -> HashMap<String, serde_json::Value> {
         ("do_not_select_extension_when_renaming", true.into()),
         ("sort_date_descending_first", true.into()),
         ("sort_size_descending_first", true.into()),
+        // SRC-M24 — on by default: byte ordering puts `file10` ahead of
+        // `file2`, which is the wrong answer often enough that this is
+        // the sort users expect. Off restores raw ordering.
+        ("natural_sort", true.into()),
         ("result_list_focus", "clamp".into()),
         ("load_icon_priority", "normal".into()),
         ("load_thumbnail_priority", "normal".into()),
         ("load_extended_information_priority", "normal".into()),
         ("group_by_lens", true.into()),
         ("show_snippet_preview_inline", true.into()),
+        // SRC-M22 — the optional left sidebar (View → Sidebar).
+        ("show_sidebar", false.into()),
+        // Most-recent-first, capped by the UI. Not recorded at all when
+        // Privacy Mode or Search History is off.
+        ("recent_searches", serde_json::Value::Array(Vec::new())),
+        // Bookmark ids in the order the sidebar shows them. Kept here
+        // rather than on the bookmark records so drag-reorder does not
+        // need a new write path through the bookmarks IPC.
+        (
+            "sidebar_bookmark_order",
+            serde_json::Value::Array(Vec::new()),
+        ),
         // §8.6 General → View
         ("double_buffer", true.into()),
         ("alternate_row_color", false.into()),
@@ -490,10 +522,11 @@ pub struct SettingsStore {
 
 impl SettingsStore {
     pub fn new(app: &tauri::AppHandle) -> Self {
-        let dir = app
-            .path()
-            .app_data_dir()
-            .unwrap_or_else(|_| std::env::temp_dir().join("freally"));
+        let dir = freally_rpc::portable::data_dir().unwrap_or_else(|| {
+            app.path()
+                .app_data_dir()
+                .unwrap_or_else(|_| std::env::temp_dir().join("freally"))
+        });
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("settings.json");
         let state = std::fs::read_to_string(&path)
@@ -608,6 +641,10 @@ const ALLOWED_PATCH_KEYS: &[&str] = &[
     "do_not_select_extension_when_renaming",
     "sort_date_descending_first",
     "sort_size_descending_first",
+    "natural_sort",
+    "show_sidebar",
+    "recent_searches",
+    "sidebar_bookmark_order",
     "result_list_focus",
     "load_icon_priority",
     "load_thumbnail_priority",

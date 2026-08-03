@@ -4,7 +4,410 @@ All notable changes documented here. Format: [Keep a Changelog](https://keepacha
 
 ---
 
-## [Unreleased]
+## [Unreleased] — Build 3 · Must-Have stable gate, slice 3 of 3
+
+The last of the three Must-Have builds: SRC-M17 … SRC-M24. Ships as
+v0.23.0, the **stable** tag.
+
+**SRC-M17 — portable mode.** `freally --portable`, or an empty
+`portable.flag` file beside the binary, keeps the index, settings,
+bookmarks, journal cursors and logs in a `Data/` folder next to the
+executable, and stops the app registering anything with the OS. All
+three binaries take the switch; the flag file is what makes a
+double-clicked zip or AppImage portable with no command line at all.
+
+The layout lives in `freally_rpc::portable` — the one crate the Tauri
+shell, the daemon and the CLI all already depend on.
+
+What portable mode deliberately does *not* do, each for a concrete
+reason rather than tidiness:
+
+- **No service, launchd plist, or systemd unit.** `freally-indexd
+  install` / `uninstall` / `service` all refuse in portable mode. Each
+  writes a registration that outlives the USB stick and points at a path
+  that will not be there next boot. `uninstall` is refused for the
+  opposite reason: a portable copy never registered anything, so letting
+  it through would deregister the *installed* copy on the host.
+- **No `freally://` scheme registration.** It writes a machine-level
+  handler pointing at the executable's current path; unplug the stick
+  and every `freally://` link on that machine dangles. The in-process
+  listener still runs, so a portable instance handles URLs it is handed
+  — it just does not claim the scheme.
+- **No auto-updater.** The updater applies an *installer*. Pointing that
+  at a stick would install the app onto the host machine, which is the
+  one thing a portable user is avoiding. Portable installs update by
+  replacing the folder.
+- **No adopting the Windows service.** The service owns the installed
+  index under `%PROGRAMDATA%`; a portable launch that connected to it
+  would silently search the host's index and write the stick's activity
+  into it.
+- **No cross-instance `taskkill`.** Single-instance enforcement kills by
+  image name. A stick plugged into a machine already running Freally
+  would have taken down the app the user was in the middle of using.
+
+Two pieces of state needed explicit redirection because they do not hang
+off the index root:
+
+- **Journal cursors.** Every OS subscriber defaults to its own per-user
+  directory, so a portable install would have left cursors behind on
+  every machine it was plugged into. They now go to `Data/cursors`.
+- **The RPC socket, which deliberately stays off the stick.** A stick is
+  usually FAT32 or exFAT — filesystems that cannot hold a Unix domain
+  socket at all, and that have no permission bits for the 0600 +
+  peer-uid check the transport depends on. It lives in the host's temp
+  directory under a name derived from the portable root, so a portable
+  instance never collides with an installed one or with a second stick,
+  and the auth story is unchanged.
+
+Logs move because a double-clicked binary has no console to inherit:
+both processes write into `Data/logs/`, falling back to the console if
+that file cannot be opened rather than losing the diagnostics that would
+explain why.
+
+On macOS `Data/` lands beside `Freally.app`, not inside it — writing
+user data into a bundle breaks code signing and fails outright on a
+read-only mount.
+
+**Also in this change: the About panel reported the wrong version.** It
+carried a hardcoded `0.19.84` and had drifted three releases behind what
+shipped. It now reads the version from the running process via a new
+`app_environment` command, which also reports whether this is a portable
+install and the folder it writes to — so a user who plugs a stick into
+someone else's machine can confirm in the app that nothing is landing on
+the host.
+
+Smoke: `tests/smoke/build_03_portable.rs` stages a copy of the real
+daemon binary in a scratch directory (portable mode is defined relative
+to the executable, so testing it in place would make every other binary
+in the workspace portable for the rest of the run) and proves the flag
+file, the switch, the three registration refusals, and that a portable
+daemon writes its index and its log into `Data/` and nowhere else.
+
+**SRC-M24 — natural sort.** Digit runs inside a name read as numbers, so
+`file2` comes before `file10` and `v1.9` before `v1.10`. On by default,
+with an opt-out at Settings → Results → *Natural sort*.
+
+It applies to every string column — name, path, type and extension — not
+just the name, so "sort naturally" does not quietly mean "sort the name
+column naturally".
+
+There are two comparators because there are two sorts: the daemon orders
+what it returns (`crates/freally-query/src/natural.rs`) and the result
+list re-sorts client-side (`apps/freally-ui/src/lib/util/natural.ts`).
+They are deliberately not identical — the UI runs non-digit runs through
+`localeCompare` so accents and case keep behaving as they already did,
+while the daemon only ever sees a lowercased name — so a shared vector of
+cases pins the numeric behaviour they must agree on, asserted from both
+sides.
+
+Details worth stating, because each is a way to get this wrong:
+
+- **Digit runs are compared without being parsed.** Parsing caps at
+  `u64` (or 2^53 in JS); a 30-digit run in a filename is unusual but not
+  invalid, and two different overlong runs would then compare equal.
+  Comparing significant-digit count and then the digits is exact at any
+  length.
+- **Zero padding is a tie-break of last resort.** `file07` and `file7`
+  are the same number, so padding only decides when nothing else does —
+  deciding on it the moment it appears would let `file07b` beat
+  `file7a`.
+- **The UI compares a non-digit stretch only as far as both sides have
+  one.** A run can be cut short by a digit on one side and not the other
+  — `img.png` against `img1.png` gives runs of 7 and 3 — and comparing
+  those whole answers on length instead of on `.` against `1`, which
+  sorted `img.png` last. Caught by the shared vector.
+- **Digit-free strings still go through `localeCompare` whole**, so the
+  common case keeps exactly the collation it had.
+- **The path column is the one place the toggle changes more than
+  digits.** With natural sort off it stays `PathBuf::cmp`, which orders
+  by component rather than by byte; natural sort has to read the path as
+  text to see digit runs at all.
+- **Extensionless files still sort first**, as `Option::cmp` did.
+
+The feature line asks for the ordering to be "honored by the fast-sort
+indexes". There are none to honor: sorting happens in `sort_rows` over
+the candidate rows the executor already materialized, and no
+sort-accelerating index exists in the store today. Building one is
+SRC-N-scale work, so this is stated rather than quietly skipped.
+
+Smoke: `tests/smoke/build_03_natural_sort.rs` indexes names where byte
+order and natural order disagree on every entry, and pins the default,
+the opt-out, descending order, the path column, and that a numeric
+column is left alone.
+
+**SRC-M23 — ignore punctuation, ignore whitespace, and anchored
+matching.** Two new toggles under `Search →` (`Ignore Punctuation`,
+`Ignore Whitespace`) and two new DSL modifiers, `name^:report`
+(starts with) and `name$:final` (ends with).
+
+**The four existing match toggles now actually do something.** Through
+Build 2, only `match_phonetic` crossed the wire: `Match Case`, `Match
+Whole Word`, `Match Path` and `Match Diacritics` moved a checkmark and
+changed nothing, because `query.run` sent only the one flag and the
+daemon built `MatchMode` from `Default`. The executor had honored all
+five the whole time. The full set is now sent and read.
+
+**A related bug, found while wiring it: `Match CJK Phonetics` never
+persisted.** `settings_set` re-serializes the settings struct and parses
+the result back, and Rust's `SearchOpts` had no `match_phonetic` field —
+so the flag was dropped on *every settings write*. Build 2 added it to
+the TypeScript side only. All three new flags are on the Rust struct too.
+
+Implementation notes:
+
+- **Both sides are stripped, not just the target.** Stripping only the
+  name would let `foobar` find `foo-bar` while `foo-bar` could not find
+  `foobar` — that reads as a bug, not as a match mode.
+- **The trigram seed is dropped when a mode rewrites text.** `foo-bar`
+  indexes the trigrams `foo`, `oo-`, `o-b`, `-ba`, `bar`; the needle
+  `foobar` asks for `oob` and `oba`, which that row does not have, so
+  seeding would return *nothing at all*, silently. The executor falls
+  back to a full scan, the same trade-off `match_path` already makes.
+  The flags are off by default, so nobody pays for it without asking.
+- **Whole-word is ignored while a strip mode is on**, because removing
+  the separators removes the word boundaries that define it.
+- **`name:foo-bar` behaves like the bare term `foo-bar`.** These are the
+  same query written two ways, so the `name:`/`child:` path honors the
+  strip modes too rather than only the literal-term path.
+- **Punctuation is Unicode's definition, not an ASCII list**, so `’` and
+  `–` are dropped alongside `'` and `-`.
+
+For the anchored modifiers, `^` and `$` are opted in for exactly two
+keys rather than being added to the general key charset — the same
+mechanism the hyphenated keys use, and for the same Standing Rule #8
+reason: widening the charset would turn `x^2:3` and `total$:5` from
+literal terms into hard parse errors. Both are rejected under
+`--strict-everything`, since voidtools' Everything has no anchored
+syntax. `name$:` anchors on the whole name including the extension, so
+`name$:report` does not match `report.txt`.
+
+Registering a new modifier touches more than the parser, and missing any
+one leaves it half-working: the AST variant, four planner/evaluator sites
+in `exec.rs`, `optimizer::selectivity_rank` (an anchored match is
+narrower than the substring it implies, so it ranks ahead of `child:`),
+the strict-mode list in *two* places, `report.rs`'s duplicated key
+charset — miss that one and the query runs correctly while the search bar
+paints it as a literal — plus `modifier_name`, `ModifierDetail`, and the
+advertised `MODIFIER_KEYS` table the CLI completions read.
+
+That last one had a gap worth noting: `every_advertised_modifier_is_known_to_the_parser`
+could not have caught a missing sigil key, because a key outside the
+charset degrades to a *literal* rather than to `UnknownModifier`, so the
+test passes either way. A positive assertion was added.
+
+**SRC-M20 — regex builder and live tester.** A popover beside a new
+regex toggle in the search bar: a pattern field, the engine's own
+compile error, a Rust-flavour cheat sheet, and live highlighting of what
+the pattern matches across the current top-50 result names, with a
+"3 of 50 match" count. Committing the pattern rewrites the query as
+`regex:<pattern>` and turns Enable Regex on, so the menu never disagrees
+with what the query is doing.
+
+The parse-error pill and the AST hover already validate a query you have
+*written*; nothing helped you write the pattern. That is where the time
+goes — you type something, run it, get nothing, and cannot tell whether
+the pattern is wrong or the files simply are not there. The popover
+shows both answers at once.
+
+**Testing happens in Rust, on purpose.** The obvious implementation
+validates against the webview's `RegExp`, and it would be wrong in
+exactly the cases a person composing a pattern hits: the query executor
+runs the `regex` crate, which has no backreferences and no lookaround,
+treats `\d` as Unicode-aware, and takes `(?i)` inline rather than as a
+trailing flag. A `RegExp`-backed builder accepts `(?<=foo)bar` happily
+and then fails when the query runs. `regex_test` compiles with the same
+engine, so "it matches here" means "it will match there" — there is a
+unit test asserting lookaround is rejected, for precisely this reason.
+
+Smaller decisions, each guarding something real: spans are returned as
+**character** offsets, since the UI slices them with JavaScript string
+indices and a byte offset would cut a multi-byte name in half; zero-width
+matches are dropped, because `a*` matches at every position and
+highlighting nothing at every position is noise; an empty pattern reports
+no error at all rather than flashing one at the first keystroke; and the
+compiled-automaton size limit is pinned at 256 KB rather than the crate's
+10 MB default. The engine is finite-automaton based, so a hostile pattern
+cannot backtrack exponentially — the size limit is the only lever that
+matters, and it is set.
+
+**SRC-M19 — Spacebar Quick Look.** Space on a result opens a large modal
+preview; the arrow keys walk the result set with it still open, and
+Space or Escape closes it. The header shows "7 of 50" so you know where
+you are in the set.
+
+It is not a second preview implementation — it calls the same
+`files_preview` the docked pane does, so any format that renders in one
+renders in the other. What it adds is size and a keyboard flow: the
+docked pane is a panel you glance at, this is the "what *is* this file?"
+gesture, and the point is that your hands never leave the keyboard.
+
+**Space is handled in the global key binder, not in the component**, and
+it is the delicate one: Space is also a character, so it is ignored
+whenever the caret is in an input, textarea, select, or contenteditable.
+Getting that wrong means the search box stops accepting spaces — a far
+worse bug than a missing shortcut.
+
+Navigation walks the order the list actually *renders* (batches in lens
+order, sort store applied within each, except duplicate-cluster batches
+where the daemon already ordered the rows and re-sorting would break the
+clusters apart). Walking any other order makes the arrow keys appear to
+jump around. Stepping clamps at both ends rather than wrapping, because
+wrapping from the last row to the first reads as a glitch when the key
+is held down, and it replaces the selection rather than extending it.
+
+**Deviation from the feature line, stated rather than glossed.** It asks
+for native QuickLook on macOS and Freally's own host elsewhere. `qlmanage
+-p` opens a *separate OS window* that Freally's key handling cannot
+drive, so making it the macOS default would break the arrow-key flow that
+is the whole feature. The in-app modal is therefore the surface on all
+three platforms — which is also what makes the behaviour testable and
+identical everywhere — and macOS additionally gets an explicit "Open in
+macOS Quick Look" button for formats the system can render and Freally's
+preview host cannot. The path goes through the same `KnownPaths` gate as
+every other file command and is passed as a `Command` argument, never
+through a shell.
+
+**SRC-M22 — bookmarks and filters sidebar.** An optional left column
+(View → Sidebar, off by default) with four sections: bookmarks with
+drag-reorder, the seven type filters, indexed volumes, and recent
+searches. All four already existed behind three different dropdowns and
+a menu, so scoping a search meant knowing which of four places to look;
+this puts them in one column of clickable nodes.
+
+**"Recent searches" needed inventing, because search here is live.**
+`run()` fires on every keystroke, so recording each run verbatim would
+produce `r`, `re`, `rep`, `repo`, `repor`, `report` and bury the one
+entry anybody wants. Two rules fix it without an explicit commit gesture
+the UI does not have: a new query evicts any existing entry that is a
+prefix of it (the keystrokes on the way there), and a query that is
+itself a prefix of the newest entry is not recorded (that is a
+backspace). Typing "report" then "invoice" leaves exactly
+`["invoice", "report"]`.
+
+The list honours **Privacy Mode and the Search History toggle** — both
+already mean "do not keep a record of what I searched for", and a
+sidebar section is exactly such a record, so it does not quietly keep
+its own copy.
+
+Drag order is stored as a list of bookmark ids in settings rather than
+on the bookmark records, so reordering does not need a new write path
+through the bookmarks IPC. Ids for deleted bookmarks are ignored instead
+of leaving a hole, and a bookmark added since the last drag is appended
+rather than dropped.
+
+Volume nodes emit `volume:"<label>"` **quoted**, because a label
+routinely contains spaces (`Orange WD 4TB`) and unquoted it would parse
+as two terms.
+
+The sidebar renders inside `.result-area`, sharing one flex row with the
+result list and the preview pane, so toggling it does not disturb the
+menu / search / status chrome above and below.
+
+**A duplicate caught while wiring this**, worth recording because it was
+already wrong: the Quick Look navigation added in SRC-M19 walked
+`resultsStore.batches` directly. Batches are stored in *arrival* order
+and carry hits from lenses the user has switched off and rows a
+refinement has filtered out — while the list renders through
+`viewForLens` in a fixed lens order. `resultsStore.visibleHits` already
+existed and got this right. The navigation helper now builds on the same
+`viewForLens`, so the arrow keys walk what is on screen rather than what
+the daemon happened to send first.
+
+**SRC-M21 — permission health report + macOS Full Disk Access wizard.**
+Tools → Permission Health, plus a status-bar badge that appears only
+when there is something to say, opening a drill-down of which folders
+the scanner could not read, on which volume, for which reason — with the
+guided fix for the platform the *index* runs on.
+
+**The badge the feature line says to extend did not exist.** There was
+no "n paths skipped (permission)" anywhere: a directory the scanner
+could not open produced one `warn!` line and nothing else, so a subtree
+that was unreadable looked identical to a subtree that was empty. The
+ledger (`crates/freally-indexd/src/permissions.rs`) had to be built
+first. This is the fourth time in this stable-gate run that a
+Must-Have's stated starting point turned out not to be there.
+
+What the ledger records and why:
+
+- **Roots, not files.** `walkdir` reports one error for a directory it
+  cannot open and does not descend, so what lands in the ledger is
+  naturally the root of each unreadable subtree. That is also the useful
+  answer: "grant access to this folder", not ten thousand filenames.
+- **A vanished path is not a fault.** `NotFound` is dropped entirely —
+  a file deleted mid-scan is normal on a live filesystem, and counting
+  it would make every report on a busy machine look alarming.
+- **Capped at 2,000 entries, with the overflow counted.** This list is
+  held in memory, serialized, and sent over IPC; past a few thousand it
+  stops being a report a person reads. The UI says "and 12,043 more"
+  rather than implying the list is complete.
+- **A rescan clears that root's entries first**, so a permission the
+  user actually fixed stops being reported. Without it the report only
+  ever grows.
+- **Persisted** to `config/permissions.json`, because "files I couldn't
+  index" has to survive a restart to be worth anything.
+
+The guidance is resolved **on the daemon side**, not from the browser's
+user-agent: the index can live on a different machine than the window
+rendering the report whenever a client is pointed at a remote endpoint,
+and the fix belongs to the machine that could not read the folder.
+
+On macOS the report **detects Full Disk Access** by reading a
+TCC-protected directory: success means granted, `PermissionDenied` means
+not. Any other error is reported as *undetermined* rather than as "not
+granted" — telling someone to fix a setting that is already correct is
+worse than saying nothing. When it is not granted, a button opens the
+Full Disk Access pane directly.
+
+Smoke: `tests/smoke/build_03_permissions.rs` proves the scanner is
+actually holding the ledger — a clean tree leaves it empty, and a real
+scan drops the previous pass's entries for that root while leaving other
+roots alone. It deliberately does not try to create a denied directory:
+that is not portable (`chmod 000` is a no-op for root, and Windows would
+need ACL surgery), so the denial paths are unit-tested by constructing
+the `io::Error` directly instead of asking the OS for one.
+
+**SRC-M18 — inline audio/video playback in the preview pane.** Transport
+(play/pause, seek, loop), a volume slider, a rendered waveform you can
+click to scrub, and the codec / sample-rate / channel / LUFS badges
+overlaid. Auditioning a `lufs:<-14` result no longer means leaving
+Freally, which is the workflow the audio lens exists to keep you inside.
+
+**The waveform costs no extra decode.** A `PeakCollector` rides along
+with the existing analysis pass in `freally-audio`: the same interleaved
+frames that feed the loudness and silence accumulators feed it, so
+opening a track in a pane that re-opens on every arrow key does not
+decode the file a second time just to draw a picture of it. Buckets are
+fixed-count rather than per-second because the canvas has a fixed width —
+resampling a per-second envelope to fit throws away exactly the peaks
+that make the shape readable — and they peak across channels, since a
+waveform shows the loudest thing happening at that moment, not the left
+channel's opinion of it.
+
+**The bytes go through IPC, not the asset protocol — deliberately.** The
+conventional way to feed a media element is Tauri's asset protocol, and
+it was rejected: enabling it means declaring a filesystem scope the
+*webview* may read directly, and any scope wide enough to cover
+"wherever the user's media lives" is wide enough to undo the
+`KnownPaths` gate Build 1 hardened — the property that a compromised
+frontend dependency cannot reach a file the daemon never returned.
+Routing the bytes through a command keeps every read behind the same
+check as every other file operation.
+
+The cost is that playback is buffered, not streamed, so there is a
+192 MB ceiling — stated in the UI, which offers to open past it in the
+system player, rather than failing silently. Bytes are returned as a raw
+`tauri::ipc::Response` rather than a base64 data URL, which would inflate
+the payload by a third and cost a full re-encode on both sides.
+
+Two smaller things that would each be a real bug: the object URL is
+revoked when the selection changes (without it, every arrow key leaks a
+whole decoded file), and a non-finite integrated loudness renders as *no
+badge* rather than as `-inf LUFS` — a clip shorter than one gating block
+has no meaningful integrated value.
+
+Playability is decided from the hit's extension, not from the preview
+payload: a media file's payload is `unsupported`, which is precisely the
+case worth playing.
 
 ### TASK-098 — full Fluent i18n end-to-end across all 18 locales (2026-05-11)
 

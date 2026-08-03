@@ -7,6 +7,8 @@
   import { fileListStore } from "../../lib/stores/file_list.svelte";
   import { themeStore } from "../../lib/stores/theme.svelte";
   import { formatBytes, formatCount } from "../../lib/util/format";
+  import { dialogsStore } from "../../lib/stores/dialogs.svelte";
+  import * as indexApi from "../../lib/ipc/index_api";
   import { t } from "../../lib/i18n/t";
 
   const phaseLabel = $derived.by(() => {
@@ -20,6 +22,29 @@
   });
 
   const idleHint = $derived(`${t("status-ready")} · ${formatCount(indexStateStore.state.files_total)} ${t("statusbar-indexed-suffix")}`);
+
+  // SRC-M21 — how many folders the scanner could not read. Polled once
+  // when the index settles rather than on a timer: it only changes when
+  // a scan runs, and a status bar has no business making an IPC call on
+  // every repaint.
+  let permissionBadge = $state(0);
+  $effect(() => {
+    const phase = indexStateStore.state.phase;
+    if (phase === "indexing") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await indexApi.permissions();
+        if (!cancelled) permissionBadge = r.denied;
+      } catch {
+        // The daemon may still be booting. Leaving the badge hidden is
+        // the right failure: claiming "0 skipped" would be a lie.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  });
 </script>
 
 {#if settingsStore.state.show_status_bar}
@@ -67,6 +92,23 @@
 
     {#if fileListStore.truncated}
       <span class="seg truncated">{t("status-file-list-truncated")}</span>
+    {/if}
+
+    <!-- SRC-M21 — the discoverability half. The report is reachable
+         from Tools, but nobody opens a menu to check for a problem they
+         do not know they have; a subtree that could not be read looks
+         exactly like a subtree that was empty. Shown only when there is
+         something to say. -->
+    {#if permissionBadge > 0}
+      <button
+        type="button"
+        class="seg denied"
+        data-testid="permissions-badge"
+        title={t("permissions-title")}
+        onclick={() => dialogsStore.open("permission_health")}
+      >
+        {t("status-paths-skipped", { count: permissionBadge })}
+      </button>
     {/if}
 
     <span class="seg hover-hint grow">{menuHoverStore.hint ?? idleHint}</span>
@@ -122,6 +164,19 @@
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .seg.denied {
+    border: 0;
+    background: none;
+    padding: 0;
+    font: inherit;
+    color: var(--warning);
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+  }
+  .seg.denied:hover {
+    color: var(--danger);
   }
   .theme-pip {
     background: transparent;

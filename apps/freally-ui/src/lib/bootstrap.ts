@@ -28,6 +28,7 @@ import { fileListStore } from "./stores/file_list.svelte";
 import { refineStore } from "./stores/refine.svelte";
 import { toastStore } from "./stores/toast.svelte";
 import { renameStore, opsStore } from "./stores/rename.svelte";
+import { quickLookStore } from "./stores/quicklook.svelte";
 import * as files from "./ipc/files";
 import * as fileLists from "./ipc/file_lists";
 import * as indexIpc from "./ipc/index_api";
@@ -161,6 +162,7 @@ function bindKeyboard() {
   if (keyboardBound) return;
   keyboardBound = true;
   window.addEventListener("keydown", (ev) => {
+    if (handleQuickLookKey(ev)) return;
     for (const b of BINDINGS) {
       if (shortcutMatches(ev, b.shortcut)) {
         ev.preventDefault();
@@ -169,6 +171,58 @@ function bindKeyboard() {
       }
     }
   });
+}
+
+/** Is the user typing into something? */
+function isTextEntry(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return (
+    tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable === true
+  );
+}
+
+/**
+ * SRC-M19 — Space / arrows / Escape for Quick Look.
+ *
+ * Handled here rather than in the component so there is exactly one
+ * owner of these keys. Space is the delicate one: it is also a
+ * character, so it must never be intercepted while the caret is in a
+ * text field — otherwise the search box stops accepting spaces, which
+ * is a far worse bug than a missing shortcut.
+ *
+ * Returns true when the event was consumed.
+ */
+function handleQuickLookKey(ev: KeyboardEvent): boolean {
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return false;
+
+  if (ev.key === " " || ev.code === "Space") {
+    if (isTextEntry(ev.target)) return false;
+    ev.preventDefault();
+    quickLookStore.toggle();
+    return true;
+  }
+  if (!quickLookStore.open) return false;
+
+  // With the modal open the arrows drive it, even from a text field —
+  // there is no text field to type into while it is up.
+  if (ev.key === "ArrowDown" || ev.key === "ArrowRight") {
+    ev.preventDefault();
+    quickLookStore.step(1);
+    return true;
+  }
+  if (ev.key === "ArrowUp" || ev.key === "ArrowLeft") {
+    ev.preventDefault();
+    quickLookStore.step(-1);
+    return true;
+  }
+  if (ev.key === "Escape") {
+    ev.preventDefault();
+    quickLookStore.close();
+    return true;
+  }
+  return false;
 }
 
 function selectedPaths(): string[] {
@@ -404,6 +458,10 @@ function registerHandlers() {
   registry.register("view.preview", async () =>
     settingsStore.patch({ show_preview: !settingsStore.state.show_preview })
   );
+  // SRC-M22 — the optional bookmarks/filters sidebar.
+  registry.register("view.sidebar", async () =>
+    settingsStore.patch({ show_sidebar: !settingsStore.state.show_sidebar })
+  );
   registry.register("view.status_bar", async () =>
     settingsStore.patch({ show_status_bar: !settingsStore.state.show_status_bar })
   );
@@ -521,6 +579,8 @@ function registerHandlers() {
     "search.match_path": "match_path",
     "search.match_diacritics": "match_diacritics",
     "search.match_phonetic": "match_phonetic",
+    "search.ignore_punctuation": "ignore_punctuation",
+    "search.ignore_whitespace": "ignore_whitespace",
     "search.enable_regex": "enable_regex"
   };
   for (const [id, key] of Object.entries(searchToggleIds)) {
@@ -598,6 +658,10 @@ function registerHandlers() {
     dialogsStore.open("custom_extractor_manager")
   );
   registry.register("tools.index_health", async () => dialogsStore.open("index_health"));
+  // SRC-M21 — the drill-down of what the scanner could not read.
+  registry.register("tools.permission_health", async () =>
+    dialogsStore.open("permission_health")
+  );
   registry.register("tools.verify_index", async () => indexIpc.verify());
   registry.register("tools.compact_index", async () => indexIpc.compact());
   registry.register("tools.rebuild_index", async () => indexIpc.rebuild());

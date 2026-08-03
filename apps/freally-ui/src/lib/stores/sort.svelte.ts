@@ -4,6 +4,8 @@
 import type { ColumnId } from "../ipc/types";
 import { resultsStore } from "./results.svelte";
 import type { QueryHit } from "../ipc/types";
+import { naturalCompare } from "../util/natural";
+import { settingsStore } from "./settings.svelte";
 
 export type SortField = ColumnId | "lufs" | "length" | "similarity";
 export type SortOrder = "asc" | "desc";
@@ -37,19 +39,29 @@ class SortStore {
   }
 }
 
+/** SRC-M24 — every string column goes through the same comparator, so
+ *  "natural sort" does not quietly mean "only the name column". Off by
+ *  setting, in which case this is exactly the `localeCompare` that
+ *  shipped before. */
+function text(a: string, b: string): number {
+  return settingsStore.state.natural_sort === false
+    ? a.localeCompare(b)
+    : naturalCompare(a, b);
+}
+
 function compare(a: QueryHit, b: QueryHit, field: SortField): number {
   switch (field) {
-    case "name": return a.name.localeCompare(b.name);
-    case "path": return a.path.localeCompare(b.path);
+    case "name": return text(a.name, b.name);
+    case "path": return text(a.path, b.path);
     case "size": return a.size - b.size;
     case "modified": return a.modified_ms - b.modified_ms;
-    case "type": return a.type.localeCompare(b.type);
-    case "ext": return a.ext.localeCompare(b.ext);
+    case "type": return text(a.type, b.type);
+    case "ext": return text(a.ext, b.ext);
     case "similarity": return b.score - a.score;
     case "lufs":
     case "length":
       // Mock data — fall back to name.
-      return a.name.localeCompare(b.name);
+      return text(a.name, b.name);
   }
 }
 

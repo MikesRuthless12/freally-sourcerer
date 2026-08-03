@@ -441,7 +441,7 @@ fn classify_word(lex: &str, pos: usize, opts: ParseOpts) -> Result<QueryNode, Pa
         let key = &lex[..colon_idx];
         let val = &lex[colon_idx + 1..];
         let plain_key = !key.is_empty() && key.chars().all(|c| c.is_ascii_alphabetic() || c == '_');
-        if plain_key || is_hyphenated_modifier(key) {
+        if plain_key || is_hyphenated_modifier(key) || is_anchored_modifier(key) {
             // "regex" is a textual escape into a regex term, not a modifier.
             if key.eq_ignore_ascii_case("regex") {
                 let compiled = Regex::new(val).map_err(|e| ParseError::InvalidRegex {
@@ -517,6 +517,20 @@ pub(crate) fn is_hyphenated_modifier(key: &str) -> bool {
         .any(|k| key.eq_ignore_ascii_case(k))
 }
 
+/// SRC-M23 anchored-match keys, opting in the same way the hyphenated
+/// ones do rather than widening the general key charset.
+///
+/// `^` and `$` were chosen because neither is legal in a Windows
+/// filename and `:` is illegal on every supported platform, so
+/// `name^:` cannot collide with a real name the way a hyphen could.
+const ANCHORED_MODIFIERS: &[&str] = &["name^", "name$"];
+
+pub(crate) fn is_anchored_modifier(key: &str) -> bool {
+    ANCHORED_MODIFIERS
+        .iter()
+        .any(|k| key.eq_ignore_ascii_case(k))
+}
+
 fn parse_modifier(
     key: &str,
     value: &str,
@@ -540,6 +554,10 @@ fn parse_modifier(
                 | "silence"
                 | "dr"
                 | "volume"
+                // SRC-M23 — anchored matching is Freally-only; keep
+                // this in step with `report::is_freally_only_modifier`.
+                | "name^"
+                | "name$"
         );
         if freally_only {
             return Err(ParseError::StrictEverythingViolation {
@@ -570,6 +588,23 @@ fn parse_modifier(
         }
         "parent" | "folder" => ModifierKind::Parent(value.to_string()),
         "child" | "name" => ModifierKind::Child(value.to_string()),
+        // SRC-M23. Empty is rejected for the same reason `volume:` is:
+        // `name^:` with nothing after it is a half-typed query, and
+        // answering it with every row hides the typo.
+        "name^" | "name$" => {
+            if value.is_empty() {
+                return Err(ParseError::InvalidModifierValue {
+                    name: key.to_string(),
+                    value: value.to_string(),
+                    reason: format!("{key_lower}: requires text to anchor on"),
+                });
+            }
+            if key_lower == "name^" {
+                ModifierKind::NamePrefix(value.to_string())
+            } else {
+                ModifierKind::NameSuffix(value.to_string())
+            }
+        }
         "similar" => {
             if value.is_empty() {
                 return Err(ParseError::InvalidModifierValue {
@@ -1594,6 +1629,61 @@ mod tests {
                 QueryNode::Text(_) => {}
                 n => panic!("`{q}` should be Text, got {n:?}"),
             }
+        }
+    }
+
+    // ---- SRC-M23 anchored matching --------------------------------
+
+    #[test]
+    fn anchored_name_modifiers_parse() {
+        match modifier_of("name^:report") {
+            ModifierKind::NamePrefix(n) => assert_eq!(n, "report"),
+            k => panic!("name^: not a prefix modifier: {k:?}"),
+        }
+        match modifier_of("name$:final") {
+            ModifierKind::NameSuffix(n) => assert_eq!(n, "final"),
+            k => panic!("name$: not a suffix modifier: {k:?}"),
+        }
+    }
+
+    #[test]
+    fn anchored_name_modifiers_reject_an_empty_needle() {
+        // `name^:` on its own is a half-typed query; answering it with
+        // every row hides the typo.
+        for q in ["name^:", "name$:"] {
+            assert!(
+                matches!(parse(q), Err(ParseError::InvalidModifierValue { .. })),
+                "`{q}` should reject an empty needle"
+            );
+        }
+    }
+
+    #[test]
+    fn sigil_terms_that_are_not_modifiers_stay_literal() {
+        // Standing Rule #8 guard, the same shape as the hyphen one
+        // above: `^` and `$` are opted in for exactly two keys, so
+        // everything else carrying them is still text. Widening the key
+        // charset instead would turn each of these into a hard parse
+        // error.
+        for q in ["x^2:3", "total$:5", "a^b:c", "cost$:10"] {
+            match pp(q).root() {
+                QueryNode::Text(_) => {}
+                n => panic!("`{q}` should be Text, got {n:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn strict_everything_rejects_anchored_matching() {
+        // voidtools' Everything has no anchored-match syntax.
+        for q in ["name^:report", "name$:final"] {
+            assert!(
+                matches!(
+                    parse_with(q, ParseOpts::strict()),
+                    Err(ParseError::StrictEverythingViolation { .. })
+                ),
+                "`{q}` should violate strict-everything"
+            );
         }
     }
 

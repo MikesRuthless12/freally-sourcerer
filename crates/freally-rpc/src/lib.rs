@@ -26,6 +26,9 @@
 //!   `Notification` frames the client routes to Tauri events.
 //! - `client`: connect + request + notification subscription.
 //! - `transport`: `cfg`-gated UDS / named-pipe primitives.
+//! - `portable`: SRC-M17 portable-mode layout — where a `Data/`-beside-
+//!   the-executable install keeps its index, settings and logs. Lives
+//!   here because this is the one crate all three binaries share.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
@@ -37,6 +40,7 @@ pub mod frame;
 pub mod jsonrpc;
 pub mod ops;
 pub mod path;
+pub mod portable;
 pub mod rename;
 pub mod server;
 pub mod service;

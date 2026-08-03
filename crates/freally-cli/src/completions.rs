@@ -52,7 +52,16 @@ const MAX_BOOKMARK_CANDIDATES: usize = 256;
 
 /// Where the desktop app persists bookmarks, mirroring Tauri's
 /// `app_data_dir()` for each platform.
+///
+/// SRC-M17: a portable install keeps them in its own `Data/` folder.
+/// Completion runs before the argument parser — a half-typed command
+/// line is not parseable — so `--portable` is not visible here and only
+/// the `portable.flag` file can select the portable store. That is the
+/// case that matters: a flagged install is the one a shell is rooted in.
 fn bookmarks_path() -> Option<PathBuf> {
+    if let Some(data) = freally_rpc::portable::data_dir() {
+        return Some(data.join("bookmarks.json"));
+    }
     let dir = app_data_dir()?;
     Some(dir.join(APP_IDENTIFIER).join("bookmarks.json"))
 }
