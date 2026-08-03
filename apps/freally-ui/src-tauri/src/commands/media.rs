@@ -23,8 +23,7 @@
 use serde::Serialize;
 use tauri::State;
 
-use super::files::verify_readable;
-use super::known_paths::KnownPaths;
+use super::known_paths::{KnownPaths, Provenance};
 
 /// Largest file served inline.
 ///
@@ -59,7 +58,13 @@ pub async fn media_waveform(
     path: String,
     known: State<'_, KnownPaths>,
 ) -> Result<Waveform, String> {
-    verify_readable(&path, &known)?;
+    // Daemon-attested, not the frontend-asserted read level: this hands
+    // the *complete* contents of a named file to the webview, and
+    // `files_whitelist_user_chosen` lets the webview mint
+    // `FrontendAsserted` for any string it likes. `content_view` and
+    // `copy_file_contents` — the other two commands that return file
+    // contents — already demand this level, for this reason.
+    known.verify(&path, Provenance::QueryHit)?;
     let p = std::path::PathBuf::from(&path);
     // Decoding is CPU-bound and can run for seconds on a long file;
     // holding the async runtime's worker for that would stall every
@@ -90,7 +95,13 @@ pub async fn media_bytes(
     path: String,
     known: State<'_, KnownPaths>,
 ) -> Result<tauri::ipc::Response, String> {
-    verify_readable(&path, &known)?;
+    // Daemon-attested, not the frontend-asserted read level: this hands
+    // the *complete* contents of a named file to the webview, and
+    // `files_whitelist_user_chosen` lets the webview mint
+    // `FrontendAsserted` for any string it likes. `content_view` and
+    // `copy_file_contents` — the other two commands that return file
+    // contents — already demand this level, for this reason.
+    known.verify(&path, Provenance::QueryHit)?;
     let p = std::path::PathBuf::from(&path);
 
     // Check the size before reading, not after: `read` on an oversized

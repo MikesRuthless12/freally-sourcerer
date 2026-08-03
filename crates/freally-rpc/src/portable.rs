@@ -130,19 +130,77 @@ pub fn log_dir() -> Option<PathBuf> {
 ///
 /// See the module note: the socket deliberately does not live in
 /// `Data/`.
+///
+/// It also deliberately does not live *directly* in the temp directory.
+/// `std::env::temp_dir()` is `/tmp` on Linux — mode 1777, writable by
+/// every local account — and the tag is a plain hash of a guessable
+/// path, so any local user could pre-bind the exact name and have the
+/// shell connect to them instead of to the real daemon. The transport
+/// authenticates the *peer* of a listener it owns; a client connecting
+/// out checks nothing, so squatting the path is impersonation, and a
+/// forged `query:batch` mints `Provenance::QueryHit` for paths of the
+/// attacker's choosing.
+///
+/// So: an owner-only directory, and the socket inside it.
+/// `$XDG_RUNTIME_DIR` is already per-user and 0700 where it exists;
+/// otherwise a uid-tagged subdirectory that this process creates itself.
+#[cfg(not(windows))]
 pub fn socket_path() -> Option<SocketPath> {
     let tag = tag_for(&data_dir()?);
-    #[cfg(windows)]
+    let dir = private_runtime_dir(&tag)?;
+    Some(SocketPath::Path(dir.join("indexd.sock")))
+}
+
+#[cfg(windows)]
+pub fn socket_path() -> Option<SocketPath> {
+    // Named pipes are not filesystem objects and the pipe's DACL is set
+    // by the server, so the squatting problem above does not apply.
+    let tag = tag_for(&data_dir()?);
+    let base = crate::path::default_pipe_name();
+    Some(SocketPath::Pipe(format!("{base}-{tag}")))
+}
+
+/// A directory only this user can write to, created if absent.
+#[cfg(not(windows))]
+fn private_runtime_dir(tag: &str) -> Option<PathBuf> {
+    let base = match std::env::var_os("XDG_RUNTIME_DIR") {
+        Some(v) if !v.is_empty() => PathBuf::from(v),
+        // No XDG_RUNTIME_DIR (macOS, or a bare login shell): fall back
+        // to the temp dir but never to a *shared* name inside it — the
+        // uid tag means another account's directory is a different
+        // directory, and the 0700 mode below means they cannot enter
+        // ours.
+        _ => std::env::temp_dir(),
+    };
+    let dir = base.join(format!("freally-{}-{tag}", current_uid()));
+    std::fs::create_dir_all(&dir).ok()?;
+    // Set the mode after creating rather than trusting the umask.
+    #[cfg(unix)]
     {
-        let base = crate::path::default_pipe_name();
-        Some(SocketPath::Pipe(format!("{base}-{tag}")))
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).ok()?;
+        // Refuse a directory we do not own: under a sticky /tmp another
+        // account can create the name first, and `create_dir_all`
+        // succeeds against an existing directory whoever owns it.
+        use std::os::unix::fs::MetadataExt;
+        let md = std::fs::metadata(&dir).ok()?;
+        if md.uid() != current_uid() {
+            return None;
+        }
     }
-    #[cfg(not(windows))]
-    {
-        Some(SocketPath::Path(
-            std::env::temp_dir().join(format!("freally-indexd-{tag}.sock")),
-        ))
-    }
+    Some(dir)
+}
+
+#[cfg(all(unix, not(windows)))]
+fn current_uid() -> u32 {
+    // SAFETY: `getuid` is always safe — it takes no arguments, reads
+    // process credentials, and cannot fail.
+    unsafe { libc::getuid() }
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn current_uid() -> u32 {
+    0
 }
 
 /// Short, stable tag for a portable root.

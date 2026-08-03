@@ -457,6 +457,46 @@ peaks and would silently discard them; and `media.rs` calls the shared
 `files::verify_readable` rather than its own copy, so the provenance
 level for frontend-asserted reads is decided in exactly one place.
 
+### Build 3 closeout — what `/security-review` changed
+
+Two HIGH findings, both introduced by this build, both fixed.
+
+**`media_bytes` was gated at the level the frontend can mint for
+itself.** It returns the *complete* contents of a named file to the
+webview, and it was using `Provenance::FrontendAsserted` — the level
+`files_whitelist_user_chosen` hands out for any string the JS layer
+asks for. A compromised frontend dependency could have whitelisted
+`~/.ssh/id_ed25519` and then read it, with no dialog and no daemon
+involved. The other two commands that return file contents,
+`content_document` and `copy_file_contents`, already demanded
+`QueryHit`; these two now do too. The legitimate caller is driven from
+result rows, which carry that level already, so nothing user-facing
+changes.
+
+**The portable-mode socket sat directly in the shared temp directory.**
+`/tmp` is mode 1777 and the name was an FNV hash of a guessable path, so
+any local account could bind it first. The transport authenticates the
+*peer* of a listener it owns; a client connecting out checked nothing,
+so squatting that path was a full daemon impersonation — and
+`register_hit_paths` turns anything arriving in a `query:batch` into
+`Provenance::QueryHit`, which is the gate on delete, rename, and every
+other destructive command. Three changes:
+
+- The socket moved into a per-user directory — `$XDG_RUNTIME_DIR` where
+  it exists, otherwise a uid-tagged subdirectory this process creates
+  and chmods 0700, refusing it outright if it turns out to be owned by
+  someone else.
+- `transport::unix::connect` now refuses a socket this user does not
+  own, or whose mode is reachable by others. It uses
+  `symlink_metadata`, so a symlink pointing at a socket we do own does
+  not satisfy the check. This is the missing counterpart to the
+  listener's peer-uid check.
+- `listen` no longer hard-fails when it cannot tighten the socket's
+  parent directory. `chmod 0700 /tmp` returns `EPERM` for every
+  non-root user, so **portable mode could not start its daemon on Linux
+  at all** — the hardening step was taking down the thing it was meant
+  to protect. It logs and relies on the socket's own 0600 instead.
+
 ### TASK-098 — full Fluent i18n end-to-end across all 18 locales (2026-05-11)
 
 The 18-locale Fluent loader is now wired. Switching the language in
