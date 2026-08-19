@@ -124,7 +124,7 @@ pub fn candidates(path: &Path) -> Result<Vec<AppHandler>> {
             let Ok(plist) = std::fs::read(&plist_path) else {
                 continue;
             };
-            if !declared_extensions(&plist).iter().any(|e| *e == ext) {
+            if !declared_extensions(&plist).contains(&ext) {
                 continue;
             }
             let id = bundle.to_string_lossy().into_owned();
@@ -140,7 +140,7 @@ pub fn candidates(path: &Path) -> Result<Vec<AppHandler>> {
             }
         }
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     Ok(out)
 }
 
