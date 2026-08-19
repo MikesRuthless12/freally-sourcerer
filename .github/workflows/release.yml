@@ -111,10 +111,19 @@ jobs:
         # fails in ten minutes rather than burning the six-hour default.
         timeout-minutes: 10
         run: |
+          # The runner images resolve their Ubuntu mirror through
+          # /etc/apt/apt-mirrors.txt, which puts azure.archive.ubuntu.com
+          # first. That host went dark on 2026-08-19 and stayed dark: every
+          # jammy index came back `Ign:`, round after round, while
+          # archive.ubuntu.com served the same files fine in the same job.
+          # Point apt at the canonical archive so a single mirror's outage
+          # is not a release outage.
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' \
+            /etc/apt/apt-mirrors.txt /etc/apt/sources.list 2>/dev/null || true
           sudo tee /etc/apt/apt.conf.d/99-freally-timeouts >/dev/null <<'CONF'
-          Acquire::Retries "5";
-          Acquire::http::Timeout "30";
-          Acquire::https::Timeout "30";
+          Acquire::Retries "2";
+          Acquire::http::Timeout "20";
+          Acquire::https::Timeout "20";
           CONF
           for attempt in 1 2 3; do
             if sudo apt-get update; then break; fi
