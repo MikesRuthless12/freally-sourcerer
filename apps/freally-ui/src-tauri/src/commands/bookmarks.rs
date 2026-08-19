@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, State};
+use tauri::State;
 
 const MAX_BOOKMARK_NAME_LEN: usize = 256;
 const MAX_BOOKMARK_QUERY_LEN: usize = 64_000;
@@ -44,14 +44,7 @@ impl BookmarksStore {
 }
 
 fn data_path(app: &tauri::AppHandle, file: &str) -> PathBuf {
-    // SRC-M17 — a portable install keeps bookmarks beside the binary.
-    let dir = freally_rpc::portable::data_dir().unwrap_or_else(|| {
-        app.path()
-            .app_data_dir()
-            .unwrap_or_else(|_| std::env::temp_dir().join("freally"))
-    });
-    let _ = std::fs::create_dir_all(&dir);
-    dir.join(file)
+    super::settings::app_data_root(app).join(file)
 }
 
 fn read_from_disk(path: &PathBuf) -> Option<Vec<Bookmark>> {

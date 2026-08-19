@@ -785,9 +785,6 @@ opt-log-info-default = Informacja (domyślnie)
 opt-log-debug = Debugowanie
 opt-log-trace = Śledzenie
 
-# More Freally apps (Central inside panel) — host chrome
-menu-help-more-apps = Więcej aplikacji Freally…
-moreapps-title = Więcej aplikacji Freally
 
 # ---------------------------------------------------------------------
 # Build 1 — v0.21.0 (SRC-M01 … SRC-M08)

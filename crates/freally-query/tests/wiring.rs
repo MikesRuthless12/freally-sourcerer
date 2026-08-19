@@ -442,10 +442,12 @@ fn ignore_punctuation_is_off_by_default() {
 }
 
 #[test]
-fn ignoring_text_drops_the_trigram_seed() {
-    // The seed is built from the raw name's trigrams; `foo-bar` has no
-    // `oob` or `oba`, so seeding from it would return nothing at all
-    // for the needle `foobar`. The executor must fall back to a scan.
+fn ignoring_text_seeds_from_the_stripped_key() {
+    // The raw postings are built from the raw name, and `foo-bar` has
+    // no `oob` or `oba`, so seeding from them would return nothing at
+    // all for the needle `foobar`. Through Build 3 the executor dropped
+    // to a whole-index scan here; it now seeds from a parallel set of
+    // postings over stripped names, which describes the needle exactly.
     let idx = idx_with_files(vec![create("/synth/foo-bar.txt", 1, 0)]);
     let opts = ExecOpts {
         match_mode: MatchMode {
@@ -461,6 +463,108 @@ fn ignoring_text_drops_the_trigram_seed() {
         1,
         "ignore_punctuation must not be filtered out by the trigram seed"
     );
+    assert!(
+        rs.stats.used_seed,
+        "the stripped postings should have seeded this, not a full scan"
+    );
+}
+
+#[test]
+fn the_stripped_seed_is_a_superset_for_one_mode_at_a_time() {
+    // The stripped key drops punctuation *and* whitespace, while a user
+    // may have turned on only one of the two. That is still sound —
+    // deleting characters uniformly from both sides preserves "is a
+    // contiguous substring" — but it is the property the whole side
+    // index rests on, so it gets its own case rather than being implied
+    // by the both-on one.
+    let idx = idx_with_files(vec![
+        create("/synth/my report-final.txt", 1, 0),
+        create("/synth/unrelated.txt", 1, 0),
+    ]);
+    let punct_only = ExecOpts {
+        match_mode: MatchMode {
+            ignore_punctuation: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    // Punctuation dropped, whitespace kept: the space must still match.
+    let q = parse("my reportfinal").unwrap();
+    let rs = execute(&idx, &q, punct_only).unwrap();
+    assert_eq!(rs.rows().len(), 1, "punctuation-only mode lost the row");
+    assert_eq!(rs.rows()[0].name, "my report-final.txt");
+    assert!(rs.stats.used_seed);
+
+    let space_only = ExecOpts {
+        match_mode: MatchMode {
+            ignore_whitespace: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    // Whitespace dropped, punctuation kept: the hyphen must still match.
+    let q = parse("myreport-final").unwrap();
+    let rs = execute(&idx, &q, space_only).unwrap();
+    assert_eq!(rs.rows().len(), 1, "whitespace-only mode lost the row");
+    assert_eq!(rs.rows()[0].name, "my report-final.txt");
+    assert!(rs.stats.used_seed);
+}
+
+#[test]
+fn the_stripped_seed_does_not_widen_what_matches() {
+    // A superset filter that let a non-match through would be a bug in
+    // the other direction: the candidates still get re-tested under the
+    // mode the user asked for.
+    let idx = idx_with_files(vec![
+        create("/synth/my report-final.txt", 1, 0),
+        create("/synth/myreportfinal.txt", 1, 0),
+    ]);
+    let space_only = ExecOpts {
+        match_mode: MatchMode {
+            ignore_whitespace: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    // Under whitespace-only, `myreportfinal` matches the name that has
+    // no hyphen and the one whose only separator is a space — but not a
+    // hyphenated one, because the hyphen survives.
+    let q = parse("myreportfinal").unwrap();
+    let rs = execute(&idx, &q, space_only).unwrap();
+    let names: Vec<&str> = rs.rows().iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, vec!["myreportfinal.txt"]);
+}
+
+#[test]
+fn the_stripped_seed_keeps_up_with_later_writes() {
+    // The map is built lazily, on the first query that needs it, and
+    // maintained by `upsert` from then on. A file indexed after that
+    // first query has to land in it too.
+    let dir = tempfile::tempdir().unwrap();
+    let idx = Index::open(dir.path()).unwrap();
+    idx.apply(&[create("/synth/first-one.txt", 1, 0)]).unwrap();
+    idx.commit().unwrap();
+
+    let opts = ExecOpts {
+        match_mode: MatchMode {
+            ignore_punctuation: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    // Builds the stripped postings.
+    let rs = execute(&idx, &parse("firstone").unwrap(), opts).unwrap();
+    assert_eq!(rs.rows().len(), 1);
+
+    idx.apply(&[create("/synth/second-one.txt", 1, 0)]).unwrap();
+    idx.commit().unwrap();
+    let rs = execute(&idx, &parse("secondone").unwrap(), opts).unwrap();
+    assert_eq!(
+        rs.rows().len(),
+        1,
+        "a row written after the map was built is missing from it"
+    );
+    assert_eq!(rs.rows()[0].name, "second-one.txt");
 }
 
 // ---------- SRC-M23: anchored name matching ----------------------------
@@ -525,4 +629,73 @@ fn anchored_matching_survives_a_negation() {
     let rs = execute(&idx, &q, ExecOpts::default()).unwrap();
     let names: Vec<&str> = rs.rows().iter().map(|r| r.name.as_str()).collect();
     assert_eq!(names, vec!["draft-b.md"]);
+}
+
+// ---------- the name pass and the hydrated pass must agree -------------
+
+fn names_for(idx: &Index, query: &str, match_mode: MatchMode) -> Vec<String> {
+    let q = parse(query).unwrap();
+    let opts = ExecOpts {
+        match_mode,
+        ..Default::default()
+    };
+    let rs = execute(idx, &q, opts).unwrap();
+    let mut names: Vec<String> = rs.rows().iter().map(|r| r.name.clone()).collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn name_modifiers_answer_the_same_with_a_hydrating_modifier_alongside() {
+    // Regression: `eval_modifier` evaluated `child:` / `name^:` /
+    // `name$:` as a bare `contains` / `starts_with` over the raw name,
+    // while the name-index pass routed the same modifiers through
+    // `substring_match` / `anchored_match` — which also fold diacritics
+    // and apply the SRC-M23 ignore modes. Both passes run on every
+    // query, so adding a modifier that forces hydration (`size:` here)
+    // handed the decision to the stricter one and the same needle
+    // stopped matching.
+    let idx = idx_with_files(vec![
+        create("/synth/café-notes.txt", 4096, 0),
+        create("/synth/my-report.md", 4096, 0),
+        create("/synth/my report.md", 4096, 0),
+        create("/synth/summary.txt", 4096, 0),
+    ]);
+    let punct = MatchMode {
+        ignore_punctuation: true,
+        ..Default::default()
+    };
+    let space = MatchMode {
+        ignore_whitespace: true,
+        ..Default::default()
+    };
+    // The diacritic cases carry a companion literal (`notes`) purely to
+    // give the trigram pre-filter a seed it can resolve: the seed is
+    // built from the raw needle, so `café` alone surfaces no candidates
+    // from a byte-level index. That is the separate, documented Phase-5
+    // limitation `match_diacritics_default_strips` describes — it is not
+    // what this test is about.
+    let cases = [
+        ("name^:cafe notes", MatchMode::default()),
+        ("name$:notes.txt", MatchMode::default()),
+        ("child:cafe notes", MatchMode::default()),
+        ("name^:myreport", punct),
+        ("name$:myreport.md", punct),
+        ("child:myreport", punct),
+        ("name^:myreport", space),
+        ("child:myreport", space),
+    ];
+    for (bare, mode) in cases {
+        let paired = format!("{bare} size:>1kb");
+        let alone = names_for(&idx, bare, mode);
+        assert!(
+            !alone.is_empty(),
+            "`{bare}` matched nothing — the case proves nothing"
+        );
+        assert_eq!(
+            alone,
+            names_for(&idx, &paired, mode),
+            "`{bare}` and `{paired}` disagree"
+        );
+    }
 }

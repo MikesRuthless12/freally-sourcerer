@@ -93,8 +93,8 @@ mod imp {
             }
             return None;
         }
-        let width = bmp.bmWidth as i32;
-        let height = bmp.bmHeight as i32;
+        let width = bmp.bmWidth;
+        let height = bmp.bmHeight;
         if width <= 0 || height <= 0 {
             unsafe {
                 let _ = DeleteObject(color.into());
@@ -156,7 +156,6 @@ mod imp {
     fn encode_wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
     }
-
 }
 
 #[cfg(not(windows))]

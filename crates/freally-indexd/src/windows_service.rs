@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use freally_index::service_index_root;
 use freally_rpc::{Server, ServerConfig, SocketPath, service_pipe_name, service_sddl};
 
-use freally_indexd::scanner;
+use freally_indexd::service;
 use freally_indexd::{DaemonOptions, DaemonState, IndexdService};
 use windows::Win32::Foundation::{ERROR_SERVICE_DOES_NOT_EXIST, NO_ERROR};
 use windows::Win32::System::Services::{
@@ -280,7 +280,7 @@ async fn run_service_daemon() -> Result<()> {
             tracing::info!(count = folders.len(), "service: starting initial scans");
             for f in folders {
                 let path = std::path::PathBuf::from(&f.path);
-                scanner::spawn_scan(state.index.clone(), &path, Some(state.permissions.clone()));
+                service::scan(&state, &path);
             }
         }
     }

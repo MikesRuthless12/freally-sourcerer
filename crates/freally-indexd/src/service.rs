@@ -156,6 +156,22 @@ impl Service for IndexdService {
     }
 }
 
+/// Kick off a scan of `root` with the handles every call site was
+/// passing anyway.
+///
+/// Five sites in this file plus one in `windows_service.rs` repeated the
+/// same three arguments. Pulling both handles off the state here means a
+/// future third dependency is one edit, and — the reason it matters — a
+/// site cannot quietly forget `Some(permissions)` and lose permission
+/// reporting for that scan with nothing to notice it.
+///
+/// Takes the state rather than the service so the Windows service host,
+/// which starts its initial scans before any `IndexdService` exists, is
+/// the same call.
+pub fn scan(state: &DaemonState, root: &std::path::Path) {
+    crate::scanner::spawn_scan(state.index.clone(), root, Some(state.permissions.clone()));
+}
+
 // ---------- query ----------
 
 #[derive(Debug, Deserialize)]
@@ -186,6 +202,18 @@ struct QueryRunParams {
     ignore_punctuation: bool,
     #[serde(default)]
     ignore_whitespace: bool,
+    /// SRC-M24 — Settings → Results → *Natural sort*.
+    ///
+    /// Defaults to `true` rather than to `bool`'s `false`, so a client
+    /// that omits the field — or an older one that does not know it —
+    /// keeps the ordering `SortSpec::default()` already gave it instead
+    /// of silently dropping to byte order.
+    #[serde(default = "natural_sort_default")]
+    natural_sort: bool,
+}
+
+fn natural_sort_default() -> bool {
+    freally_query::SortSpec::default().natural
 }
 
 impl QueryRunParams {
@@ -198,6 +226,13 @@ impl QueryRunParams {
             match_phonetic: self.match_phonetic,
             ignore_punctuation: self.ignore_punctuation,
             ignore_whitespace: self.ignore_whitespace,
+        }
+    }
+
+    fn sort_spec(&self) -> freally_query::SortSpec {
+        freally_query::SortSpec {
+            natural: self.natural_sort,
+            ..Default::default()
         }
     }
 }
@@ -263,6 +298,7 @@ async fn run_query_streaming(
     sink: NotificationSink,
 ) -> LensTimings {
     let match_mode = p.match_mode();
+    let sort = p.sort_spec();
     let QueryRunParams {
         source,
         strict_everything,
@@ -305,6 +341,7 @@ async fn run_query_streaming(
                     query,
                     per_lens_limits.as_ref().map(|l| l.filename).unwrap_or(200),
                     match_mode,
+                    sort,
                 )
                 .await
             }
@@ -449,11 +486,13 @@ async fn filename_lens_hits(
     query: &freally_query::Query,
     limit: u32,
     match_mode: freally_query::MatchMode,
+    sort: freally_query::SortSpec,
 ) -> (Vec<freally_rpc::QueryHit>, Vec<freally_rpc::HitGroup>) {
     let _ = handle;
     let opts = freally_query::ExecOpts {
         limit: limit as usize,
         match_mode,
+        sort,
         ..Default::default()
     };
     // SRC-M14: snapshot the registry once so `volume:` can be typed as a
@@ -588,11 +627,7 @@ async fn index_rebuild(svc: &IndexdService) -> Result<Value, RpcError> {
         // indexed with no volume, or worse, with the id of whatever used to
         // hold that drive letter.
         svc.state.reconcile_catalogs().await;
-        crate::scanner::spawn_scan(
-            svc.state.index.clone(),
-            &scan_path,
-            Some(svc.state.permissions.clone()),
-        );
+        scan(&svc.state, &scan_path);
     }
     Ok(json!({ "ok": true }))
 }
@@ -876,11 +911,7 @@ async fn volumes_update(svc: &IndexdService, params: Value) -> Result<Value, Rpc
                 "volumes.update: indexing newly-included volume"
             );
             let mount = std::path::PathBuf::from(&v.mount_point);
-            crate::scanner::spawn_scan(
-                svc.state.index.clone(),
-                &mount,
-                Some(svc.state.permissions.clone()),
-            );
+            scan(&svc.state, &mount);
         } else {
             tracing::warn!(id = %p.id, "volumes.update: no matching volume to scan");
         }
@@ -946,11 +977,7 @@ async fn folders_add(svc: &IndexdService, params: Value) -> Result<Value, RpcErr
         .persist()
         .await
         .map_err(|e| RpcError::Other(e.to_string()))?;
-    crate::scanner::spawn_scan(
-        svc.state.index.clone(),
-        &scan_path,
-        Some(svc.state.permissions.clone()),
-    );
+    scan(&svc.state, &scan_path);
     svc.state.reconcile_watchers().await;
     Ok(json!({ "ok": true }))
 }
@@ -998,11 +1025,7 @@ async fn folders_rescan(svc: &IndexdService, params: Value) -> Result<Value, Rpc
     drop(cur);
     if let Some(f) = target {
         let scan_path = std::path::PathBuf::from(&f.path);
-        crate::scanner::spawn_scan(
-            svc.state.index.clone(),
-            &scan_path,
-            Some(svc.state.permissions.clone()),
-        );
+        scan(&svc.state, &scan_path);
     } else {
         tracing::warn!(id = %p.id, "folders.rescan: no folder with that id");
     }
@@ -1015,11 +1038,7 @@ async fn folders_rescan_all(svc: &IndexdService) -> Result<Value, RpcError> {
     tracing::info!(count = folders.len(), "folders.rescan_all received");
     for f in folders {
         let scan_path = std::path::PathBuf::from(&f.path);
-        crate::scanner::spawn_scan(
-            svc.state.index.clone(),
-            &scan_path,
-            Some(svc.state.permissions.clone()),
-        );
+        scan(&svc.state, &scan_path);
     }
     Ok(json!({ "ok": true }))
 }
@@ -1259,4 +1278,62 @@ async fn settings_apply(svc: &IndexdService, params: Value) -> Result<Value, Rpc
         .await
         .map_err(|e| RpcError::Other(e.to_string()))?;
     Ok(json!({ "ok": true }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SRC-M24 — the natural-sort opt-out has to survive the wire.
+    ///
+    /// It is the one flag on `QueryRunParams` whose "absent" and "off"
+    /// answers differ: every match-mode flag defaults to `false`, which
+    /// is also `MatchMode::default()`, so forgetting one is invisible.
+    /// This one defaults to `true`, so a plain `#[serde(default)]` would
+    /// have turned natural sort off for every client that predates the
+    /// field rather than leaving it alone.
+    #[test]
+    fn natural_sort_defaults_to_on_and_reads_an_explicit_off() {
+        let absent: QueryRunParams = serde_json::from_value(json!({ "source": "a" })).unwrap();
+        assert!(absent.natural_sort);
+        assert!(absent.sort_spec().natural);
+        assert_eq!(absent.sort_spec(), freally_query::SortSpec::default());
+
+        let off: QueryRunParams =
+            serde_json::from_value(json!({ "source": "a", "natural_sort": false })).unwrap();
+        assert!(!off.sort_spec().natural);
+
+        let on: QueryRunParams =
+            serde_json::from_value(json!({ "source": "a", "natural_sort": true })).unwrap();
+        assert!(on.sort_spec().natural);
+    }
+
+    /// The match-mode flags travel flat, under the daemon's own names.
+    /// `commands/query.rs` renames them on the way in; if it stops, or
+    /// this side renames a field, the flag silently reads `false`.
+    #[test]
+    fn match_mode_reads_every_flag_off_the_wire() {
+        let all_on: QueryRunParams = serde_json::from_value(json!({
+            "source": "a",
+            "match_case": true,
+            "whole_word": true,
+            "match_path": true,
+            "match_diacritics": true,
+            "match_phonetic": true,
+            "ignore_punctuation": true,
+            "ignore_whitespace": true,
+        }))
+        .unwrap();
+        let mm = all_on.match_mode();
+        assert!(mm.match_case);
+        assert!(mm.whole_word);
+        assert!(mm.match_path);
+        assert!(mm.match_diacritics);
+        assert!(mm.match_phonetic);
+        assert!(mm.ignore_punctuation);
+        assert!(mm.ignore_whitespace);
+
+        let none: QueryRunParams = serde_json::from_value(json!({ "source": "a" })).unwrap();
+        assert_eq!(none.match_mode(), freally_query::MatchMode::default());
+    }
 }

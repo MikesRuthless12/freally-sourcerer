@@ -136,7 +136,7 @@ fn init_tracing() {
     // nowhere a user can read. Log to `Data/logs/` instead — and fall
     // back to stderr if that file cannot be opened, rather than losing
     // the diagnostics that would explain why.
-    if let Some(file) = freally_rpc::portable::log_dir().and_then(open_log_file) {
+    if let Some(file) = freally_rpc::portable::open_log("indexd.log") {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_ansi(false)
@@ -148,15 +148,6 @@ fn init_tracing() {
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .try_init();
-}
-
-fn open_log_file(dir: std::path::PathBuf) -> Option<std::fs::File> {
-    std::fs::create_dir_all(&dir).ok()?;
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("indexd.log"))
-        .ok()
 }
 
 fn run_foreground(index_root: Option<String>, socket: Option<String>) -> Result<()> {

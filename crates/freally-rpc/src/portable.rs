@@ -125,6 +125,26 @@ pub fn log_dir() -> Option<PathBuf> {
     Some(data_dir()?.join("logs"))
 }
 
+/// Open `<log_dir>/<name>` for appending, creating the directory if a
+/// portable install has not written a log before.
+///
+/// `None` when this is not a portable install, when the directory
+/// cannot be created, or when the file cannot be opened — a log that
+/// will not open is not a reason to refuse to start.
+///
+/// Lives here rather than in each binary because both of them had a
+/// byte-identical copy that differed only in the filename, and both
+/// already depend on this module for `log_dir`.
+pub fn open_log(name: &str) -> Option<std::fs::File> {
+    let dir = log_dir()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(name))
+        .ok()
+}
+
 /// Socket / pipe for this portable install, kept off the stick and
 /// namespaced by the portable root so two instances never collide.
 ///

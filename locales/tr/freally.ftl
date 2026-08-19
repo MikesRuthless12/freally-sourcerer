@@ -785,9 +785,6 @@ opt-log-info-default = Bilgi (varsayılan)
 opt-log-debug = Hata Ayıklama
 opt-log-trace = İzleme
 
-# More Freally apps (Central inside panel) — host chrome
-menu-help-more-apps = Diğer Freally uygulamaları…
-moreapps-title = Diğer Freally uygulamaları
 
 # ---------------------------------------------------------------------
 # Build 1 — v0.21.0 (SRC-M01 … SRC-M08)

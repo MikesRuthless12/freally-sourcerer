@@ -48,10 +48,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # No submodules: the "More Freally apps" panel used to be one,
-          # pointing at a repository that no longer exists — which failed
-          # every leg at checkout before a build step could run. It is
-          # vendored as plain source at vendor/freally-central/ now.
+          # No submodules: this repository has none.
           submodules: false
 
       - name: Install Rust toolchain

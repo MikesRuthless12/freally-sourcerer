@@ -32,7 +32,7 @@ class QuickLookStore {
     // tens of thousands of ids, and this runs per arrow key.
     const id = selectionStore.ids.values().next().value;
     if (!id) return null;
-    return visibleHits().find((h) => h.file_id === id) ?? null;
+    return resultsStore.hitById(id);
   }
 
   /** Space with no selection would open an empty modal; don't. */

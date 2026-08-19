@@ -56,6 +56,15 @@ struct Inner {
     by_file_id: HashMap<u64, u32>,
     /// Trigram → `RowId` postings (sorted, deduped on flush).
     trigrams: HashMap<[u8; 3], Vec<u32>>,
+    /// SRC-M23 — the same postings over names with punctuation and
+    /// whitespace removed, so Ignore Punctuation / Ignore Whitespace can
+    /// seed candidates instead of walking the whole index.
+    ///
+    /// `None` until the first query that needs it. Both modes are
+    /// opt-in and off by default, so the majority of users never build
+    /// this map and never pay its memory; once built, `upsert` keeps it
+    /// current like the raw one.
+    seed_trigrams: Option<HashMap<[u8; 3], Vec<u32>>>,
 }
 
 /// Custom name index. Cheap to clone — internally an `Arc<RwLock<…>>`.
@@ -165,6 +174,20 @@ impl NameIndex {
                 inner.trigrams.entry(key).or_default().push(row_id);
             }
         }
+        // Only once something has asked for it — see `seed_trigrams`.
+        if inner.seed_trigrams.is_some() {
+            let seed = seed_key(&key);
+            let seed_bytes = seed.as_bytes();
+            if seed_bytes.len() >= 3 {
+                let map = inner
+                    .seed_trigrams
+                    .as_mut()
+                    .expect("checked is_some on the line above");
+                for w in seed_bytes.windows(3) {
+                    map.entry([w[0], w[1], w[2]]).or_default().push(row_id);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -270,6 +293,95 @@ impl NameIndex {
                 }
             }
         }
+    }
+
+    /// SRC-M23: [`for_each_candidate_named`](Self::for_each_candidate_named)
+    /// over names with punctuation and whitespace stripped.
+    ///
+    /// `q_seed` must already have been through [`seed_key`]. The
+    /// callback still receives the **raw** stored key — the caller's
+    /// matcher does its own normalization, and the row's identity for
+    /// sorting and hydration is its real name.
+    ///
+    /// The stripped key is a *superset* filter for every ignore mode,
+    /// not just the both-on one: dropping characters uniformly from
+    /// both sides preserves "is a contiguous substring", so a needle
+    /// that matches under Ignore Punctuation alone still matches once
+    /// whitespace is dropped from both sides too. Candidates are then
+    /// re-tested under the mode the user actually asked for, exactly as
+    /// they are on the raw path.
+    pub fn for_each_seed_candidate_named<F>(&self, q_seed: &str, cap: usize, mut f: F)
+    where
+        F: FnMut(u64, &[u8]),
+    {
+        self.ensure_seed_trigrams();
+        let inner = self.inner.read();
+        let bytes = q_seed.as_bytes();
+        let mut emitted = 0usize;
+        let rows: Vec<u32> = if bytes.len() < 3 {
+            // No trigrams to intersect — every live row is a candidate,
+            // which is what the raw path does at this length too.
+            inner
+                .file_ids
+                .iter()
+                .enumerate()
+                .filter_map(|(i, fid)| (*fid != u64::MAX).then_some(i as u32))
+                .collect()
+        } else {
+            let map = inner
+                .seed_trigrams
+                .as_ref()
+                .expect("ensure_seed_trigrams ran above");
+            trigram_intersection_in(map, &inner, bytes)
+        };
+        for r in rows {
+            if let Some(&fid) = inner.file_ids.get(r as usize)
+                && fid != u64::MAX
+                && let Some(name) = name_bytes(&inner, r)
+            {
+                f(fid, name);
+                emitted += 1;
+                if cap != 0 && emitted >= cap {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Build the stripped postings if nothing has needed them yet.
+    ///
+    /// Double-checked so the steady state is one uncontended read lock:
+    /// every query under an ignore mode calls this, and all but the
+    /// first find the map already there.
+    fn ensure_seed_trigrams(&self) {
+        if self.inner.read().seed_trigrams.is_some() {
+            return;
+        }
+        let mut inner = self.inner.write();
+        if inner.seed_trigrams.is_some() {
+            return;
+        }
+        let mut map: HashMap<[u8; 3], Vec<u32>> = HashMap::new();
+        for row_id in 0..inner.rows.len() as u32 {
+            if inner.file_ids.get(row_id as usize).copied() == Some(u64::MAX) {
+                continue;
+            }
+            let Some(name) = name_bytes(&inner, row_id) else {
+                continue;
+            };
+            let Ok(text) = std::str::from_utf8(name) else {
+                continue;
+            };
+            let seed = seed_key(text);
+            let seed_bytes = seed.as_bytes();
+            if seed_bytes.len() < 3 {
+                continue;
+            }
+            for w in seed_bytes.windows(3) {
+                map.entry([w[0], w[1], w[2]]).or_default().push(row_id);
+            }
+        }
+        inner.seed_trigrams = Some(map);
     }
 
     /// SRC-M11: yield `(file_id, name_lower_bytes)` for rows that share
@@ -457,7 +569,46 @@ impl NameIndex {
 /// to dedup the rare per-name repeated trigram (e.g. `aaaa` storing
 /// `aaa` twice). The `BTreeSet` predecessor was the documented Phase-5
 /// perf swap — Build Guide §`name_index` PERF note.
+/// SRC-M23 — `is_punctuation` and `seed_key` are the one definition of
+/// what the stripped key drops. `freally-query`'s match-mode strip
+/// defers to the same predicate, so the seed can never drop *less* than
+/// a mode does, which is what would turn the superset filter into a
+/// silent miss.
+pub fn is_punctuation(c: char) -> bool {
+    // `char` has no `is_punctuation`, and pulling in a Unicode-category
+    // crate to satisfy one predicate is not worth the dependency. Over
+    // the non-ASCII range "not alphanumeric, not whitespace, not a
+    // control character" is exactly punctuation and symbols.
+    c.is_ascii_punctuation()
+        || (!c.is_ascii() && !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control())
+}
+
+/// The stripped form a name is indexed under, and the form a needle has
+/// to be put in to look it up: punctuation and whitespace removed.
+///
+/// Borrows straight back when there is nothing to drop, which is the
+/// common case for a needle and for most filenames.
+pub fn seed_key(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.chars().any(|c| is_punctuation(c) || c.is_whitespace()) {
+        std::borrow::Cow::Owned(
+            s.chars()
+                .filter(|c| !is_punctuation(*c) && !c.is_whitespace())
+                .collect(),
+        )
+    } else {
+        std::borrow::Cow::Borrowed(s)
+    }
+}
+
 fn trigram_intersection(inner: &Inner, bytes: &[u8]) -> Vec<u32> {
+    trigram_intersection_in(&inner.trigrams, inner, bytes)
+}
+
+fn trigram_intersection_in(
+    trigrams: &HashMap<[u8; 3], Vec<u32>>,
+    inner: &Inner,
+    bytes: &[u8],
+) -> Vec<u32> {
     if bytes.len() < 3 {
         // Caller (the Phase-5 fallbacks) handles short needles.
         return inner
@@ -470,7 +621,7 @@ fn trigram_intersection(inner: &Inner, bytes: &[u8]) -> Vec<u32> {
     let mut row_hits: Option<Vec<u32>> = None;
     for w in bytes.windows(3) {
         let key = [w[0], w[1], w[2]];
-        let postings = match inner.trigrams.get(&key) {
+        let postings = match trigrams.get(&key) {
             Some(v) => v,
             None => return Vec::new(),
         };

@@ -52,11 +52,26 @@ class RecentSearchesStore {
 
     const next = [q, ...current.filter((e) => e !== q && !q.startsWith(e))].slice(0, MAX_ITEMS);
     if (next.length === current.length && next.every((e, i) => e === current[i])) return;
-    await settingsStore.patch({ recent_searches: next });
+    this.write(next);
   }
 
   async clear() {
-    await settingsStore.patch({ recent_searches: [] });
+    this.write([]);
+  }
+
+  /**
+   * Assign the one key, rather than going through `settingsStore.patch`.
+   *
+   * `patch` spreads the whole settings object — ~180 keys — and
+   * reassigns the `$state` root, which invalidates every component
+   * reading any setting. This runs on every forward keystroke, so that
+   * was a full settings-wide invalidation per character typed. The
+   * state is deeply reactive, so assigning the property reaches exactly
+   * the sidebar section that renders the list, and it stays in
+   * `SettingsState` so `flush()` still persists it.
+   */
+  private write(next: string[]) {
+    settingsStore.state.recent_searches = next;
   }
 }
 

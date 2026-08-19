@@ -8,8 +8,8 @@
 //!   bus).
 //! - `query_cancel` and `query_lens_timings` route to the daemon.
 
-use serde::{Deserialize, Serialize};
 use freally_query::{ParseOpts as RealParseOpts, ParseReport, parse_to_report};
+use serde::{Deserialize, Serialize};
 
 use crate::daemon;
 
@@ -54,11 +54,38 @@ pub struct PerLensLimits {
     pub similarity: u32,
 }
 
+/// The match-mode flags the UI sends alongside every query.
+///
+/// Tauri silently drops invoke arguments the command does not declare,
+/// so these need a landing spot here even though the command does
+/// nothing but forward them. SRC-M23 sent them from TypeScript and
+/// taught the daemon's `QueryRunParams` to read them, but nothing in
+/// between ever carried them, so every flag reached the executor as its
+/// `serde(default)` and the whole `Search →` menu moved a checkmark and
+/// changed nothing.
+///
+/// The field names are the daemon's wire names, not the settings keys —
+/// `query.ts` does that rename on the way out, which is why this struct
+/// can be forwarded wholesale rather than field-by-field.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct QuerySearchOpts {
+    pub match_case: bool,
+    pub whole_word: bool,
+    pub match_path: bool,
+    pub match_diacritics: bool,
+    pub match_phonetic: bool,
+    pub ignore_punctuation: bool,
+    pub ignore_whitespace: bool,
+}
+
 #[tauri::command]
 pub fn query_run(
     source: String,
     strict_everything: Option<bool>,
     per_lens_limits: Option<PerLensLimits>,
+    search_opts: Option<QuerySearchOpts>,
+    natural_sort: Option<bool>,
 ) -> Result<QueryRunHandle, String> {
     let bounded = if source.len() > MAX_QUERY_SOURCE_LEN {
         let mut end = MAX_QUERY_SOURCE_LEN;
@@ -70,10 +97,14 @@ pub fn query_run(
         source
     };
     let daemon = daemon::get().ok_or_else(|| "daemon not initialized".to_string())?;
-    let mut params = serde_json::json!({
-        "source": bounded,
-        "strict_everything": strict_everything.unwrap_or(false),
-    });
+    let mut params =
+        serde_json::to_value(search_opts.unwrap_or_default()).map_err(|e| e.to_string())?;
+    params["source"] = serde_json::json!(bounded);
+    params["strict_everything"] = serde_json::json!(strict_everything.unwrap_or(false));
+    // SRC-M24. Absent means on, matching both the setting's default and
+    // `SortSpec::default()`; sending `false` here is what actually turns
+    // the daemon's natural comparator off for `freally search --json`.
+    params["natural_sort"] = serde_json::json!(natural_sort.unwrap_or(true));
     if let Some(limits) = per_lens_limits {
         params["per_lens_limits"] = serde_json::json!({
             "filename": limits.filename,
@@ -82,8 +113,9 @@ pub fn query_run(
             "similarity": limits.similarity,
         });
     }
-    let res: freally_rpc::QueryRunHandle =
-        daemon.call("query.run", params).map_err(|e| e.to_string())?;
+    let res: freally_rpc::QueryRunHandle = daemon
+        .call("query.run", params)
+        .map_err(|e| e.to_string())?;
     Ok(QueryRunHandle { handle: res.handle })
 }
 
@@ -99,6 +131,9 @@ pub fn query_cancel(handle: String) -> Result<(), String> {
 pub fn query_lens_timings(handle: String) -> Result<freally_rpc::LensTimings, String> {
     let daemon = daemon::get().ok_or_else(|| "daemon not initialized".to_string())?;
     daemon
-        .call("query.lens_timings", serde_json::json!({ "handle": handle }))
+        .call(
+            "query.lens_timings",
+            serde_json::json!({ "handle": handle }),
+        )
         .map_err(|e| e.to_string())
 }

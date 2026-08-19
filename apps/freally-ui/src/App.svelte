@@ -13,7 +13,6 @@
   import BulkRenameDialog from "./components/dialogs/BulkRenameDialog.svelte";
   import IndexHealthDialog from "./components/dialogs/IndexHealthDialog.svelte";
   import PermissionHealthDialog from "./components/dialogs/PermissionHealthDialog.svelte";
-  import MoreFreallyAppsDialog from "./components/dialogs/MoreFreallyAppsDialog.svelte";
   import ConnectEndpointDialog from "./components/dialogs/ConnectEndpointDialog.svelte";
   import SettingsDialog from "./components/settings/SettingsDialog.svelte";
   import ToastHost from "./components/ToastHost.svelte";
@@ -94,10 +93,6 @@
 />
 <PermissionHealthDialog
   open={dialogsStore.active === "permission_health"}
-  onClose={() => dialogsStore.close()}
-/>
-<MoreFreallyAppsDialog
-  open={dialogsStore.active === "more_freally_apps"}
   onClose={() => dialogsStore.close()}
 />
 <ResultContextMenu />

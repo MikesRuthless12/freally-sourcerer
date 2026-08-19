@@ -230,11 +230,7 @@ impl Daemon {
             .block_on(async move { client.call(method, params).await })
     }
 
-    pub fn call_void<P>(
-        &self,
-        method: &'static str,
-        params: P,
-    ) -> Result<(), freally_rpc::RpcError>
+    pub fn call_void<P>(&self, method: &'static str, params: P) -> Result<(), freally_rpc::RpcError>
     where
         P: serde::Serialize + Send + 'static,
     {

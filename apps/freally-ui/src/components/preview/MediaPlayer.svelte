@@ -5,7 +5,7 @@
   // Auditioning a `lufs:<-14` result meant leaving Freally, which is
   // exactly the workflow the audio lens exists to keep you inside.
 
-  import { invoke } from "@tauri-apps/api/core";
+  import * as files from "../../lib/ipc/files";
   import * as media from "../../lib/ipc/media";
   import type { Waveform } from "../../lib/ipc/media";
   import { formatBytes } from "../../lib/util/format";
@@ -18,11 +18,15 @@
   }
   let { path, name, kind }: Props = $props();
 
-  let el = $state<HTMLMediaElement | undefined>();
   let src = $state<string | null>(null);
   let waveform = $state<Waveform | null>(null);
   let error = $state<string | null>(null);
-  let playing = $state(false);
+  // `bind:paused` / `bind:currentTime` / `bind:duration` / `bind:volume`
+  // keep these in step with the element in both directions, so the
+  // transport reads and writes plain variables and there are no
+  // state-syncing event handlers to keep matched between the <audio>
+  // and <video> branches.
+  let paused = $state(true);
   let loop = $state(false);
   let volume = $state(1);
   let position = $state(0);
@@ -36,7 +40,7 @@
     error = null;
     src = null;
     waveform = null;
-    playing = false;
+    paused = true;
     position = 0;
     duration = 0;
 
@@ -76,22 +80,11 @@
     };
   });
 
-  function toggle() {
-    if (!el) return;
-    if (el.paused) void el.play();
-    else el.pause();
-  }
-
-  function seekTo(ev: Event) {
-    const v = Number((ev.target as HTMLInputElement).value);
-    if (el && Number.isFinite(v)) el.currentTime = v;
-  }
-
   function seekFromWaveform(ev: MouseEvent) {
-    if (!el || !duration) return;
+    if (!duration) return;
     const box = (ev.currentTarget as HTMLElement).getBoundingClientRect();
     const ratio = Math.min(1, Math.max(0, (ev.clientX - box.left) / box.width));
-    el.currentTime = ratio * duration;
+    position = ratio * duration;
   }
 
   function clock(seconds: number): string {
@@ -107,7 +100,7 @@
 <div class="player">
   {#if error}
     <p class="hint">{error}</p>
-    <button type="button" class="link" onclick={() => invoke("files_open", { path })}>
+    <button type="button" class="link" onclick={() => void files.open(path)}>
       {t("media-open-externally")}
     </button>
   {:else if !src}
@@ -116,24 +109,22 @@
     {#if kind === "video"}
       <!-- svelte-ignore a11y_media_has_caption -->
       <video
-        bind:this={el}
         {src}
         class="video"
-        onplay={() => (playing = true)}
-        onpause={() => (playing = false)}
-        ontimeupdate={() => (position = el?.currentTime ?? 0)}
-        onloadedmetadata={() => (duration = el?.duration ?? 0)}
+        bind:paused
+        bind:currentTime={position}
+        bind:duration
+        bind:volume
         {loop}
         aria-label={name}
       ></video>
     {:else}
       <audio
-        bind:this={el}
         {src}
-        onplay={() => (playing = true)}
-        onpause={() => (playing = false)}
-        ontimeupdate={() => (position = el?.currentTime ?? 0)}
-        onloadedmetadata={() => (duration = el?.duration ?? 0)}
+        bind:paused
+        bind:currentTime={position}
+        bind:duration
+        bind:volume
         {loop}
         aria-label={name}
       ></audio>
@@ -162,8 +153,13 @@
     {/if}
 
     <div class="transport">
-      <button type="button" class="play" onclick={toggle} aria-label={t("media-play-pause")}>
-        {playing ? "⏸" : "▶"}
+      <button
+        type="button"
+        class="play"
+        onclick={() => (paused = !paused)}
+        aria-label={t("media-play-pause")}
+      >
+        {paused ? "▶" : "⏸"}
       </button>
       <span class="time">{clock(position)}</span>
       <input
@@ -172,8 +168,7 @@
         min="0"
         max={duration || 0}
         step="0.01"
-        value={position}
-        oninput={seekTo}
+        bind:value={position}
         aria-label={t("media-seek")}
       />
       <span class="time">{clock(duration)}</span>
@@ -192,11 +187,7 @@
         min="0"
         max="1"
         step="0.01"
-        value={volume}
-        oninput={(e) => {
-          volume = Number((e.target as HTMLInputElement).value);
-          if (el) el.volume = volume;
-        }}
+        bind:value={volume}
         aria-label={t("media-volume")}
       />
     </div>

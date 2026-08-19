@@ -19,6 +19,11 @@ export interface RunOpts {
    *  executor. Through Build 2 only `match_phonetic` did, so Match
    *  Case and friends moved a checkmark and changed nothing else. */
   search_opts?: Partial<SearchOpts>;
+  /** SRC-M24 — Settings → Results → *Natural sort*. Not part of
+   *  `search_opts`: it is a top-level setting, and it changes the
+   *  daemon's ordering rather than what a row matches. Omitted means
+   *  "on", which is what the setting defaults to. */
+  natural_sort?: boolean;
 }
 
 export function run(source: string, opts: RunOpts = {}): Promise<QueryRunHandle> {
@@ -32,13 +37,22 @@ export function run(source: string, opts: RunOpts = {}): Promise<QueryRunHandle>
     // spread would drop that flag on the floor with no type error.
     // `enable_regex` is deliberately absent — it changes how the query
     // is *parsed*, not how a row is matched, and belongs to ParseOpts.
-    match_case: m.match_case ?? false,
-    whole_word: m.match_whole_word ?? false,
-    match_path: m.match_path ?? false,
-    match_diacritics: m.match_diacritics ?? false,
-    match_phonetic: m.match_phonetic ?? false,
-    ignore_punctuation: m.ignore_punctuation ?? false,
-    ignore_whitespace: m.ignore_whitespace ?? false
+    //
+    // Nested under one key, not seven flat ones, because Tauri drops
+    // invoke arguments the Rust command does not declare by name — and
+    // through Build 3 it declared none of these, so the flags were sent
+    // and discarded. `QuerySearchOpts` in `commands/query.rs` is the
+    // landing spot; it forwards these names on to the daemon unchanged.
+    search_opts: {
+      match_case: m.match_case ?? false,
+      whole_word: m.match_whole_word ?? false,
+      match_path: m.match_path ?? false,
+      match_diacritics: m.match_diacritics ?? false,
+      match_phonetic: m.match_phonetic ?? false,
+      ignore_punctuation: m.ignore_punctuation ?? false,
+      ignore_whitespace: m.ignore_whitespace ?? false
+    },
+    natural_sort: opts.natural_sort ?? true
   });
 }
 

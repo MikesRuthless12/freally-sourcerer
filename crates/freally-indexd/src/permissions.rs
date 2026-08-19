@@ -70,6 +70,11 @@ pub struct SkippedPath {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PermissionLedger {
     entries: Vec<SkippedPath>,
+    /// The paths already in `entries`, for the dedupe test in
+    /// [`Self::record`]. Derived state, so it is rebuilt on
+    /// deserialization rather than persisted — see `seen()`.
+    #[serde(skip)]
+    seen: std::collections::HashSet<PathBuf>,
     /// Entries dropped after [`MAX_ENTRIES`], by reason. Counted rather
     /// than stored so the totals stay honest.
     dropped: u64,
@@ -89,8 +94,12 @@ impl PermissionLedger {
             return;
         }
         // A rescan re-walks the same tree, so the same directory would
-        // otherwise be recorded again on every pass.
-        if self.entries.iter().any(|e| e.path == path) {
+        // otherwise be recorded again on every pass. This runs from the
+        // scanner's error path, once per unreadable directory, so the
+        // linear scan it replaces was O(entries) per call all the way up
+        // to `MAX_ENTRIES`.
+        self.rebuild_seen_if_stale();
+        if !self.seen.insert(path.to_path_buf()) {
             return;
         }
         self.entries.push(SkippedPath {
@@ -101,10 +110,24 @@ impl PermissionLedger {
         });
     }
 
+    /// Re-derive `seen` when it does not describe `entries`.
+    ///
+    /// `seen` is `#[serde(skip)]`, so a ledger read back off disk
+    /// arrives with entries and an empty set. Reconciling on the next
+    /// `record` keeps that a detail of this file rather than something
+    /// every construction site has to remember.
+    fn rebuild_seen_if_stale(&mut self) {
+        if self.seen.len() == self.entries.len() {
+            return;
+        }
+        self.seen = self.entries.iter().map(|e| e.path.clone()).collect();
+    }
+
     /// Drop everything under `root` before rescanning it, so a fixed
     /// permission stops being reported.
     pub fn clear_under(&mut self, root: &Path) {
         self.entries.retain(|e| !e.path.starts_with(root));
+        self.seen.retain(|p| !p.starts_with(root));
         // `dropped` counted entries we never kept, so we cannot tell
         // which root they belonged to. Clearing it on any rescan is the
         // honest choice: the alternative is a number that only ever

@@ -156,7 +156,11 @@ class ResultsStore {
         strict_everything: settingsStore.state.strict_everything_mode,
         per_lens_limits: settingsStore.state.default_lens_result_limits,
         // SRC-M23 — the whole toggle set, not just the phonetic one.
-        search_opts: settingsStore.state.search_opts
+        search_opts: settingsStore.state.search_opts,
+        // SRC-M24 — the daemon sorts too, and `freally search` reads it
+        // straight from there, so the toggle has to cross the wire and
+        // not just reach the client-side comparator.
+        natural_sort: settingsStore.state.natural_sort
       }));
     } catch (e) {
       console.warn("[results] run failed:", e);
@@ -224,6 +228,19 @@ class ResultsStore {
       // them would break the clusters apart.
       return view.groups.length > 0 ? view.hits : sortStore.applied(view.hits);
     });
+  }
+
+  /**
+   * The on-screen hit with this id, or null.
+   *
+   * Reads `visibleHits` rather than the raw batches: a row belonging
+   * to a lens the user has switched off is not on screen, and nothing
+   * should be previewing or Quick Looking it. Three call sites had
+   * rolled this by hand and two of them searched the raw batches, so
+   * a hidden lens could still drive the preview pane.
+   */
+  hitById(id: string): QueryHit | null {
+    return this.visibleHits.find((h) => h.file_id === id) ?? null;
   }
 
   get total(): number {

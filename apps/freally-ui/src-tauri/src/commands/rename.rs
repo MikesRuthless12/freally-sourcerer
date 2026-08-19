@@ -300,7 +300,10 @@ fn journal_entry(id: &str) -> Result<freally_rpc::OperationEntry, String> {
 fn mark_undone(id: &str, undone: bool) -> Result<(), String> {
     let daemon = daemon::get().ok_or_else(|| "daemon not initialized".to_string())?;
     daemon
-        .call_void("ops.set_undone", serde_json::json!({ "id": id, "undone": undone }))
+        .call_void(
+            "ops.set_undone",
+            serde_json::json!({ "id": id, "undone": undone }),
+        )
         .map_err(|e| e.to_string())
 }
 

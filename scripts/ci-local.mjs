@@ -2,97 +2,179 @@
 // Local CI — run the SAME checks as .github/workflows/ci.yml before pushing.
 //
 // Mirrors the single matrix `ci` job (windows / macOS / ubuntu):
-//   Rust: cargo fmt --check · clippy -D warnings · test · xtask i18n-lint
-//         (+ cargo-deny if installed — CI runs it on Linux only)
-//   UI (apps/freally-ui, pnpm): svelte-check · vitest unit · tauri build --debug --no-bundle
+//   Rust: cargo fmt --check · clippy -D warnings · nextest · src-tauri
+//         fmt+clippy · xtask i18n-lint (+ cargo-deny if installed — CI
+//         runs it on Linux only)
+//   UI (apps/freally-ui, pnpm): svelte-check · vitest unit · tauri build
+//         --debug --no-bundle
 //
-// Unlike CI (which stops a job at the first failing step), this runs EVERY check
-// and prints one summary at the end, so a single pass surfaces all problems. It
-// exits non-zero if anything failed, so it's safe to gate a push on it.
+// Unlike CI (which stops a job at the first failing step), this runs EVERY
+// check and prints one summary at the end, so a single pass surfaces all
+// problems. It exits non-zero if anything failed, so it's safe to gate a
+// push on it.
+//
+// The Rust and UI lanes run CONCURRENTLY, each sequential within itself.
+// They touch different toolchains and different directories, so there is
+// nothing to serialize them for — except the final `tauri build`, which
+// compiles Rust and therefore waits for the Rust lane to release the cargo
+// lock. Ordering it last in the UI lane is what makes that free.
 //
 // Not mirrored locally:
-//   • fsbench correctness+benchmark (macOS/Linux only, 1.5M synthetic files) — CI
-//     skips it on Windows anyway; too heavy for the inner loop. See ci.yml.
+//   • fsbench correctness+benchmark (macOS/Linux only, 1.5M synthetic
+//     files) — CI skips it on Windows anyway; too heavy for the inner loop.
 //   • FSEvents smoke (macOS only).
 //
-// Usage:  node scripts/ci-local.mjs [--rust-only] [--ui-only] [--no-build] [--install]
+// Usage:  node scripts/ci-local.mjs [--rust-only] [--ui-only] [--no-build]
+//                                   [--install] [--serial]
 //   --rust-only  run only the Rust checks
 //   --ui-only    run only the UI checks
 //   --no-build   skip the heavy `tauri build` step (fast inner-loop)
-//   --install    (re)install UI deps first: pnpm install --frozen-lockfile=false
-import { spawnSync } from "node:child_process";
+//   --install    (re)install UI deps first: pnpm install --frozen-lockfile
+//   --serial     run the lanes one after another (readable interleaved
+//                output is the tradeoff; use when a failure is confusing)
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const uiDir = join(repoRoot, "apps", "freally-ui");
+const tauriDir = join(uiDir, "src-tauri");
 
 const args = new Set(process.argv.slice(2));
 const rustOnly = args.has("--rust-only");
 const uiOnly = args.has("--ui-only");
 const noBuild = args.has("--no-build");
 const doInstall = args.has("--install");
+const serial = args.has("--serial");
 
-// Pass the whole probe as one shell string (not an args array) — with shell:true
-// an args array triggers a Node deprecation warning and isn't escaped anyway.
+// Pass the whole probe as one shell string (not an args array) — with
+// shell:true an args array triggers a Node deprecation warning and isn't
+// escaped anyway.
 function have(commandLine) {
   return spawnSync(commandLine, { stdio: "ignore", shell: true }).status === 0;
-}
-
-const steps = [];
-function step(name, cmd, cwd) {
-  steps.push({ name, cmd, cwd });
 }
 
 const hasRust = existsSync(join(repoRoot, "Cargo.toml"));
 const hasUi = existsSync(join(uiDir, "package.json"));
 
-if (doInstall && hasUi) {
-  step("ui: pnpm install", "pnpm install --frozen-lockfile=false", uiDir);
+// CI runs `cargo nextest`, which is markedly faster on this suite (most of
+// the 760 tests build their own Tantivy index, and a process per test keeps
+// them off each other's locks). Fall back to `cargo test` when it isn't
+// installed rather than making it a hard prerequisite.
+const hasNextest = hasRust && have("cargo nextest --version");
+const testCmd = hasNextest
+  ? "cargo nextest run --workspace --locked"
+  : "cargo test --workspace --locked";
+
+const rustLane = [];
+const uiLane = [];
+
+if (!uiOnly && hasRust) {
+  rustLane.push(["rust: fmt", "cargo fmt --all -- --check", repoRoot]);
+  rustLane.push([
+    "rust: clippy",
+    "cargo clippy --workspace --all-targets --locked -- -D warnings",
+    repoRoot
+  ]);
+  // `apps/freally-ui/src-tauri` is excluded from the workspace, so neither
+  // of the two above ever reaches it. CI grew its own step for this after
+  // three clippy errors sat there unnoticed; local CI has to match or it
+  // stops being a pre-push gate.
+  rustLane.push(["rust: fmt (src-tauri)", "cargo fmt -- --check", tauriDir]);
+  rustLane.push([
+    "rust: clippy (src-tauri)",
+    "cargo clippy --all-targets --locked -- -D warnings",
+    tauriDir
+  ]);
+  rustLane.push([hasNextest ? "rust: nextest" : "rust: test", testCmd, repoRoot]);
+  rustLane.push(["rust: xtask i18n-lint", "cargo run -p xtask --locked -- i18n-lint", repoRoot]);
+  // CI runs cargo-deny on Linux only (Docker action); run it locally when
+  // installed.
+  if (have("cargo deny --version")) {
+    rustLane.push(["rust: cargo-deny", "cargo deny check", repoRoot]);
+  }
+}
+
+if (!rustOnly && hasUi) {
+  if (doInstall) {
+    uiLane.push(["ui: pnpm install", "pnpm install --frozen-lockfile", uiDir]);
+  }
+  uiLane.push(["ui: svelte-check", "pnpm run check", uiDir]);
+  uiLane.push(["ui: vitest unit", "pnpm run test:unit", uiDir]);
+  if (!noBuild) {
+    // Last in the lane on purpose: it compiles Rust, so it would otherwise
+    // sit blocked on the cargo lock the Rust lane is holding.
+    uiLane.push(["ui: tauri build", "pnpm tauri build --debug --no-bundle", uiDir]);
+  }
+}
+
+if (rustLane.length === 0 && uiLane.length === 0) {
+  console.error("ci-local: nothing to run (no Rust/UI detected, or filtered out).");
+  process.exit(1);
 }
 
 if (!uiOnly && hasRust) {
-  step("rust: fmt", "cargo fmt --all -- --check", repoRoot);
-  step("rust: clippy", "cargo clippy --workspace --all-targets -- -D warnings", repoRoot);
-  step("rust: test", "cargo test --workspace", repoRoot);
-  step("rust: xtask i18n-lint", "cargo run -p xtask -- i18n-lint", repoRoot);
-  // CI runs cargo-deny on Linux only (Docker action); run it locally when installed.
-  if (have("cargo deny --version")) {
-    step("rust: cargo-deny", "cargo deny check", repoRoot);
-  } else {
+  if (!hasNextest) {
+    console.log("• note: cargo-nextest not installed — using `cargo test` (CI uses nextest).");
+  }
+  if (!have("cargo deny --version")) {
     console.log("• note: cargo-deny not installed — skipping (CI runs it on Linux).");
   }
   console.log("• note: fsbench + FSEvents smoke are macOS/Linux-only CI steps — not run locally.");
 }
 
-if (!rustOnly && hasUi) {
-  step("ui: svelte-check", "pnpm run check", uiDir);
-  step("ui: vitest unit", "pnpm run test:unit", uiDir);
-  if (!noBuild) {
-    step("ui: tauri build", "pnpm tauri build --debug --no-bundle", uiDir);
-  } else {
-    console.log("• note: --no-build — skipping `tauri build` (CI runs it).");
+// Concurrent lanes buffer their output and print it as each step ends, so
+// two lanes cannot interleave mid-line into unreadable soup.
+const buffered = !serial && rustLane.length > 0 && uiLane.length > 0;
+if (buffered) {
+  console.log("• lanes: rust ∥ ui — output is buffered per step (use --serial to stream).");
+}
+
+function run(cmd, cwd) {
+  return new Promise((resolve) => {
+    if (!buffered) {
+      const r = spawnSync(cmd, { cwd, stdio: "inherit", shell: true });
+      resolve({ status: r.status, out: "" });
+      return;
+    }
+    const child = spawn(cmd, { cwd, shell: true });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
+    child.on("close", (status) => resolve({ status, out }));
+  });
+}
+
+async function runLane(steps, results) {
+  for (const [name, cmd, cwd] of steps) {
+    const label = cwd === repoRoot ? "." : cwd === uiDir ? "apps/freally-ui" : "src-tauri";
+    const bar = "─".repeat(Math.max(0, 56 - name.length));
+    if (!buffered) {
+      console.log(`\n▶ ${name} ${bar}`);
+      console.log(`  $ ${cmd}  (in ${label})`);
+    }
+    const started = process.hrtime.bigint();
+    const { status, out } = await run(cmd, cwd);
+    const secs = Number((process.hrtime.bigint() - started) / 1_000_000n) / 1000;
+    if (buffered) {
+      console.log(`\n▶ ${name} ${bar}`);
+      console.log(`  $ ${cmd}  (in ${label})`);
+      if (out) process.stdout.write(out.endsWith("\n") ? out : out + "\n");
+    }
+    results.push({ name, ok: status === 0, secs });
   }
 }
 
-if (steps.length === 0) {
-  console.error("ci-local: nothing to run (no Rust/UI detected, or filtered out).");
-  process.exit(1);
-}
-
 const results = [];
-for (const s of steps) {
-  const label = s.cwd === repoRoot ? "." : "apps/freally-ui";
-  const bar = "─".repeat(Math.max(0, 56 - s.name.length));
-  console.log(`\n▶ ${s.name} ${bar}`);
-  console.log(`  $ ${s.cmd}  (in ${label})`);
-  const started = process.hrtime.bigint();
-  const r = spawnSync(s.cmd, { cwd: s.cwd, stdio: "inherit", shell: true });
-  const secs = Number((process.hrtime.bigint() - started) / 1_000_000n) / 1000;
-  const ok = r.status === 0;
-  results.push({ name: s.name, ok, secs });
+const wall = process.hrtime.bigint();
+if (buffered) {
+  await Promise.all([runLane(rustLane, results), runLane(uiLane, results)]);
+} else {
+  await runLane(rustLane, results);
+  await runLane(uiLane, results);
 }
+const wallSecs = Number((process.hrtime.bigint() - wall) / 1_000_000n) / 1000;
 
 console.log("\n" + "═".repeat(64));
 console.log("  Local CI summary");
@@ -103,6 +185,8 @@ for (const r of results) {
   console.log(`  ${mark}  ${r.name.padEnd(24)} ${r.secs.toFixed(1)}s`);
   if (!r.ok) failed++;
 }
+console.log("─".repeat(64));
+console.log(`  wall clock${" ".repeat(21)}${wallSecs.toFixed(1)}s`);
 console.log("═".repeat(64));
 
 if (failed > 0) {

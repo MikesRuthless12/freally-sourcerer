@@ -7,6 +7,7 @@
   // volume, for which reason — plus the fix for the OS the *index* runs
   // on (which is not necessarily the one rendering this dialog, hence
   // the daemon deciding).
+  import Modal from "../common/Modal.svelte";
 
   import * as indexApi from "../../lib/ipc/index_api";
   import type { PermissionReport } from "../../lib/ipc/index_api";
@@ -64,114 +65,87 @@
   }
 </script>
 
-{#if open}
-  <div class="backdrop" role="presentation" onclick={onClose}>
-    <div
-      class="dialog"
-      role="dialog"
-      tabindex="-1"
-      aria-label={t("permissions-title")}
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => {
-        if (e.key === "Escape") onClose();
-      }}
-      data-testid="permission-health"
+<Modal
+  {open}
+  {onClose}
+  label={t("permissions-title")}
+  testId="permission-health"
+  style="display: flex; flex-direction: column; width: min(720px, 92vw); max-height: 82vh; border-radius: 8px; overflow: hidden;"
+>
+  <header>
+    <strong>{t("permissions-title")}</strong>
+    <button type="button" class="close" onclick={onClose} aria-label={t("about-close")}>×</button
     >
-      <header>
-        <strong>{t("permissions-title")}</strong>
-        <button type="button" class="close" onclick={onClose} aria-label={t("about-close")}>×</button
-        >
-      </header>
+  </header>
 
-      <div class="body">
-        {#if error}
-          <p class="hint">{error}</p>
-        {:else if !report}
-          <p class="hint">{t("preview-loading")}</p>
-        {:else if report.denied === 0 && report.other === 0}
-          <p class="ok">{t("permissions-all-clear")}</p>
-        {:else}
-          <p class="summary">
-            {t("permissions-summary", { denied: report.denied, other: report.other })}
-          </p>
-          {#if report.dropped > 0}
-            <!-- Never imply the list is complete when it is not. -->
-            <p class="hint">{t("permissions-truncated", { dropped: report.dropped })}</p>
-          {/if}
+  <div class="body">
+    {#if error}
+      <p class="hint">{error}</p>
+    {:else if !report}
+      <p class="hint">{t("preview-loading")}</p>
+    {:else if report.denied === 0 && report.other === 0}
+      <p class="ok">{t("permissions-all-clear")}</p>
+    {:else}
+      <p class="summary">
+        {t("permissions-summary", { denied: report.denied, other: report.other })}
+      </p>
+      {#if report.dropped > 0}
+        <!-- Never imply the list is complete when it is not. -->
+        <p class="hint">{t("permissions-truncated", { dropped: report.dropped })}</p>
+      {/if}
 
-          <section class="fix">
-            <h3>{t("permissions-how-to-fix")}</h3>
-            {#if report.guidance === "macos_full_disk_access"}
-              {#if report.full_disk_access === true}
-                <p class="ok">{t("permissions-macos-granted")}</p>
-              {:else}
-                <p>{t("permissions-macos-steps")}</p>
-                <button type="button" class="primary" onclick={openFullDiskAccess}>
-                  {t("permissions-macos-open-settings")}
-                </button>
-                {#if report.full_disk_access === null}
-                  <p class="hint">{t("permissions-macos-undetermined")}</p>
-                {/if}
-              {/if}
-            {:else if report.guidance === "linux_permissions"}
-              <p>{t("permissions-linux-steps")}</p>
-            {:else if report.guidance === "windows_acl"}
-              <p>{t("permissions-windows-steps")}</p>
-            {:else}
-              <p>{t("permissions-generic-steps")}</p>
+      <section class="fix">
+        <h3>{t("permissions-how-to-fix")}</h3>
+        {#if report.guidance === "macos_full_disk_access"}
+          {#if report.full_disk_access === true}
+            <p class="ok">{t("permissions-macos-granted")}</p>
+          {:else}
+            <p>{t("permissions-macos-steps")}</p>
+            <button type="button" class="primary" onclick={openFullDiskAccess}>
+              {t("permissions-macos-open-settings")}
+            </button>
+            {#if report.full_disk_access === null}
+              <p class="hint">{t("permissions-macos-undetermined")}</p>
             {/if}
-          </section>
-
-          <section class="list">
-            <h3>{t("permissions-by-volume")}</h3>
-            {#each report.by_volume as g (g.volume)}
-              <div class="group">
-                <button type="button" class="group-head" onclick={() => toggle(g.volume)}>
-                  <span class="chev">{expanded.has(g.volume) ? "▾" : "▸"}</span>
-                  <span class="vol">{g.volume}</span>
-                  <span class="counts"
-                    >{t("permissions-group-counts", { denied: g.denied, other: g.other })}</span
-                  >
-                </button>
-                {#if expanded.has(g.volume)}
-                  <ul>
-                    {#each g.entries as e (e.path)}
-                      <li>
-                        <span class="path">{e.path}</span>
-                        <span class="detail">{e.detail}</span>
-                      </li>
-                    {/each}
-                  </ul>
-                {/if}
-              </div>
-            {/each}
-          </section>
+          {/if}
+        {:else if report.guidance === "linux_permissions"}
+          <p>{t("permissions-linux-steps")}</p>
+        {:else if report.guidance === "windows_acl"}
+          <p>{t("permissions-windows-steps")}</p>
+        {:else}
+          <p>{t("permissions-generic-steps")}</p>
         {/if}
-      </div>
-    </div>
+      </section>
+
+      <section class="list">
+        <h3>{t("permissions-by-volume")}</h3>
+        {#each report.by_volume as g (g.volume)}
+          <div class="group">
+            <button type="button" class="group-head" onclick={() => toggle(g.volume)}>
+              <span class="chev">{expanded.has(g.volume) ? "▾" : "▸"}</span>
+              <span class="vol">{g.volume}</span>
+              <span class="counts"
+                >{t("permissions-group-counts", { denied: g.denied, other: g.other })}</span
+              >
+            </button>
+            {#if expanded.has(g.volume)}
+              <ul>
+                {#each g.entries as e (e.path)}
+                  <li>
+                    <span class="path">{e.path}</span>
+                    <span class="detail">{e.detail}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {/each}
+      </section>
+    {/if}
   </div>
-{/if}
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 55;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgb(0 0 0 / 45%);
-  }
-  .dialog {
-    display: flex;
-    flex-direction: column;
-    width: min(720px, 92vw);
-    max-height: 82vh;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    overflow: hidden;
-  }
   header {
     display: flex;
     align-items: center;

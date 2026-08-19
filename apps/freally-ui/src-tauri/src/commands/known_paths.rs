@@ -203,7 +203,8 @@ mod tests {
 
         // Reads still work — the preview pane and Go To depend on it.
         assert!(
-            k.verify("/etc/shadow", Provenance::FrontendAsserted).is_ok(),
+            k.verify("/etc/shadow", Provenance::FrontendAsserted)
+                .is_ok(),
             "preview / reveal must still accept a path the user just picked"
         );
         // Destructive commands do not.
@@ -217,7 +218,10 @@ mod tests {
         k.add("/vault/report.pdf");
         assert!(k.verify("/vault/report.pdf", Provenance::QueryHit).is_ok());
         // ...but still not the dialog-only level.
-        assert!(k.verify("/vault/report.pdf", Provenance::UserChosen).is_err());
+        assert!(
+            k.verify("/vault/report.pdf", Provenance::UserChosen)
+                .is_err()
+        );
     }
 
     #[test]

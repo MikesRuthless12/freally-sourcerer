@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Modal from "../common/Modal.svelte";
   import { t } from "../../lib/i18n/t";
 
   interface Props {
@@ -8,50 +9,22 @@
   let { open, onClose }: Props = $props();
 </script>
 
-{#if open}
-  <div
-    class="backdrop"
-    role="presentation"
-    onclick={onClose}
-    onkeydown={(e) => e.key === "Escape" && onClose()}
-  >
-    <div
-      class="modal"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("menu-help-about")}
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    >
-      <h1>{t("app-name")}</h1>
-      <p class="version">{t("about-version", { version: "0.19.84" })}</p>
-      <p>{t("tagline")}</p>
-      <p class="meta">{t("about-copyright")}</p>
-      <footer>
-        <button type="button" class="primary" onclick={onClose}>{t("about-close")}</button>
-      </footer>
-    </div>
-  </div>
-{/if}
+<Modal
+  {open}
+  {onClose}
+  label={t("menu-help-about")}
+  style="width: 360px; padding: 24px; border-radius: 10px; text-align: center;"
+>
+  <h1>{t("app-name")}</h1>
+  <p class="version">{t("about-version", { version: "0.19.84" })}</p>
+  <p>{t("tagline")}</p>
+  <p class="meta">{t("about-copyright")}</p>
+  <footer>
+    <button type="button" class="primary" onclick={onClose}>{t("about-close")}</button>
+  </footer>
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .modal {
-    width: 360px;
-    padding: 24px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
-    text-align: center;
-  }
   h1 {
     margin: 0;
     color: var(--accent-cyan);

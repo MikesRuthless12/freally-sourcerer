@@ -2,9 +2,9 @@
 //! subset of SettingsModel that Phase 11 actually consumes (Phase 12
 //! settings dialog will extend).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
@@ -326,10 +326,7 @@ fn phase_12_default_extras() -> HashMap<String, serde_json::Value> {
         ("preview_pane", "right".into()),
         // §8.7 Context Menu — defaults populate every entry as `show`
         // with an empty command-string macro; the user sets specifics.
-        (
-            "context_menu",
-            context_menu_defaults(),
-        ),
+        ("context_menu", context_menu_defaults()),
         // §8.8 Fonts & Colors
         ("fonts_and_colors", fonts_and_colors_defaults()),
         // §8.9 Keyboard
@@ -522,13 +519,7 @@ pub struct SettingsStore {
 
 impl SettingsStore {
     pub fn new(app: &tauri::AppHandle) -> Self {
-        let dir = freally_rpc::portable::data_dir().unwrap_or_else(|| {
-            app.path()
-                .app_data_dir()
-                .unwrap_or_else(|_| std::env::temp_dir().join("freally"))
-        });
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("settings.json");
+        let path = app_data_root(app).join("settings.json");
         let state = std::fs::read_to_string(&path)
             .ok()
             .and_then(|s| serde_json::from_str::<SettingsState>(&s).ok())
@@ -560,129 +551,59 @@ pub fn write_to_disk_pub(path: &PathBuf, state: &SettingsState) {
     write_to_disk(path, state);
 }
 
+/// Where this install keeps its own files.
+///
+/// SRC-M17 — a portable install keeps them beside the binary; otherwise
+/// it is the platform's app-data directory, with the temp directory as
+/// a last resort so a broken `app_data_dir` degrades to a working app
+/// rather than a panic. Created on the way out, so callers can join a
+/// filename onto it and write.
+pub fn app_data_root(app: &tauri::AppHandle) -> PathBuf {
+    let dir = freally_rpc::portable::data_dir().unwrap_or_else(|| {
+        app.path()
+            .app_data_dir()
+            .unwrap_or_else(|_| std::env::temp_dir().join("freally"))
+    });
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
 #[tauri::command]
 pub fn settings_get(store: State<'_, SettingsStore>) -> SettingsState {
     store.state.lock().unwrap().clone()
 }
 
-// H17: top-level patch keys must belong to the SettingsState schema. Any
-// extra keys are rejected so a hostile patch can't bloat the on-disk file.
-// Phase 12 added 70+ keys for the settings dialog — they're all listed here
-// so the allowlist still catches typos and never-touched keys.
-const ALLOWED_PATCH_KEYS: &[&str] = &[
-    // Phase 11 carry-over.
-    "theme",
-    "locale",
-    "show_status_bar",
-    "show_size_in_status_bar",
-    "show_timing_badges",
-    "show_preview",
-    "row_density",
-    "thumb_size",
-    "active_column_profile",
-    "column_profiles",
-    "lens_visibility",
-    "search_opts",
-    "on_top",
-    "zoom",
-    "hotkey",
-    "endpoint",
-    "extractor_modes",
-    "first_run_complete",
-    "privacy_mode",
-    // §8.2 General → UI.
-    "run_in_background",
-    "show_tray_icon",
-    "single_click_tray",
-    "open_new_window_from_tray",
-    "open_new_window_when_launching",
-    "search_as_you_type",
-    "select_search_on_mouse_click",
-    "focus_search_on_activate",
-    "full_row_select",
-    "single_click_open",
-    "underline_icon_titles",
-    "animated_theme_crossfade",
-    // §8.3 General → Home.
-    "default_match_case",
-    "default_match_whole_word",
-    "default_match_path",
-    "default_match_diacritics",
-    "default_match_regex",
-    "default_search",
-    "default_filter",
-    "default_sort",
-    "default_view",
-    "default_index",
-    "default_file_list",
-    "default_https_endpoint",
-    "default_lens_visibility",
-    "default_lens_result_limits",
-    // §8.4 General → Search.
-    "fast_ascii_search",
-    "match_path_when_term_contains_separator",
-    "match_whole_filename_with_wildcards",
-    "allow_literal_operators",
-    "allow_round_bracket_grouping",
-    "expand_environment_variables",
-    "replace_forward_with_backslashes",
-    "operator_precedence",
-    "strict_everything_mode",
-    "auto_detect_regex",
-    "modifier_completions",
-    "show_parse_tree_on_hover",
-    // §8.5 General → Results.
-    "hide_results_when_empty",
-    "clear_selection_on_search",
-    "close_window_on_execute",
-    "open_path_with_double_click_in_path_column",
-    "automatically_scroll_view",
-    "double_quote_copy_as_path",
-    "do_not_select_extension_when_renaming",
-    "sort_date_descending_first",
-    "sort_size_descending_first",
-    "natural_sort",
-    "show_sidebar",
-    "recent_searches",
-    "sidebar_bookmark_order",
-    "result_list_focus",
-    "load_icon_priority",
-    "load_thumbnail_priority",
-    "load_extended_information_priority",
-    "group_by_lens",
-    "show_snippet_preview_inline",
-    // §8.6 General → View.
-    "double_buffer",
-    "alternate_row_color",
-    "show_row_mouseover",
-    "show_highlighted_search_terms",
-    "show_selected_item_in_status_bar",
-    "show_result_count_with_selection_count",
-    "show_tooltips",
-    "update_display_immediately_after_scrolling",
-    "size_format",
-    "selection_rectangle",
-    "show_lufs_codec_length_badges",
-    "show_minhash_similarity_score",
-    "preview_pane",
-    // §8.7-§8.9 grouped panels.
-    "context_menu",
-    "fonts_and_colors",
-    "keyboard",
-    // §8.11 Indexes top-level.
-    "index_core",
-    // §8.16-§8.19 Lenses.
-    "lens_filename",
-    "lens_content",
-    "lens_audio",
-    "lens_similarity",
-    // §8.23-§8.26.
-    "privacy_and_updates",
-    "logs_and_debug",
-    "locale_settings",
-    // Freally-only: persisted window size (Width × Height in CSS px),
-    // applied on bootstrap and rewritten whenever the user picks one of
-    // the View → Window Size presets.
+/// Top-level patch keys that belong to the `SettingsState` schema.
+///
+/// H17: anything outside the schema is rejected, so a hostile patch
+/// cannot bloat the on-disk file.
+///
+/// Derived from the schema rather than hand-listed. The Phase-12 half of
+/// the old list was `phase_12_default_extras().keys()` written out a
+/// second time, and the two had already drifted: `custom_commands` had a
+/// default and a whole settings panel but never made it onto the list.
+/// Because `settings_set` rejects a patch on its first unknown key and
+/// the UI's `flush()` sends the entire state, that one omission failed
+/// *every* settings write, not just writes that touched it.
+fn allowed_patch_keys() -> &'static HashSet<String> {
+    static KEYS: OnceLock<HashSet<String>> = OnceLock::new();
+    KEYS.get_or_init(|| {
+        // The named fields and the `#[serde(flatten)] extras` both land
+        // in this one object, so serializing the defaults is the whole
+        // accepted set in one step.
+        let mut keys: HashSet<String> = match serde_json::to_value(SettingsState::defaults()) {
+            Ok(serde_json::Value::Object(map)) => map.into_iter().map(|(k, _)| k).collect(),
+            _ => HashSet::new(),
+        };
+        keys.extend(OPTIONAL_PATCH_KEYS.iter().map(|k| (*k).to_string()));
+        keys
+    })
+}
+
+/// Schema keys with no default: they exist only once the user has
+/// produced a value, so they cannot be read off `defaults()`.
+const OPTIONAL_PATCH_KEYS: &[&str] = &[
+    // Written by the View → Window Size presets, restored on bootstrap.
     "window_size",
 ];
 
@@ -701,7 +622,7 @@ pub fn settings_set(
 ) -> Result<SettingsState, String> {
     if let serde_json::Value::Object(ref obj) = patch {
         for k in obj.keys() {
-            if !ALLOWED_PATCH_KEYS.contains(&k.as_str()) {
+            if !allowed_patch_keys().contains(k.as_str()) {
                 return Err(format!("settings_set: unknown key `{k}`"));
             }
         }
@@ -763,17 +684,21 @@ pub fn settings_apply_to_daemon(state: SettingsState) -> Result<(), String> {
     let mut payload = serde_json::Map::new();
     payload.insert(
         "default_extractor_mode".into(),
-        serde_json::Value::String(
-            if state.privacy_mode {
-                "lazy".to_string()
-            } else {
-                lens_content
-                    .and_then(|v| v.get("enabled"))
-                    .and_then(|v| v.as_bool())
-                    .map(|on| if on { "lazy".to_string() } else { "disabled".to_string() })
-                    .unwrap_or_else(|| "lazy".to_string())
-            },
-        ),
+        serde_json::Value::String(if state.privacy_mode {
+            "lazy".to_string()
+        } else {
+            lens_content
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool())
+                .map(|on| {
+                    if on {
+                        "lazy".to_string()
+                    } else {
+                        "disabled".to_string()
+                    }
+                })
+                .unwrap_or_else(|| "lazy".to_string())
+        }),
     );
     payload.insert(
         "extractor_memory_mb".into(),
@@ -841,5 +766,51 @@ fn merge_with_depth(target: &mut serde_json::Value, patch: serde_json::Value, de
             }
         }
         (a, b) => *a = b,
+    }
+}
+
+#[cfg(test)]
+mod patch_key_tests {
+    use super::*;
+
+    #[test]
+    fn every_key_with_a_default_is_writable() {
+        // The allowlist and the defaults were two hand-maintained lists
+        // that had to agree, and did not: `custom_commands` shipped a
+        // default and a settings panel while the allowlist rejected it.
+        // Since `settings_set` rejects a whole patch on its first unknown
+        // key, and the UI sends the entire state on every save, that one
+        // gap meant no setting could be written at all.
+        let allowed = allowed_patch_keys();
+        let defaults = match serde_json::to_value(SettingsState::defaults()).unwrap() {
+            serde_json::Value::Object(m) => m,
+            other => panic!("defaults did not serialize to an object: {other:?}"),
+        };
+        let missing: Vec<&String> = defaults
+            .keys()
+            .filter(|k| !allowed.contains(k.as_str()))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "keys with a default but no write: {missing:?}"
+        );
+        assert!(allowed.contains("custom_commands"));
+    }
+
+    #[test]
+    fn keys_with_no_default_are_still_writable() {
+        // `window_size` only exists once the user has picked one, so it
+        // cannot be read off the defaults and has to be named.
+        assert!(allowed_patch_keys().contains("window_size"));
+    }
+
+    #[test]
+    fn keys_outside_the_schema_are_still_rejected() {
+        // The point of the allowlist: deriving it must not turn it into
+        // "accept anything".
+        let allowed = allowed_patch_keys();
+        assert!(!allowed.contains("not_a_setting"));
+        assert!(!allowed.contains("__proto__"));
+        assert!(!allowed.contains(""));
     }
 }
