@@ -40,6 +40,16 @@ class SelectionStore {
     return this.ids.size;
   }
 
+  /** The first selected id, in insertion order — what the preview pane
+   *  and Quick Look show. `values().next()` rather than a spread: a
+   *  Ctrl+A selection is tens of thousands of ids and this is read per
+   *  arrow key, so materializing an array to take element zero is the
+   *  one thing it must not do. Four call sites had this inline and two
+   *  of them used the spread. */
+  get first(): string | undefined {
+    return this.ids.values().next().value;
+  }
+
   /** Paths of the selected rows, in result order. The file-ops verbs
    *  need paths, not ids, and only the batches know the mapping. */
   paths(): string[] {

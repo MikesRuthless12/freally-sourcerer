@@ -168,25 +168,14 @@ impl NameIndex {
         // window — non-ASCII multi-byte sequences are still valid
         // candidate keys; Phase 5 widens the window to grapheme-aware
         // tokenization.
-        if bytes.len() >= 3 {
-            for w in bytes.windows(3) {
-                let key = [w[0], w[1], w[2]];
-                inner.trigrams.entry(key).or_default().push(row_id);
-            }
-        }
+        push_trigrams(&mut inner.trigrams, bytes, row_id);
         // Only once something has asked for it — see `seed_trigrams`.
-        if inner.seed_trigrams.is_some() {
-            let seed = seed_key(&key);
-            let seed_bytes = seed.as_bytes();
-            if seed_bytes.len() >= 3 {
-                let map = inner
-                    .seed_trigrams
-                    .as_mut()
-                    .expect("checked is_some on the line above");
-                for w in seed_bytes.windows(3) {
-                    map.entry([w[0], w[1], w[2]]).or_default().push(row_id);
-                }
-            }
+        // The lazy build and this incremental maintenance have to
+        // produce byte-identical postings, so they go through the same
+        // function: a divergence between them is a silent miss, not an
+        // error.
+        if let Some(map) = inner.seed_trigrams.as_mut() {
+            push_trigrams(map, seed_key(&key).as_bytes(), row_id);
         }
         Ok(())
     }
@@ -258,130 +247,89 @@ impl NameIndex {
     /// `cap == 0` means "no cap"; the executor passes a real cap so a
     /// pathological 1-grapheme query can't spend the whole 16ms budget
     /// in this loop.
-    pub fn for_each_candidate_named<F>(&self, q_lower: &str, cap: usize, mut f: F)
+    pub fn for_each_candidate_named<F>(&self, q_lower: &str, cap: usize, f: F)
     where
         F: FnMut(u64, &[u8]),
     {
         let inner = self.inner.read();
-        let bytes = q_lower.as_bytes();
-        let mut emitted = 0usize;
-        if bytes.len() < 3 {
-            for (row_id, &fid) in inner.file_ids.iter().enumerate() {
-                if fid == u64::MAX {
-                    continue;
-                }
-                if let Some(name) = name_bytes(&inner, row_id as u32) {
-                    f(fid, name);
-                    emitted += 1;
-                    if cap != 0 && emitted >= cap {
-                        return;
-                    }
-                }
-            }
-            return;
-        }
-        let rows = trigram_intersection(&inner, bytes);
-        for r in rows {
-            if let Some(&fid) = inner.file_ids.get(r as usize)
-                && fid != u64::MAX
-                && let Some(name) = name_bytes(&inner, r)
-            {
-                f(fid, name);
-                emitted += 1;
-                if cap != 0 && emitted >= cap {
-                    return;
-                }
-            }
-        }
+        emit_candidates(&inner, &inner.trigrams, q_lower.as_bytes(), cap, f);
     }
 
     /// SRC-M23: [`for_each_candidate_named`](Self::for_each_candidate_named)
     /// over names with punctuation and whitespace stripped.
     ///
-    /// `q_seed` must already have been through [`seed_key`]. The
-    /// callback still receives the **raw** stored key — the caller's
-    /// matcher does its own normalization, and the row's identity for
-    /// sorting and hydration is its real name.
+    /// `q_seed` must already have been through [`seed_key`]. The callback
+    /// still receives the **raw** stored key — the caller's matcher does
+    /// its own normalization, and the row's identity for sorting and
+    /// hydration is its real name.
     ///
-    /// The stripped key is a *superset* filter for every ignore mode,
-    /// not just the both-on one: dropping characters uniformly from
-    /// both sides preserves "is a contiguous substring", so a needle
-    /// that matches under Ignore Punctuation alone still matches once
-    /// whitespace is dropped from both sides too. Candidates are then
-    /// re-tested under the mode the user actually asked for, exactly as
-    /// they are on the raw path.
-    pub fn for_each_seed_candidate_named<F>(&self, q_seed: &str, cap: usize, mut f: F)
+    /// The stripped key is a *superset* filter for every ignore mode, not
+    /// just the both-on one: dropping characters uniformly from both sides
+    /// preserves "is a contiguous substring", so a needle that matches
+    /// under Ignore Punctuation alone still matches once whitespace is
+    /// dropped from both sides too. Candidates are then re-tested under
+    /// the mode the user actually asked for, exactly as they are on the
+    /// raw path.
+    pub fn for_each_seed_candidate_named<F>(&self, q_seed: &str, cap: usize, f: F)
     where
         F: FnMut(u64, &[u8]),
     {
+        let bytes = q_seed.as_bytes();
+        // A needle this short has no trigrams to intersect, so every live
+        // row is a candidate and the stripped postings would go unread.
+        // Building them here would be a whole-index walk thrown away — and
+        // this is reachable by typing, since the seed shrinks as the query
+        // does.
+        if bytes.len() < 3 {
+            let inner = self.inner.read();
+            emit_candidates(&inner, &inner.trigrams, bytes, cap, f);
+            return;
+        }
         self.ensure_seed_trigrams();
         let inner = self.inner.read();
-        let bytes = q_seed.as_bytes();
-        let mut emitted = 0usize;
-        let rows: Vec<u32> = if bytes.len() < 3 {
-            // No trigrams to intersect — every live row is a candidate,
-            // which is what the raw path does at this length too.
-            inner
-                .file_ids
-                .iter()
-                .enumerate()
-                .filter_map(|(i, fid)| (*fid != u64::MAX).then_some(i as u32))
-                .collect()
-        } else {
-            let map = inner
-                .seed_trigrams
-                .as_ref()
-                .expect("ensure_seed_trigrams ran above");
-            trigram_intersection_in(map, &inner, bytes)
-        };
-        for r in rows {
-            if let Some(&fid) = inner.file_ids.get(r as usize)
-                && fid != u64::MAX
-                && let Some(name) = name_bytes(&inner, r)
-            {
-                f(fid, name);
-                emitted += 1;
-                if cap != 0 && emitted >= cap {
-                    return;
-                }
-            }
-        }
+        let map = inner
+            .seed_trigrams
+            .as_ref()
+            .expect("ensure_seed_trigrams ran above");
+        emit_candidates(&inner, map, bytes, cap, f);
     }
 
     /// Build the stripped postings if nothing has needed them yet.
     ///
-    /// Double-checked so the steady state is one uncontended read lock:
-    /// every query under an ignore mode calls this, and all but the
-    /// first find the map already there.
+    /// The scan itself runs under a **read** lock and the result is
+    /// installed under a short write lock. Doing the whole walk while
+    /// holding the write lock would block every query and every scanner
+    /// `upsert` for its duration — seconds on a multi-million-file index,
+    /// and it happens on the user's first keystroke after switching an
+    /// ignore mode on, which is the worst possible moment.
     fn ensure_seed_trigrams(&self) {
         if self.inner.read().seed_trigrams.is_some() {
             return;
         }
+        let map = {
+            let inner = self.inner.read();
+            let mut map: HashMap<[u8; 3], Vec<u32>> = HashMap::new();
+            for row_id in 0..inner.rows.len() as u32 {
+                if inner.file_ids.get(row_id as usize).copied() == Some(u64::MAX) {
+                    continue;
+                }
+                let Some(name) = name_bytes(&inner, row_id) else {
+                    continue;
+                };
+                let Ok(text) = std::str::from_utf8(name) else {
+                    continue;
+                };
+                push_trigrams(&mut map, seed_key(text).as_bytes(), row_id);
+            }
+            map
+        };
         let mut inner = self.inner.write();
-        if inner.seed_trigrams.is_some() {
-            return;
+        // Another caller may have installed one while the read lock was
+        // released. Theirs is as good as ours, and rows written in the gap
+        // are in theirs and not ours — so keep it and drop this.
+        if inner.seed_trigrams.is_none() {
+            inner.seed_trigrams = Some(map);
         }
-        let mut map: HashMap<[u8; 3], Vec<u32>> = HashMap::new();
-        for row_id in 0..inner.rows.len() as u32 {
-            if inner.file_ids.get(row_id as usize).copied() == Some(u64::MAX) {
-                continue;
-            }
-            let Some(name) = name_bytes(&inner, row_id) else {
-                continue;
-            };
-            let Ok(text) = std::str::from_utf8(name) else {
-                continue;
-            };
-            let seed = seed_key(text);
-            let seed_bytes = seed.as_bytes();
-            if seed_bytes.len() < 3 {
-                continue;
-            }
-            for w in seed_bytes.windows(3) {
-                map.entry([w[0], w[1], w[2]]).or_default().push(row_id);
-            }
-        }
-        inner.seed_trigrams = Some(map);
     }
 
     /// SRC-M11: yield `(file_id, name_lower_bytes)` for rows that share
@@ -569,6 +517,10 @@ impl NameIndex {
 /// to dedup the rare per-name repeated trigram (e.g. `aaaa` storing
 /// `aaa` twice). The `BTreeSet` predecessor was the documented Phase-5
 /// perf swap — Build Guide §`name_index` PERF note.
+fn trigram_intersection(inner: &Inner, bytes: &[u8]) -> Vec<u32> {
+    trigram_intersection_in(&inner.trigrams, inner, bytes)
+}
+
 /// SRC-M23 — `is_punctuation` and `seed_key` are the one definition of
 /// what the stripped key drops. `freally-query`'s match-mode strip
 /// defers to the same predicate, so the seed can never drop *less* than
@@ -600,8 +552,68 @@ pub fn seed_key(s: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn trigram_intersection(inner: &Inner, bytes: &[u8]) -> Vec<u32> {
-    trigram_intersection_in(&inner.trigrams, inner, bytes)
+/// Push every 3-byte window of `bytes` into `map` under `row_id`.
+///
+/// Three callers: the raw postings and the stripped postings in `upsert`,
+/// and the lazy stripped build in `ensure_seed_trigrams`. The last two
+/// must agree byte for byte or the seed index stops describing the index
+/// it mirrors — and the symptom of that is a query returning nothing,
+/// with nothing logged.
+fn push_trigrams(map: &mut HashMap<[u8; 3], Vec<u32>>, bytes: &[u8], row_id: u32) {
+    if bytes.len() < 3 {
+        return;
+    }
+    for w in bytes.windows(3) {
+        map.entry([w[0], w[1], w[2]]).or_default().push(row_id);
+    }
+}
+
+/// Yield `(file_id, name)` for the rows `bytes` selects out of `trigrams`,
+/// skipping tombstones, stopping at `cap`.
+///
+/// Both public readers are this function with a different postings map.
+/// They were briefly two copies, and the copies had already diverged: one
+/// materialized every live row id into a `Vec` for the short-needle case
+/// where the other streamed. `cap` accounting and the tombstone test now
+/// live in one place, which is what stops the two seeding paths answering
+/// differently.
+fn emit_candidates<F>(
+    inner: &Inner,
+    trigrams: &HashMap<[u8; 3], Vec<u32>>,
+    bytes: &[u8],
+    cap: usize,
+    mut f: F,
+) where
+    F: FnMut(u64, &[u8]),
+{
+    let mut emitted = 0usize;
+    let mut emit = |row_id: u32, fid: u64, f: &mut F| -> bool {
+        let Some(name) = name_bytes(inner, row_id) else {
+            return true;
+        };
+        f(fid, name);
+        emitted += 1;
+        cap == 0 || emitted < cap
+    };
+    // Below three bytes there is nothing to intersect, so every live row
+    // is a candidate — streamed rather than collected, so `cap` can stop
+    // it early instead of after materializing the whole index.
+    if bytes.len() < 3 {
+        for (row_id, &fid) in inner.file_ids.iter().enumerate() {
+            if fid != u64::MAX && !emit(row_id as u32, fid, &mut f) {
+                return;
+            }
+        }
+        return;
+    }
+    for r in trigram_intersection_in(trigrams, inner, bytes) {
+        if let Some(&fid) = inner.file_ids.get(r as usize)
+            && fid != u64::MAX
+            && !emit(r, fid, &mut f)
+        {
+            return;
+        }
+    }
 }
 
 fn trigram_intersection_in(

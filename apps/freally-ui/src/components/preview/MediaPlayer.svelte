@@ -144,9 +144,16 @@
           {/each}
           <!-- Played portion as one overlay driven by `--progress`.
                A `class:played` on each bar would make all 800 of them
-               depend on `progress`, so every `timeupdate` (~4/s) would
-               re-evaluate 800 expressions and diff 800 class attributes;
-               this is a single style write per tick. -->
+               depend on `progress`, so every tick would re-evaluate 800
+               expressions and diff 800 class attributes; this is a
+               single style write per tick.
+
+               Ticks are ~60/s, not the ~4/s `timeupdate` fires at:
+               Svelte drives `bind:currentTime` from a rAF loop while
+               the element is playing, because `timeupdate` is too
+               coarse to animate against. That is the trade this
+               binding makes — a smooth playhead for a 15x busier
+               tick — and it is only paid while something is playing. -->
           <span class="played" aria-hidden="true"></span>
         </div>
       {/if}

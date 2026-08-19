@@ -774,27 +774,49 @@ mod patch_key_tests {
     use super::*;
 
     #[test]
-    fn every_key_with_a_default_is_writable() {
+    fn the_keys_the_ui_actually_writes_are_all_accepted() {
         // The allowlist and the defaults were two hand-maintained lists
         // that had to agree, and did not: `custom_commands` shipped a
-        // default and a settings panel while the allowlist rejected it.
-        // Since `settings_set` rejects a whole patch on its first unknown
-        // key, and the UI sends the entire state on every save, that one
-        // gap meant no setting could be written at all.
+        // default and a whole settings panel while the allowlist rejected
+        // it. Since `settings_set` rejects a patch on its first unknown key
+        // and the UI sends the entire state on every save, that one gap
+        // meant no setting could be written at all.
+        //
+        // Named keys rather than `defaults().keys()`: the allowlist is
+        // *derived* from the defaults, so checking one against the other
+        // would only prove the derivation is a derivation. These are keys a
+        // user can actually change, spread across the named struct fields,
+        // the flattened Phase-12 extras, and the defaultless set.
         let allowed = allowed_patch_keys();
+        for key in [
+            "theme",           // named struct field
+            "search_opts",     // named, nested
+            "custom_commands", // flattened extra — the regression
+            "natural_sort",    // flattened extra
+            "recent_searches", // flattened extra, written per keystroke
+            "window_size",     // no default; only in OPTIONAL_PATCH_KEYS
+        ] {
+            assert!(allowed.contains(key), "settings_set would reject `{key}`");
+        }
+    }
+
+    #[test]
+    fn optional_keys_do_not_outlive_their_schema_entry() {
+        // `OPTIONAL_PATCH_KEYS` is the one hand-maintained half left, and
+        // its whole justification is "the schema has no default for this".
+        // A key that gains a default belongs in the derivation instead, and
+        // one whose field was deleted is an allowlist entry with nothing
+        // behind it — widening the H17 gate silently and forever.
         let defaults = match serde_json::to_value(SettingsState::defaults()).unwrap() {
             serde_json::Value::Object(m) => m,
             other => panic!("defaults did not serialize to an object: {other:?}"),
         };
-        let missing: Vec<&String> = defaults
-            .keys()
-            .filter(|k| !allowed.contains(k.as_str()))
-            .collect();
-        assert!(
-            missing.is_empty(),
-            "keys with a default but no write: {missing:?}"
-        );
-        assert!(allowed.contains("custom_commands"));
+        for key in OPTIONAL_PATCH_KEYS {
+            assert!(
+                !defaults.contains_key(*key),
+                "`{key}` has a default now — drop it from OPTIONAL_PATCH_KEYS"
+            );
+        }
     }
 
     #[test]

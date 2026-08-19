@@ -501,6 +501,118 @@ other destructive command. Three changes:
 
 ## [Unreleased]
 
+### Build 4 groundwork — closing out the Build 3 handoff
+
+Everything `HANDOFF.md` left open after v0.23.0, plus three bugs found
+while doing it. No new features; this is the cleanup pass that Build 4's
+property-lens work sits on top of.
+
+#### Fixed
+
+- **The `Search →` menu did nothing.** SRC-M23 sent all seven match-mode
+  flags from `query.ts` and taught the daemon's `QueryRunParams` to read
+  all seven — but the Tauri command in between declared none of them, and
+  Tauri drops invoke arguments a command does not name, silently. Every
+  flag arrived at the executor as its `serde` default, so Match Case,
+  Match Whole Word, Match Path, Match Diacritics, Match Phonetic, Ignore
+  Punctuation and Ignore Whitespace each moved a checkmark and changed
+  nothing else. `commands/query.rs` now has a `QuerySearchOpts` landing
+  spot, and `tests/unit/query_wire.test.ts` pins the argument names on
+  both sides.
+
+- **No setting was being persisted.** `custom_commands` had a default and
+  a whole Settings → Custom Commands panel, but was missing from
+  `ALLOWED_PATCH_KEYS`. `settings_set` rejects a patch on its first
+  unknown top-level key, and the UI's `flush()` sends the entire state —
+  which always contains `custom_commands` — so every save failed into a
+  console warning. The allowlist is now derived from the schema
+  (`allowed_patch_keys()`), which is how the gap surfaced.
+
+- **`child:` / `name^:` / `name$:` answered differently depending on the
+  rest of the query.** The name-index pass ran these through the full
+  normalization ladder while the hydrated pass compared raw strings, and
+  both passes run on every query — so adding any modifier that forces
+  hydration handed the decision to the stricter one. `name^:cafe` found
+  `café-notes.txt` alone and stopped finding it once `size:` was added.
+
+- **Escape never closed a dialog.** The handler sat on the backdrop, a
+  `role="presentation"` div with no tabindex, so it could not receive a
+  keydown — and the panel stopped propagation anyway. It now lives on
+  `window`, in the shared `<Modal>`.
+
+- **Natural sort was client-side only.** `SortSpec.natural` defaulted to
+  `true` and nothing ever set it, so Settings → Results → *Natural sort*
+  turned off the UI comparator and left `freally search --json` naturally
+  ordered regardless. The setting now crosses the wire.
+
+- **`src-tauri` was not linted.** It is excluded from the workspace, so
+  `cargo clippy --workspace` never saw it and three errors had been
+  failing silently. CI has its own step for that manifest now. The dead
+  `log_event` command — documented as the TS→Rust debug bridge but never
+  registered, so any call to it failed — is deleted.
+
+#### Performance
+
+- **Ignore Punctuation / Ignore Whitespace no longer full-scan the
+  index.** Those modes rewrite the text before comparing, so the trigrams
+  of the raw name stopped describing the needle and the executor dropped
+  to walking every name. It now seeds from a parallel set of postings
+  built over punctuation- and whitespace-stripped names. Built lazily on
+  first use and maintained incrementally from then on, so a user who
+  never turns either mode on never pays for it.
+
+- **One normalization ladder instead of three.** `substring_match`,
+  `anchored_match` and `literal_match` each walked case-fold →
+  strip-diacritics → strip-ignored and had already drifted apart. They
+  now share `normalized`, which borrows rather than allocating when a
+  rung has nothing to do — the common case of an ASCII lowercase name
+  under the default mode now allocates nothing per row.
+
+- **Needles are normalized once per query, not once per candidate row.**
+
+- Waveform bucketing carries its bucket boundary instead of dividing per
+  decoded frame (~8 M divisions on a three-minute stereo track); the
+  permission ledger dedupes through a `HashSet` instead of a linear scan;
+  and recording a recent search stops spreading and reassigning the
+  ~180-key settings root on every keystroke.
+
+#### Changed
+
+- **Freally Central is removed** — the vendored tree, the `.gitmodules`
+  stanza naming a submodule git never had registered, the React island
+  and its five dependencies, the *More Freally apps* dialog and menu
+  item, its locale strings, and its documentation-site entries.
+
+- **A shared `<Modal>`** replaces the backdrop / panel / Escape /
+  `tabindex` dance that seven dialogs each re-rolled, and clears all six
+  outstanding `a11y_interactive_supports_focus` warnings. `HitViewer`,
+  `QuickLook`, `RegexBuilder` and the first-run wizard keep their own
+  shells deliberately — a sibling backdrop, arrow-key navigation, a
+  popover, and a non-dismissable gate are not the same component.
+
+- `portable::open_log`, `service::scan`, `app_data_root` and
+  `resultsStore.hitById` replace their duplicated copies.
+
+#### CI
+
+- `cargo nextest` replaces `cargo test`: most of the 760 tests build
+  their own Tantivy index, and a process per test keeps them off each
+  other's locks. Measured warm on the dev machine, 100s → 37s.
+- A nextest test group caps the index-building packages at four
+  concurrent processes. Without it, the extra concurrency turned the
+  known Windows Defender / Tantivy `Access is denied (os error 5)` race
+  from occasional into reproducible — two consecutive runs failed on
+  three different tests. The cap costs ~2s and the suite still runs in a
+  fifth of `cargo test`'s time.
+- Superseded runs on a branch are cancelled; `main` is exempt so it keeps
+  populating the cache every branch restores from.
+- `CARGO_INCREMENTAL=0`, cache written only from `main`, `--locked`
+  throughout, a frozen pnpm install, and the OS-agnostic gates
+  (`i18n-lint`, doctests) on one runner instead of three.
+- `scripts/ci-local.mjs` gained the `src-tauri` gate it was missing and
+  runs its Rust and UI lanes concurrently: 133s of work in 89s.
+
+
 ### TASK-098 — full Fluent i18n end-to-end across all 18 locales (2026-05-11)
 
 The 18-locale Fluent loader is now wired. Switching the language in

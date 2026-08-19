@@ -98,7 +98,7 @@ impl PermissionLedger {
         // scanner's error path, once per unreadable directory, so the
         // linear scan it replaces was O(entries) per call all the way up
         // to `MAX_ENTRIES`.
-        self.rebuild_seen_if_stale();
+        self.rebuild_seen_after_load();
         if !self.seen.insert(path.to_path_buf()) {
             return;
         }
@@ -110,14 +110,20 @@ impl PermissionLedger {
         });
     }
 
-    /// Re-derive `seen` when it does not describe `entries`.
+    /// Re-derive `seen` after a load from disk.
     ///
-    /// `seen` is `#[serde(skip)]`, so a ledger read back off disk
-    /// arrives with entries and an empty set. Reconciling on the next
-    /// `record` keeps that a detail of this file rather than something
-    /// every construction site has to remember.
-    fn rebuild_seen_if_stale(&mut self) {
-        if self.seen.len() == self.entries.len() {
+    /// `seen` is `#[serde(skip)]`, so deserialization is the *only*
+    /// thing that can leave it out of step: a ledger read back off disk
+    /// arrives with entries and an empty set. Every mutator in this file
+    /// keeps the two together, so an empty set beside a non-empty
+    /// `entries` is exactly that case and nothing else.
+    ///
+    /// Testing emptiness rather than comparing lengths on purpose: a
+    /// length check reads as a general staleness probe, and would
+    /// silently report "fresh" for a future count-preserving edit to
+    /// `entries` that it cannot actually detect.
+    fn rebuild_seen_after_load(&mut self) {
+        if !self.seen.is_empty() || self.entries.is_empty() {
             return;
         }
         self.seen = self.entries.iter().map(|e| e.path.clone()).collect();

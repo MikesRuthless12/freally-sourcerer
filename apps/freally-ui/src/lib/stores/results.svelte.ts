@@ -216,8 +216,18 @@ class ResultsStore {
    *  rather than "returned by the daemon". Reading the batches directly
    *  would count hits in a lens the user has switched off, and
    *  duplicate-cluster members that grouping dropped. */
-  get visibleHits(): QueryHit[] {
-    return LENS_ORDER.flatMap((lens) => {
+  /*
+   * `$derived.by`, not a getter. Building this list copies and sorts
+   * every lens's hits, and it is read from a lot of places that each
+   * assumed they were the only one: the preview pane reads it twice per
+   * selection change, Quick Look three times per arrow key, and the
+   * status bar on every render. As a getter that was a full rebuild
+   * each time; as a `$derived` it is computed once per change to the
+   * batches, the sort, or the lens toggles, and every reader after that
+   * is a field read.
+   */
+  visibleHits: QueryHit[] = $derived(
+    LENS_ORDER.flatMap((lens) => {
       if (settingsStore.state.lens_visibility[lens] === false) return [];
       const view = this.viewForLens(lens);
       // Sorted the way `LensSection` renders it, so this really is the
@@ -227,20 +237,28 @@ class ResultsStore {
       // (duplicate-cluster) batches keep the daemon's order: re-sorting
       // them would break the clusters apart.
       return view.groups.length > 0 ? view.hits : sortStore.applied(view.hits);
-    });
-  }
+    })
+  );
+
+  /** `file_id` → hit, over the same list. Quick Look walks this per
+   *  arrow key and the preview pane per selection change; a linear
+   *  `find` over a few hundred hits each time is work neither of them
+   *  needs to repeat. */
+  #byId: Map<string, QueryHit> = $derived(
+    new Map(this.visibleHits.map((h) => [h.file_id, h]))
+  );
 
   /**
    * The on-screen hit with this id, or null.
    *
-   * Reads `visibleHits` rather than the raw batches: a row belonging
+   * Reads the visible list rather than the raw batches: a row belonging
    * to a lens the user has switched off is not on screen, and nothing
    * should be previewing or Quick Looking it. Three call sites had
    * rolled this by hand and two of them searched the raw batches, so
    * a hidden lens could still drive the preview pane.
    */
   hitById(id: string): QueryHit | null {
-    return this.visibleHits.find((h) => h.file_id === id) ?? null;
+    return this.#byId.get(id) ?? null;
   }
 
   get total(): number {

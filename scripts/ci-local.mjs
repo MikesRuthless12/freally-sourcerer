@@ -2,9 +2,9 @@
 // Local CI — run the SAME checks as .github/workflows/ci.yml before pushing.
 //
 // Mirrors the single matrix `ci` job (windows / macOS / ubuntu):
-//   Rust: cargo fmt --check · clippy -D warnings · nextest · src-tauri
-//         fmt+clippy · xtask i18n-lint (+ cargo-deny if installed — CI
-//         runs it on Linux only)
+//   Rust: cargo fmt --check · clippy -D warnings · nextest · doctests ·
+//         src-tauri fmt+clippy · xtask i18n-lint (+ cargo-deny if
+//         installed — CI runs it on Linux only)
 //   UI (apps/freally-ui, pnpm): svelte-check · vitest unit · tauri build
 //         --debug --no-bundle
 //
@@ -66,6 +66,9 @@ const hasNextest = hasRust && have("cargo nextest --version");
 const testCmd = hasNextest
   ? "cargo nextest run --workspace --locked"
   : "cargo test --workspace --locked";
+// Probed once: the step and the note that explains its absence have to
+// agree, and two separate `have()` calls is two chances for them not to.
+const hasDeny = hasRust && have("cargo deny --version");
 
 const rustLane = [];
 const uiLane = [];
@@ -88,10 +91,16 @@ if (!uiOnly && hasRust) {
     tauriDir
   ]);
   rustLane.push([hasNextest ? "rust: nextest" : "rust: test", testCmd, repoRoot]);
+  // nextest does not run doctests, so CI runs them separately (Linux
+  // only, since they are not platform-specific). Mirrored here or a
+  // doctest added tomorrow passes the pre-push gate and fails CI.
+  if (hasNextest) {
+    rustLane.push(["rust: doctests", "cargo test --workspace --doc --locked", repoRoot]);
+  }
   rustLane.push(["rust: xtask i18n-lint", "cargo run -p xtask --locked -- i18n-lint", repoRoot]);
   // CI runs cargo-deny on Linux only (Docker action); run it locally when
   // installed.
-  if (have("cargo deny --version")) {
+  if (hasDeny) {
     rustLane.push(["rust: cargo-deny", "cargo deny check", repoRoot]);
   }
 }
@@ -118,7 +127,7 @@ if (!uiOnly && hasRust) {
   if (!hasNextest) {
     console.log("• note: cargo-nextest not installed — using `cargo test` (CI uses nextest).");
   }
-  if (!have("cargo deny --version")) {
+  if (!hasDeny) {
     console.log("• note: cargo-deny not installed — skipping (CI runs it on Linux).");
   }
   console.log("• note: fsbench + FSEvents smoke are macOS/Linux-only CI steps — not run locally.");
@@ -150,16 +159,15 @@ async function runLane(steps, results) {
   for (const [name, cmd, cwd] of steps) {
     const label = cwd === repoRoot ? "." : cwd === uiDir ? "apps/freally-ui" : "src-tauri";
     const bar = "─".repeat(Math.max(0, 56 - name.length));
-    if (!buffered) {
-      console.log(`\n▶ ${name} ${bar}`);
-      console.log(`  $ ${cmd}  (in ${label})`);
-    }
+    // Streaming prints the header first; buffered prints it with the
+    // output, so two lanes cannot interleave a header away from its log.
+    const header = `\n▶ ${name} ${bar}\n  $ ${cmd}  (in ${label})`;
+    if (!buffered) console.log(header);
     const started = process.hrtime.bigint();
     const { status, out } = await run(cmd, cwd);
     const secs = Number((process.hrtime.bigint() - started) / 1_000_000n) / 1000;
     if (buffered) {
-      console.log(`\n▶ ${name} ${bar}`);
-      console.log(`  $ ${cmd}  (in ${label})`);
+      console.log(header);
       if (out) process.stdout.write(out.endsWith("\n") ? out : out + "\n");
     }
     results.push({ name, ok: status === 0, secs });

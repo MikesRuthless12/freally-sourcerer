@@ -17,7 +17,7 @@
   // whatever the preview host could render, and a media file's payload
   // is "unsupported", which is precisely the case worth playing.
   const playable = $derived.by(() => {
-    const id = selectionStore.ids.values().next().value;
+    const id = selectionStore.first;
     if (!id) return null;
     const hit = resultsStore.hitById(id);
     if (!hit) return null;
@@ -27,7 +27,7 @@
 
   $effect(() => {
     if (!settingsStore.state.show_preview) return;
-    const id = selectionStore.ids.values().next().value;
+    const id = selectionStore.first;
     if (!id) {
       payload = null;
       lastPath = "";

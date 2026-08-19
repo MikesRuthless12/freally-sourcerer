@@ -1,8 +1,8 @@
 <script lang="ts">
-  // The backdrop-and-panel shell every dialog in the app was re-rolling.
+  // The backdrop-and-panel shell the app's dialogs were re-rolling.
   //
-  // Nine of them had hand-written copies of the same four things, and the
-  // copies had all inherited the same two faults:
+  // Eight of them had hand-written copies of the same four things, and
+  // the copies had all inherited the same two faults:
   //
   //   * **Escape did not work.** The handler sat on the backdrop, which
   //     is a `role="presentation"` div with no tabindex, so it never
@@ -17,6 +17,11 @@
   // to a 960×720 settings window, and a `size` prop covering that would
   // be a worse abstraction than a `style` string. What is shared here is
   // the behaviour and the surface chrome, not the box.
+  //
+  // `HitViewer`, `QuickLook` and `RegexBuilder` keep their own shells on
+  // purpose — a backdrop that is a sibling rather than a parent,
+  // arrow-key navigation routed through `bootstrap.ts`, and a popover
+  // with no backdrop at all are not this component wearing a hat.
 
   import type { Snippet } from "svelte";
 
@@ -32,6 +37,12 @@
      * dialogs where a stray click would discard typed input.
      */
     dismissOnBackdrop?: boolean;
+    /**
+     * Whether Escape closes. On by default. The first-run wizard turns
+     * it off: it is a gate, not a dialog, and dismissing it would leave
+     * the app unconfigured with no way back to it.
+     */
+    dismissOnEscape?: boolean;
     /** Per-dialog box metrics — width, height, padding, overflow. */
     style?: string;
     /** `data-testid` on the panel, where an e2e spec targets one. */
@@ -44,6 +55,7 @@
     label,
     labelledBy,
     dismissOnBackdrop = true,
+    dismissOnEscape = true,
     style = "",
     testId,
     children
@@ -62,7 +74,7 @@
   });
 
   function onWindowKeydown(e: KeyboardEvent) {
-    if (!open || e.key !== "Escape") return;
+    if (!open || !dismissOnEscape || e.key !== "Escape") return;
     // Stop here so Escape closes the dialog rather than also reaching
     // the search bar's clear-query handler underneath it.
     e.stopPropagation();

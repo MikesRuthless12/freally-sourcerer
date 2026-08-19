@@ -339,14 +339,19 @@ pub fn execute_with_catalogs(
     // With the keys harvested, the `dupe:` nodes have said everything
     // they have to say; strip them so the per-row evaluator never sees
     // a predicate it cannot answer.
-    let per_row_root = if dupe_keys.is_empty() {
-        q.root().clone()
+    // `strip_dupe_nodes` already rebuilds the tree, and so does
+    // `normalize_needles`; borrowing between them keeps it to one clone
+    // on the common path instead of two.
+    let stripped;
+    let base = if dupe_keys.is_empty() {
+        q.root()
     } else {
-        strip_dupe_nodes(q.root())
+        stripped = strip_dupe_nodes(q.root());
+        &stripped
     };
     // Both per-row passes read needles off this tree, so the ladder runs
     // here once rather than inside the matchers once per row.
-    let per_row_root = normalize_needles(&per_row_root, &opts.match_mode);
+    let per_row_root = normalize_needles(base, &opts.match_mode);
     let plan = plan(q, &opts);
     // `match_path` widens the search target from the lowercased
     // filename to the full path. The name index only has filenames, so
@@ -366,11 +371,10 @@ pub fn execute_with_catalogs(
     // see `NameIndex::for_each_seed_candidate_named`.
     let seedable = !plan.seed.is_empty() && !opts.match_mode.match_path;
     let use_stripped_seed = seedable && opts.match_mode.rewrites_text();
-    let use_seed = seedable && !opts.match_mode.rewrites_text();
     let mut survivors_ids: Vec<u64> = Vec::new();
     let mut survivors_names: Vec<String> = Vec::new();
     let mut stats = ExecStats {
-        used_seed: use_seed || use_stripped_seed,
+        used_seed: seedable,
         ..ExecStats::default()
     };
 
@@ -394,7 +398,7 @@ pub fn execute_with_catalogs(
     let skip_name_filter =
         opts.match_mode.match_path || crate::optimizer::is_audio_only_route(q.root());
 
-    if use_seed || use_stripped_seed {
+    if seedable {
         let mut collect = |fid: u64, key: &[u8]| {
             stats.candidates += 1;
             // The stored key may carry SRC-M12 readings; only the
@@ -756,12 +760,12 @@ fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
 }
 
 struct NameEvaluator<'a> {
-    root: &'a QueryNode,
+    root: &'a Prepared,
     opts: &'a ExecOpts,
 }
 
 impl<'a> NameEvaluator<'a> {
-    fn new(root: &'a QueryNode, opts: &'a ExecOpts) -> Self {
+    fn new(root: &'a Prepared, opts: &'a ExecOpts) -> Self {
         Self { root, opts }
     }
 
@@ -853,7 +857,7 @@ fn resolve_volume_needles(
 /// `needs_audio` is true) per-row audio-attribute lookups.
 fn filter_with_audio(
     rows: Vec<FileRow>,
-    root: &QueryNode,
+    root: &Prepared,
     mm: &MatchMode,
     audio: Option<&dyn AudioAttributesProvider>,
     needs_audio: bool,
@@ -929,15 +933,44 @@ struct EvalCtx<'a> {
 /// which is every query under Ignore Punctuation until the stripped key
 /// lands — that is one normalization instead of several million.
 ///
-/// This cannot live on the cached `ExecPlan`: `PlanCache` keys on the
-/// query string alone and the ladder depends on the match mode, so two
-/// callers running the same query under different modes would poison
-/// each other's entry.
+/// This does not live on the cached `ExecPlan`. `PlanCache` keys on the
+/// query string alone while the ladder depends on the match mode, so two
+/// callers running one query under different modes would poison each
+/// other's entry. That is a property of the cache as written rather than
+/// a law — the key could grow — but the cache has no production callers
+/// today, so widening it would be speculative work on dead code.
 ///
 /// `path:` and `parent:` take the case fold only. Their matchers never
 /// folded diacritics or honoured the SRC-M23 modes, and quietly widening
 /// them here would be a behaviour change wearing a refactor's clothes.
-fn normalize_needles(node: &QueryNode, mm: &MatchMode) -> QueryNode {
+/// A query tree whose literal needles have already been through
+/// [`normalized`].
+///
+/// Every matcher assumes this: `literal_match`, `substring_match` and
+/// `anchored_match` normalize the *target* and compare the needle as
+/// given. That contract used to be prose in half a dozen comment blocks
+/// and enforced nowhere, so a third execution path that assembled an
+/// `EvalCtx` by hand would get quietly wrong answers rather than a
+/// compile error — `Café` would simply stop matching `cafe`, and no test
+/// would catch it, because the suite drives the two prepared entry
+/// points. Now the per-row evaluators will not accept anything else.
+///
+/// [`normalize_needles`] is the only way to build one.
+#[derive(Debug)]
+struct Prepared(QueryNode);
+
+impl std::ops::Deref for Prepared {
+    type Target = QueryNode;
+    fn deref(&self) -> &QueryNode {
+        &self.0
+    }
+}
+
+fn normalize_needles(node: &QueryNode, mm: &MatchMode) -> Prepared {
+    Prepared(normalize_node(node, mm))
+}
+
+fn normalize_node(node: &QueryNode, mm: &MatchMode) -> QueryNode {
     let fold_text = |s: &String| normalized(s, mm, !mm.match_case).into_owned();
     // `child:` and the anchored pair have always lowercased their needle
     // regardless of Match Case — they run against the name index, whose
@@ -958,16 +991,16 @@ fn normalize_needles(node: &QueryNode, mm: &MatchMode) -> QueryNode {
             };
             QueryNode::Modifier(crate::ast::ModifierPredicate { kind })
         }
-        QueryNode::Not(inner) => QueryNode::Not(Box::new(normalize_needles(inner, mm))),
+        QueryNode::Not(inner) => QueryNode::Not(Box::new(normalize_node(inner, mm))),
         QueryNode::And(parts) => {
-            QueryNode::And(parts.iter().map(|p| normalize_needles(p, mm)).collect())
+            QueryNode::And(parts.iter().map(|p| normalize_node(p, mm)).collect())
         }
         QueryNode::Or(parts) => {
-            QueryNode::Or(parts.iter().map(|p| normalize_needles(p, mm)).collect())
+            QueryNode::Or(parts.iter().map(|p| normalize_node(p, mm)).collect())
         }
         QueryNode::Lens { kind, inner } => QueryNode::Lens {
             kind: *kind,
-            inner: Box::new(normalize_needles(inner, mm)),
+            inner: Box::new(normalize_node(inner, mm)),
         },
         // Wildcards and regexes carry a compiled pattern rather than a
         // needle, and quick filters carry no text at all.
@@ -1101,10 +1134,13 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow, ctx: &EvalCtx<'_>) -> bool 
             row.attrs & mask == mask
         }
         // Needle lowercased once by `normalize_needles`.
-        ModifierKind::Path(needle) => {
-            let p = row.path.to_string_lossy().to_lowercase();
-            p.contains(needle)
-        }
+        ModifierKind::Path(needle) => match ctx.path_lower {
+            // `match_path` already lowered this row's path for the text
+            // predicate; lowering it a second time here would allocate
+            // the same string again for every hydrated row.
+            Some(p) => p.contains(needle),
+            None => row.path.to_string_lossy().to_lowercase().contains(needle),
+        },
         // SRC-M14. A row with no volume can never belong to a catalog,
         // so it never matches — including rows indexed before M14,
         // whose volume is empty. Those need a rescan to become
@@ -1299,9 +1335,11 @@ fn match_text(pattern: &TextPattern, target: &[u8], mm: &MatchMode) -> bool {
         // written against the name as it is spelled, so dropping
         // punctuation from the target would quietly change what `*.txt`
         // asks for.
-        TextPattern::Wildcard { compiled, .. } => compiled.is_match(&folded(target_str, mm)),
+        TextPattern::Wildcard { compiled, .. } => {
+            compiled.is_match(&folded(Cow::Borrowed(target_str), mm))
+        }
         TextPattern::Regex { compiled, .. } => {
-            let target_eff = folded(target_str, mm);
+            let target_eff = folded(Cow::Borrowed(target_str), mm);
             if mm.match_case {
                 compiled.is_match(&target_eff)
             } else {
@@ -1363,11 +1401,11 @@ fn is_ignored(c: char, mm: &MatchMode) -> bool {
 /// Split out because wildcard and regex patterns stop here — see
 /// [`match_text`]. Borrows straight back for an ASCII string, which has
 /// no combining marks to strip and is what most filenames are.
-fn folded<'a>(s: &'a str, mm: &MatchMode) -> Cow<'a, str> {
-    if mm.match_diacritics || s.is_ascii() {
-        Cow::Borrowed(s)
+fn folded<'a>(c: Cow<'a, str>, mm: &MatchMode) -> Cow<'a, str> {
+    if mm.match_diacritics || c.is_ascii() {
+        c
     } else {
-        Cow::Owned(strip_diacritics(s))
+        Cow::Owned(strip_diacritics(&c))
     }
 }
 
@@ -1386,20 +1424,12 @@ fn folded<'a>(s: &'a str, mm: &MatchMode) -> Cow<'a, str> {
 /// `fold_case` is false for targets read out of the name index, whose
 /// keys are stored lowercased already.
 fn normalized<'a>(s: &'a str, mm: &MatchMode, fold_case: bool) -> Cow<'a, str> {
-    let lowered: Cow<'a, str> = if fold_case && s.chars().any(char::is_uppercase) {
+    let lowered = if fold_case && s.chars().any(char::is_uppercase) {
         Cow::Owned(s.to_lowercase())
     } else {
         Cow::Borrowed(s)
     };
-    let folded_out: Cow<'a, str> = match lowered {
-        Cow::Borrowed(b) => folded(b, mm),
-        // `folded` borrows from the temporary, so an owned input that
-        // needs no folding has to be handed back rather than reborrowed.
-        Cow::Owned(o) => match folded(&o, mm) {
-            Cow::Borrowed(_) => Cow::Owned(o),
-            Cow::Owned(f) => Cow::Owned(f),
-        },
-    };
+    let folded_out = folded(lowered, mm);
     if mm.rewrites_text() && folded_out.chars().any(|c| is_ignored(c, mm)) {
         Cow::Owned(strip_ignored(&folded_out, mm))
     } else {
@@ -1725,16 +1755,20 @@ fn execute_similar(
 /// `similar:foo ext:pdf size:>1mb` or
 /// `similar:bassdrop codec:flac length:>3:00` still filters
 /// correctly.
-fn similarity_row_matches(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
+fn similarity_row_matches(root: &Prepared, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
+    similarity_node_matches(root, row, ctx)
+}
+
+fn similarity_node_matches(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
     match node {
         QueryNode::True => true,
         QueryNode::Text(p) => {
             let target = ctx.path_lower.unwrap_or(row.name_lower.as_str());
             match_text(p, target.as_bytes(), ctx.mm)
         }
-        QueryNode::Not(inner) => !similarity_row_matches(inner, row, ctx),
-        QueryNode::And(parts) => parts.iter().all(|p| similarity_row_matches(p, row, ctx)),
-        QueryNode::Or(parts) => parts.iter().any(|p| similarity_row_matches(p, row, ctx)),
+        QueryNode::Not(inner) => !similarity_node_matches(inner, row, ctx),
+        QueryNode::And(parts) => parts.iter().all(|p| similarity_node_matches(p, row, ctx)),
+        QueryNode::Or(parts) => parts.iter().any(|p| similarity_node_matches(p, row, ctx)),
         QueryNode::Modifier(m) => match &m.kind {
             ModifierKind::Similar(_) => true,
             _ => eval_modifier(&m.kind, row, ctx),
@@ -1749,7 +1783,7 @@ fn similarity_row_matches(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) ->
             kind: LensKind::Similar,
             ..
         } => true,
-        QueryNode::Lens { inner, .. } => similarity_row_matches(inner, row, ctx),
+        QueryNode::Lens { inner, .. } => similarity_node_matches(inner, row, ctx),
     }
 }
 
@@ -1848,7 +1882,7 @@ mod tests {
         // the two sides.
         let q = parser::parse("*.TXT").unwrap();
         let before = format!("{:?}", q.root());
-        let after = format!("{:?}", normalize_needles(q.root(), &MatchMode::default()));
+        let after = format!("{:?}", *normalize_needles(q.root(), &MatchMode::default()));
         assert_eq!(before, after);
     }
 
@@ -1856,8 +1890,8 @@ mod tests {
     fn normalize_needles_folds_the_needles_the_matchers_stopped_folding() {
         let punct = mode(|m| m.ignore_punctuation = true);
         let q = parser::parse("name^:My-Report").unwrap();
-        match normalize_needles(q.root(), &punct) {
-            QueryNode::Modifier(m) => match m.kind {
+        match &*normalize_needles(q.root(), &punct) {
+            QueryNode::Modifier(m) => match &m.kind {
                 ModifierKind::NamePrefix(n) => assert_eq!(n, "myreport"),
                 other => panic!("expected NamePrefix, got {other:?}"),
             },

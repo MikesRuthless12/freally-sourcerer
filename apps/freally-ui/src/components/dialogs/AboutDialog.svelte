@@ -13,7 +13,7 @@
   {open}
   {onClose}
   label={t("menu-help-about")}
-  style="width: 360px; padding: 24px; border-radius: 10px; text-align: center;"
+  style="width: 360px; padding: 24px; text-align: center;"
 >
   <h1>{t("app-name")}</h1>
   <p class="version">{t("about-version", { version: "0.19.84" })}</p>
