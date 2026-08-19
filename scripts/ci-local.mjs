@@ -72,6 +72,10 @@ const hasNextest = hasRust && have("cargo nextest --version");
 //
 // So they come out of the parallel phase and run on their own at the end,
 // which is the only condition under which the number means anything.
+// Kept identical to the filter in `.github/workflows/ci.yml`, which splits
+// its nextest step the same way. Two copies of one expression that have to
+// agree: if they drift, the local gate stops predicting CI for exactly the
+// tests that are hardest to reproduce.
 const TIMED = "test(magic_moment) or test(latency)";
 const testCmd = hasNextest
   ? `cargo nextest run --workspace --locked -E "not (${TIMED})"`

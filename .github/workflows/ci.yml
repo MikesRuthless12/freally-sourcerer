@@ -137,8 +137,20 @@ jobs:
       # the 760 tests build their own Tantivy index, and the
       # process-per-test model keeps those off each other's locks.
       # Measured warm on the dev machine: 100s to 37s.
+      # The timed-budget tests come out of the parallel run and go last,
+      # on their own. nextest's process-per-test model is the whole reason
+      # the suite is fast, and it is also a machine under sustained load —
+      # which is the one condition under which a wall-clock assertion
+      # measures the load instead of the code. `scripts/ci-local.mjs` does
+      # exactly this; the two have to agree or the local gate stops
+      # predicting this one.
       - name: cargo nextest
-        run: cargo nextest run --workspace --locked
+        shell: bash
+        run: cargo nextest run --workspace --locked -E 'not (test(magic_moment) or test(latency))'
+
+      - name: cargo nextest (timed budgets, run alone)
+        shell: bash
+        run: cargo nextest run --workspace --locked -E 'test(magic_moment) or test(latency)'
 
       # nextest does not run doctests. There are none that execute
       # today, and this is the guard that says so out loud rather than
