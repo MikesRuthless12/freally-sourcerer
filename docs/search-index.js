@@ -24,7 +24,6 @@ window.FREALLY_DOCS_INDEX = {
     { name: "Freally File Manager", tag: "Files / backup", url: "https://mikesruthless12.github.io/freally-file-manager/documentation.html" },
     { name: "Freally AV", tag: "Anti-virus", url: "https://mikesruthless12.github.io/freally-av/documentation.html" },
     { name: "Freally Vault", tag: "Passwords", url: "https://mikesruthless12.github.io/freally-vault/documentation.html" },
-    { name: "Freally Central", tag: "App hub", url: "https://mikesruthless12.github.io/freally-central/documentation.html" },
   ],
 
   // Per-section entries. `app` matches an apps[].name. `url` is the full
@@ -158,6 +157,5 @@ window.FREALLY_DOCS_INDEX = {
 
     // ============ Anchor-less docs: link to the app's doc page ============
     { app: "Freally Player", title: "Freally Player documentation", desc: "The local-first media player that plays anything.", url: "https://mikesruthless12.github.io/freally-player/documentation.html", keywords: "media player video audio play open codec vlc mpv subtitles hardware accelerated no ads" },
-    { app: "Freally Central", title: "Freally Central documentation", desc: "The hub that browses, updates, and launches every Freally app.", url: "https://mikesruthless12.github.io/freally-central/documentation.html", keywords: "central hub launcher update download install app family store" },
   ],
 };

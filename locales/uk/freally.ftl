@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Не вдалося експортува�
 backup-toast-bookmarks-imported = Закладки імпортовано
 backup-toast-bookmarks-import-failed = Не вдалося імпортувати закладки: { $error }
 backup-confirm-reset = Скинути всі параметри до типових? Це не можна скасувати (діалог залишиться відкритим).
+backup-confirm-import-commands = Цей файл налаштувань додає користувацькі команди, які можуть запускати програми на вашому комп'ютері: { $programs }. Імпортувати їх?
 backup-toast-reset = Усі параметри скинуто
 
 # Keyboard panel.
@@ -785,9 +786,6 @@ opt-log-info-default = Info (типово)
 opt-log-debug = Debug
 opt-log-trace = Trace
 
-# More Freally apps (Central inside panel) — host chrome
-menu-help-more-apps = Інші застосунки Freally…
-moreapps-title = Інші застосунки Freally
 
 # ---------------------------------------------------------------------
 # Build 1 — v0.21.0 (SRC-M01 … SRC-M08)

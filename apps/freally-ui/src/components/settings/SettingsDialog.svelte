@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Modal from "../common/Modal.svelte";
   import { untrack } from "svelte";
   import { settingsDialog } from "../../lib/stores/settings_dialog.svelte";
   import SettingsTreeNav from "./SettingsTreeNav.svelte";
@@ -43,117 +44,82 @@
     untrack(() => settingsDialog.openDialog(isOpen));
   });
 
-  function handleEsc(e: KeyboardEvent) {
-    if (e.key === "Escape") {
-      onClose();
-    }
-  }
 </script>
 
-{#if open}
-  <div
-    class="backdrop"
-    role="presentation"
-    onkeydown={handleEsc}
-  >
-    <div
-      class="modal"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("settings-title")}
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    >
-      <header>
-        <h2>{t("settings-title")}</h2>
-      </header>
-      <div class="body">
-        <SettingsTreeNav />
-        <main class="pane">
-          {#if settingsDialog.selected === "general.ui"}
-            <UIPanel />
-          {:else if settingsDialog.selected === "general.home"}
-            <HomePanel />
-          {:else if settingsDialog.selected === "general.search"}
-            <SearchPanel />
-          {:else if settingsDialog.selected === "general.results"}
-            <ResultsPanel />
-          {:else if settingsDialog.selected === "general.view"}
-            <ViewPanel />
-          {:else if settingsDialog.selected === "general.context_menu"}
-            <ContextMenuPanel />
-          {:else if settingsDialog.selected === "general.custom_commands"}
-            <CustomCommandsPanel />
-          {:else if settingsDialog.selected === "general.fonts_colors"}
-            <FontsAndColorsPanel />
-          {:else if settingsDialog.selected === "general.keyboard"}
-            <KeyboardPanel />
-          {:else if settingsDialog.selected === "history"}
-            <HistoryPanel />
-          {:else if settingsDialog.selected === "indexes.top"}
-            <IndexesTopPanel />
-          {:else if settingsDialog.selected === "indexes.volumes"}
-            <VolumesPanel />
-          {:else if settingsDialog.selected === "indexes.folders"}
-            <FoldersPanel />
-          {:else if settingsDialog.selected === "indexes.file_lists"}
-            <FileListsPanel />
-          {:else if settingsDialog.selected === "indexes.exclude"}
-            <ExcludePanel />
-          {:else if settingsDialog.selected === "lenses.filename"}
-            <FilenameLensPanel />
-          {:else if settingsDialog.selected === "lenses.content"}
-            <ContentLensPanel />
-          {:else if settingsDialog.selected === "lenses.audio"}
-            <AudioLensPanel />
-          {:else if settingsDialog.selected === "lenses.similarity"}
-            <SimilarityLensPanel />
-          {:else if settingsDialog.selected === "lenses.custom"}
-            <CustomLensPanel />
-          {:else if settingsDialog.selected === "network.https"}
-            <HttpsServerPanel />
-          {:else if settingsDialog.selected === "network.api"}
-            <EtpApiPanel />
-          {:else if settingsDialog.selected === "privacy"}
-            <PrivacyAndUpdatesPanel />
-          {:else if settingsDialog.selected === "logs"}
-            <LogsAndDebugPanel />
-          {:else if settingsDialog.selected === "backup"}
-            <BackupPanel />
-          {:else if settingsDialog.selected === "locale"}
-            <LocalePanel />
-          {:else if settingsDialog.selected === "about"}
-            <AboutPanel />
-          {/if}
-        </main>
-      </div>
-      <SettingsButtonBar {onClose} />
-    </div>
+<Modal
+  {open}
+  {onClose}
+  label={t("settings-title")}
+  dismissOnBackdrop={false}
+  style="width: min(960px, 95vw); height: min(720px, 90vh); min-width: 800px; min-height: 620px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);"
+>
+  <header>
+    <h2>{t("settings-title")}</h2>
+  </header>
+  <div class="body">
+    <SettingsTreeNav />
+    <main class="pane">
+      {#if settingsDialog.selected === "general.ui"}
+        <UIPanel />
+      {:else if settingsDialog.selected === "general.home"}
+        <HomePanel />
+      {:else if settingsDialog.selected === "general.search"}
+        <SearchPanel />
+      {:else if settingsDialog.selected === "general.results"}
+        <ResultsPanel />
+      {:else if settingsDialog.selected === "general.view"}
+        <ViewPanel />
+      {:else if settingsDialog.selected === "general.context_menu"}
+        <ContextMenuPanel />
+      {:else if settingsDialog.selected === "general.custom_commands"}
+        <CustomCommandsPanel />
+      {:else if settingsDialog.selected === "general.fonts_colors"}
+        <FontsAndColorsPanel />
+      {:else if settingsDialog.selected === "general.keyboard"}
+        <KeyboardPanel />
+      {:else if settingsDialog.selected === "history"}
+        <HistoryPanel />
+      {:else if settingsDialog.selected === "indexes.top"}
+        <IndexesTopPanel />
+      {:else if settingsDialog.selected === "indexes.volumes"}
+        <VolumesPanel />
+      {:else if settingsDialog.selected === "indexes.folders"}
+        <FoldersPanel />
+      {:else if settingsDialog.selected === "indexes.file_lists"}
+        <FileListsPanel />
+      {:else if settingsDialog.selected === "indexes.exclude"}
+        <ExcludePanel />
+      {:else if settingsDialog.selected === "lenses.filename"}
+        <FilenameLensPanel />
+      {:else if settingsDialog.selected === "lenses.content"}
+        <ContentLensPanel />
+      {:else if settingsDialog.selected === "lenses.audio"}
+        <AudioLensPanel />
+      {:else if settingsDialog.selected === "lenses.similarity"}
+        <SimilarityLensPanel />
+      {:else if settingsDialog.selected === "lenses.custom"}
+        <CustomLensPanel />
+      {:else if settingsDialog.selected === "network.https"}
+        <HttpsServerPanel />
+      {:else if settingsDialog.selected === "network.api"}
+        <EtpApiPanel />
+      {:else if settingsDialog.selected === "privacy"}
+        <PrivacyAndUpdatesPanel />
+      {:else if settingsDialog.selected === "logs"}
+        <LogsAndDebugPanel />
+      {:else if settingsDialog.selected === "backup"}
+        <BackupPanel />
+      {:else if settingsDialog.selected === "locale"}
+        <LocalePanel />
+      {:else if settingsDialog.selected === "about"}
+        <AboutPanel />
+      {/if}
+    </main>
   </div>
-{/if}
+  <SettingsButtonBar {onClose} />
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .modal {
-    width: min(960px, 95vw);
-    height: min(720px, 90vh);
-    min-width: 800px;
-    min-height: 620px;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
-    overflow: hidden;
-  }
   header {
     padding: 12px 18px;
     border-bottom: 1px solid var(--border);

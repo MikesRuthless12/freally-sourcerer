@@ -34,6 +34,7 @@ use std::sync::Arc;
 
 use memmap2::Mmap;
 use parking_lot::RwLock;
+use unicode_normalization::UnicodeNormalization;
 
 use crate::error::IndexError;
 
@@ -56,6 +57,15 @@ struct Inner {
     by_file_id: HashMap<u64, u32>,
     /// Trigram → `RowId` postings (sorted, deduped on flush).
     trigrams: HashMap<[u8; 3], Vec<u32>>,
+    /// SRC-M23 — the same postings over names with punctuation and
+    /// whitespace removed, so Ignore Punctuation / Ignore Whitespace can
+    /// seed candidates instead of walking the whole index.
+    ///
+    /// `None` until the first query that needs it. Both modes are
+    /// opt-in and off by default, so the majority of users never build
+    /// this map and never pay its memory; once built, `upsert` keeps it
+    /// current like the raw one.
+    seed_trigrams: Option<HashMap<[u8; 3], Vec<u32>>>,
 }
 
 /// Custom name index. Cheap to clone — internally an `Arc<RwLock<…>>`.
@@ -159,11 +169,14 @@ impl NameIndex {
         // window — non-ASCII multi-byte sequences are still valid
         // candidate keys; Phase 5 widens the window to grapheme-aware
         // tokenization.
-        if bytes.len() >= 3 {
-            for w in bytes.windows(3) {
-                let key = [w[0], w[1], w[2]];
-                inner.trigrams.entry(key).or_default().push(row_id);
-            }
+        push_trigrams(&mut inner.trigrams, bytes, row_id);
+        // Only once something has asked for it — see `seed_trigrams`.
+        // The lazy build and this incremental maintenance have to
+        // produce byte-identical postings, so they go through the same
+        // function: a divergence between them is a silent miss, not an
+        // error.
+        if let Some(map) = inner.seed_trigrams.as_mut() {
+            push_trigrams(map, seed_key(&key).as_bytes(), row_id);
         }
         Ok(())
     }
@@ -235,41 +248,92 @@ impl NameIndex {
     /// `cap == 0` means "no cap"; the executor passes a real cap so a
     /// pathological 1-grapheme query can't spend the whole 16ms budget
     /// in this loop.
-    pub fn for_each_candidate_named<F>(&self, q_lower: &str, cap: usize, mut f: F)
+    pub fn for_each_candidate_named<F>(&self, q_lower: &str, cap: usize, f: F)
     where
         F: FnMut(u64, &[u8]),
     {
         let inner = self.inner.read();
-        let bytes = q_lower.as_bytes();
-        let mut emitted = 0usize;
+        emit_candidates(&inner, &inner.trigrams, q_lower.as_bytes(), cap, f);
+    }
+
+    /// SRC-M23: [`for_each_candidate_named`](Self::for_each_candidate_named)
+    /// over names with punctuation and whitespace stripped.
+    ///
+    /// `q_seed` must already have been through [`seed_key`]. The callback
+    /// still receives the **raw** stored key — the caller's matcher does
+    /// its own normalization, and the row's identity for sorting and
+    /// hydration is its real name.
+    ///
+    /// The stripped key is a *superset* filter for every ignore mode, not
+    /// just the both-on one: dropping characters uniformly from both sides
+    /// preserves "is a contiguous substring", so a needle that matches
+    /// under Ignore Punctuation alone still matches once whitespace is
+    /// dropped from both sides too. Candidates are then re-tested under
+    /// the mode the user actually asked for, exactly as they are on the
+    /// raw path.
+    pub fn for_each_seed_candidate_named<F>(&self, q_seed: &str, cap: usize, f: F)
+    where
+        F: FnMut(u64, &[u8]),
+    {
+        let bytes = q_seed.as_bytes();
+        // A needle this short has no trigrams to intersect, so every live
+        // row is a candidate and the stripped postings would go unread.
+        // Building them here would be a whole-index walk thrown away — and
+        // this is reachable by typing, since the seed shrinks as the query
+        // does.
         if bytes.len() < 3 {
-            for (row_id, &fid) in inner.file_ids.iter().enumerate() {
-                if fid == u64::MAX {
-                    continue;
-                }
-                if let Some(name) = name_bytes(&inner, row_id as u32) {
-                    f(fid, name);
-                    emitted += 1;
-                    if cap != 0 && emitted >= cap {
-                        return;
-                    }
-                }
-            }
+            let inner = self.inner.read();
+            emit_candidates(&inner, &inner.trigrams, bytes, cap, f);
             return;
         }
-        let rows = trigram_intersection(&inner, bytes);
-        for r in rows {
-            if let Some(&fid) = inner.file_ids.get(r as usize)
-                && fid != u64::MAX
-                && let Some(name) = name_bytes(&inner, r)
-            {
-                f(fid, name);
-                emitted += 1;
-                if cap != 0 && emitted >= cap {
-                    return;
-                }
-            }
+        self.ensure_seed_trigrams();
+        let inner = self.inner.read();
+        let map = inner
+            .seed_trigrams
+            .as_ref()
+            .expect("ensure_seed_trigrams ran above");
+        emit_candidates(&inner, map, bytes, cap, f);
+    }
+
+    /// Build the stripped postings if nothing has needed them yet.
+    ///
+    /// The scan itself runs under a **read** lock and the result is
+    /// installed under a short write lock. Doing the whole walk while
+    /// holding the write lock would block every query and every scanner
+    /// `upsert` for its duration — seconds on a multi-million-file index,
+    /// and it happens on the user's first keystroke after switching an
+    /// ignore mode on, which is the worst possible moment.
+    fn ensure_seed_trigrams(&self) {
+        if self.inner.read().seed_trigrams.is_some() {
+            return;
         }
+        let (mut map, scanned_to) = {
+            let inner = self.inner.read();
+            let scanned_to = inner.rows.len() as u32;
+            let mut map: HashMap<[u8; 3], Vec<u32>> = HashMap::new();
+            for row_id in 0..scanned_to {
+                seed_row(&inner, row_id, &mut map);
+            }
+            (map, scanned_to)
+        };
+        let mut inner = self.inner.write();
+        // Another caller may have installed one while the read lock was
+        // down. Theirs is as complete as ours, and it is already being
+        // maintained by `upsert` — keep it and drop this.
+        if inner.seed_trigrams.is_some() {
+            return;
+        }
+        // Rows appended while the lock was down are the reason this is not
+        // a plain install. `upsert` maintains the map only once it exists,
+        // so a row written in the gap saw `None`, skipped the seed
+        // postings, and is not in the snapshot either. Missing postings do
+        // not fail — they make that file silently unfindable under an
+        // ignore mode, forever, until something upserts it again. So catch
+        // up on the tail before publishing.
+        for row_id in scanned_to..inner.rows.len() as u32 {
+            seed_row(&inner, row_id, &mut map);
+        }
+        inner.seed_trigrams = Some(map);
     }
 
     /// SRC-M11: yield `(file_id, name_lower_bytes)` for rows that share
@@ -458,6 +522,155 @@ impl NameIndex {
 /// `aaa` twice). The `BTreeSet` predecessor was the documented Phase-5
 /// perf swap — Build Guide §`name_index` PERF note.
 fn trigram_intersection(inner: &Inner, bytes: &[u8]) -> Vec<u32> {
+    trigram_intersection_in(&inner.trigrams, inner, bytes)
+}
+
+/// SRC-M23 — `is_punctuation` and `seed_key` are the one definition of
+/// what the stripped key drops. `freally-query`'s match-mode strip
+/// defers to the same predicate, so the seed can never drop *less* than
+/// a mode does, which is what would turn the superset filter into a
+/// silent miss.
+pub fn is_punctuation(c: char) -> bool {
+    // `char` has no `is_punctuation`, and pulling in a Unicode-category
+    // crate to satisfy one predicate is not worth the dependency. Over
+    // the non-ASCII range "not alphanumeric, not whitespace, not a
+    // control character" is exactly punctuation and symbols.
+    c.is_ascii_punctuation()
+        || (!c.is_ascii() && !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control())
+}
+
+/// The stripped form a name is indexed under, and the form a needle has
+/// to be put in to look it up: punctuation and whitespace removed.
+///
+/// Borrows straight back when there is nothing to drop, which is the
+/// common case for a needle and for most filenames.
+pub fn seed_key(s: &str) -> std::borrow::Cow<'_, str> {
+    // Diacritics fold here too, and they have to. The seed is only a
+    // valid pre-filter if it drops *at least* everything the match-time
+    // ladder drops, and the default `match_diacritics: false` folds them
+    // on both sides. Without this, Ignore Punctuation plus the default
+    // diacritic handling would seed `cafe` against a stored key of
+    // `cafénotestxt`, whose trigrams do not contain `afe` — an empty
+    // intersection and a silent zero-hit on a file that plainly matches.
+    //
+    // Folding more than a given mode asks for is always safe: NFKD maps
+    // each character independently, so the image of a contiguous
+    // substring stays contiguous, and the candidate set stays a
+    // superset. The exact test then runs per row as before.
+    // ASCII is already its own NFKD, so a pure-ASCII string with nothing
+    // to drop is handed straight back.
+    let drops = s.chars().any(|c| is_punctuation(c) || c.is_whitespace());
+    if s.is_ascii() && !drops {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    std::borrow::Cow::Owned(
+        strip_diacritics(s)
+            .chars()
+            .filter(|c| !is_punctuation(*c) && !c.is_whitespace())
+            .collect(),
+    )
+}
+
+/// NFKD-decompose, drop combining marks, recompose.
+///
+/// Lives here rather than in `freally-query` because the stripped seed
+/// key is built from it and the match-time ladder consumes it: two
+/// implementations that disagreed would make the seed drop *less* than
+/// a mode does, which turns the superset filter into a silent miss.
+pub fn strip_diacritics(s: &str) -> String {
+    s.nfkd().filter(|c| !is_combining_mark(*c)).collect()
+}
+
+fn is_combining_mark(c: char) -> bool {
+    matches!(c as u32,
+        0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF |
+        0x20D0..=0x20FF | 0xFE20..=0xFE2F)
+}
+
+/// Add one row's stripped-key trigrams to `map`, skipping tombstones and
+/// anything that is not valid UTF-8.
+fn seed_row(inner: &Inner, row_id: u32, map: &mut HashMap<[u8; 3], Vec<u32>>) {
+    if inner.file_ids.get(row_id as usize).copied() == Some(u64::MAX) {
+        return;
+    }
+    let Some(name) = name_bytes(inner, row_id) else {
+        return;
+    };
+    let Ok(text) = std::str::from_utf8(name) else {
+        return;
+    };
+    push_trigrams(map, seed_key(text).as_bytes(), row_id);
+}
+
+/// Push every 3-byte window of `bytes` into `map` under `row_id`.
+///
+/// Three callers: the raw postings and the stripped postings in `upsert`,
+/// and the lazy stripped build in `ensure_seed_trigrams`. The last two
+/// must agree byte for byte or the seed index stops describing the index
+/// it mirrors — and the symptom of that is a query returning nothing,
+/// with nothing logged.
+fn push_trigrams(map: &mut HashMap<[u8; 3], Vec<u32>>, bytes: &[u8], row_id: u32) {
+    if bytes.len() < 3 {
+        return;
+    }
+    for w in bytes.windows(3) {
+        map.entry([w[0], w[1], w[2]]).or_default().push(row_id);
+    }
+}
+
+/// Yield `(file_id, name)` for the rows `bytes` selects out of `trigrams`,
+/// skipping tombstones, stopping at `cap`.
+///
+/// Both public readers are this function with a different postings map.
+/// They were briefly two copies, and the copies had already diverged: one
+/// materialized every live row id into a `Vec` for the short-needle case
+/// where the other streamed. `cap` accounting and the tombstone test now
+/// live in one place, which is what stops the two seeding paths answering
+/// differently.
+fn emit_candidates<F>(
+    inner: &Inner,
+    trigrams: &HashMap<[u8; 3], Vec<u32>>,
+    bytes: &[u8],
+    cap: usize,
+    mut f: F,
+) where
+    F: FnMut(u64, &[u8]),
+{
+    let mut emitted = 0usize;
+    let mut emit = |row_id: u32, fid: u64, f: &mut F| -> bool {
+        let Some(name) = name_bytes(inner, row_id) else {
+            return true;
+        };
+        f(fid, name);
+        emitted += 1;
+        cap == 0 || emitted < cap
+    };
+    // Below three bytes there is nothing to intersect, so every live row
+    // is a candidate — streamed rather than collected, so `cap` can stop
+    // it early instead of after materializing the whole index.
+    if bytes.len() < 3 {
+        for (row_id, &fid) in inner.file_ids.iter().enumerate() {
+            if fid != u64::MAX && !emit(row_id as u32, fid, &mut f) {
+                return;
+            }
+        }
+        return;
+    }
+    for r in trigram_intersection_in(trigrams, inner, bytes) {
+        if let Some(&fid) = inner.file_ids.get(r as usize)
+            && fid != u64::MAX
+            && !emit(r, fid, &mut f)
+        {
+            return;
+        }
+    }
+}
+
+fn trigram_intersection_in(
+    trigrams: &HashMap<[u8; 3], Vec<u32>>,
+    inner: &Inner,
+    bytes: &[u8],
+) -> Vec<u32> {
     if bytes.len() < 3 {
         // Caller (the Phase-5 fallbacks) handles short needles.
         return inner
@@ -470,7 +683,7 @@ fn trigram_intersection(inner: &Inner, bytes: &[u8]) -> Vec<u32> {
     let mut row_hits: Option<Vec<u32>> = None;
     for w in bytes.windows(3) {
         let key = [w[0], w[1], w[2]];
-        let postings = match inner.trigrams.get(&key) {
+        let postings = match trigrams.get(&key) {
             Some(v) => v,
             None => return Vec::new(),
         };

@@ -6,7 +6,7 @@
 
 [![ci](https://github.com/MikesRuthless12/freally-sourcerer/actions/workflows/ci.yml/badge.svg)](https://github.com/MikesRuthless12/freally-sourcerer/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-All%20Rights%20Reserved-d33)](LICENSE.md)
-[![version](https://img.shields.io/badge/version-0.19.84-blue)](#status)
+[![version](https://img.shields.io/badge/version-0.23.1-blue)](#status)
 [![platforms](https://img.shields.io/badge/platforms-Win%20%7C%20macOS%20%7C%20Linux-success)](#)
 [![rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org)
 
@@ -78,7 +78,7 @@ The "Freally" name plays on three threads simultaneously:
 
 ## Feature parity with *Everything* — and then some
 
-Freally ships **every** feature voidtools' *Everything* offers, on **all three** operating systems, plus the lenses *Everything* lacks. The bar is parity-or-better on day one of v0.19.84, not over time.
+Freally ships **every** feature voidtools' *Everything* offers, on **all three** operating systems, plus the lenses *Everything* lacks. The bar is parity-or-better on day one, not over time.
 
 ### Filename search parity (matches *Everything* 1:1)
 
@@ -101,7 +101,7 @@ Freally ships **every** feature voidtools' *Everything* offers, on **all three**
 | Result preview pane | ✅ (Win) | ✅ (cross-platform; uses native preview APIs) |
 | Optional thumbnails | ✅ | ✅ |
 | Global hotkey | ✅ | ✅ — per-OS configurable |
-| Multiple languages | ✅ (~40) | ✅ — 18 ship in v0.19.84 (see [Languages](#languages)), others by community |
+| Multiple languages | ✅ (~40) | ✅ — 18 ship (see [Languages](#languages)), others by community |
 | Highlighting in results | ✅ | ✅ |
 | Service mode (background daemon) | ✅ (Win Service) | ✅ — Win Service / launchd agent / systemd user unit |
 | HTTP server for browser search | ✅ | ✅ |
@@ -156,13 +156,19 @@ The icon is *not* a parody of *Everything* — it is a respectful sibling. Launc
 
 A single `freally-indexd` daemon owns the on-disk index, subscribes to the OS journal, and runs the extractor pipeline. The Tauri 2 + Svelte 5 UI, the `freally` CLI, and the optional HTTPS API server are thin clients over the same query engine.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full crate boundary map.
+The full crate boundary map lives in `docs/ARCHITECTURE.md`, which is not
+tracked in this repository.
 
 ---
 
 ## Status
 
-Freally is in active phased development. The first public release will be tagged **v0.19.84**.
+Freally is in active phased development. The Must-Have feature gate closed at
+**v0.23.0** (Aug 3, 2026), and the current release is **v0.23.1** (Aug 19, 2026) —
+a patch that repairs four faults that shipped silently in it. Installers for
+Windows, macOS and Linux are on the
+[releases page](https://github.com/MikesRuthless12/freally-sourcerer/releases/latest);
+what changed in each is in [`docs/CHANGELOG.md`](docs/CHANGELOG.md).
 
 - [x] Phase 0 — Cross-platform scaffold
 - [x] Phase 1 — NTFS USN journal subscriber (Windows)
@@ -178,7 +184,7 @@ Freally is in active phased development. The first public release will be tagged
 - [x] Phase 11 — Search UI / the magic moment (Tauri 2 + Svelte 5 desktop app: search bar with live tokenization + parse-error pill; lens-grouped results with drag-resize columns + saved profiles; quick-filter palette; bookmarks dropdown + organize dialog; first-run wizard; light/dark/system theme system; PRD §8.28 menu bar — full Everything-equivalent — both as macOS native menu and in-window menu on Win/Linux; PRD §8.29 status bar with all 7 segments + theme pip; preview pane + thumbnail column; global hotkey; `freally://` URL protocol; mock IPC layer that Phase 12 swaps for real `freally-indexd` RPC)
 - [x] Phase 12 — Settings + real daemon IPC + custom-extractor framework + 18-locale i18n (`freally-rpc` length-prefixed JSON-RPC over UDS / named pipe with peer-uid / SDDL-DACL auth; `freally-indexd` library + binary refactor with `IndexdService` dispatching every PRD §8.30 method; `apps/freally-ui/src-tauri` rewired as RPC client — `commands/canned.rs` deleted; 26-panel Settings dialog wires every (E) and (+) control through `SettingsDialogModel`; `crates/freally-extractor-host` wasmtime sandbox + crash-counter trust state; `freally` CLI as second client of the same transport; full i18n pass — 18 locales translated into native languages, English-first combobox, live RTL flip for Arabic)
 - [ ] Phase 13 — Performance + cross-platform packaging + auto-update
-- [ ] Phase 14 — v0.19.84 launch
+- [ ] Phase 14 — public launch
 
 See [`docs/CHANGELOG.md`](docs/CHANGELOG.md) for per-phase notes.
 
@@ -221,13 +227,14 @@ CI runs the same flow on `windows-latest`, `macos-14`, and `ubuntu-22.04` for ev
 
 Zero outbound network calls by default. Freally never sends your filesystem layout — the index never leaves your machine. The HTTPS API server is opt-in. Auto-update is the single, opt-out exception.
 
-See [`docs/SECURITY.md`](docs/SECURITY.md) for the full threat model and dependency policy.
+The full threat model and dependency policy live in `docs/SECURITY.md`, which
+is not tracked in this repository.
 
 ---
 
 ## Languages
 
-Freally ships in 18 languages on v0.19.84. The entire UI — menu bar, status bar, settings dialog (every panel), first-run wizard, preview pane, bookmarks — switches live when the locale is changed in **Settings → Locale**. Arabic automatically flips the layout to right-to-left.
+Freally ships in 18 languages. The entire UI — menu bar, status bar, settings dialog (every panel), first-run wizard, preview pane, bookmarks — switches live when the locale is changed in **Settings → Locale**. Arabic automatically flips the layout to right-to-left.
 
 | Locale | Language | Native name |
 |---|---|---|
@@ -250,7 +257,8 @@ Freally ships in 18 languages on v0.19.84. The entire UI — menu bar, status ba
 | `ko` | Korean | 한국어 |
 | `zh-CN` | Chinese (Simplified) | 简体中文 |
 
-All 18 locale files live at `locales/<code>/freally.ftl` and stay in lockstep on key set — a CI test (`tests/unit/i18n.test.ts`) fails the build if any locale drifts. Community translations for additional locales are welcome via PR; see [`docs/I18N_TODO.md`](docs/I18N_TODO.md).
+All 18 locale files live at `locales/<code>/freally.ftl` and stay in lockstep on key set — a CI test (`tests/unit/i18n.test.ts`) fails the build if any locale drifts. Community translations for additional locales are welcome via PR; per-locale status is tracked in `docs/I18N_TODO.md`, which is not part of this
+repository.
 
 ---
 
@@ -268,10 +276,13 @@ Compiled binaries include third-party libraries under their original permissive 
 |------|---------|
 | [`LICENSE.md`](LICENSE.md) | All Rights Reserved — Mike Weaver proprietary licence (DRAFT) |
 | [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) | Third-party dependency attributions |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Crate layout & data flow |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Keep-a-Changelog release notes |
-| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model — privacy is a primary feature here |
-| [`docs/I18N_TODO.md`](docs/I18N_TODO.md) | Per-locale translation status (18 ship-locales) |
+| [`docs/documentation.html`](https://mikesruthless12.github.io/freally-sourcerer/documentation.html) | Full user documentation |
+
+`docs/ARCHITECTURE.md`, `docs/SECURITY.md` and `docs/I18N_TODO.md` were
+listed here until v0.23.1. They were pulled out of git history in the
+2026-05-11 IP scrub (`.gitignore:81`) and are local-only by design, so the
+links resolved for nobody.
 
 ---
 

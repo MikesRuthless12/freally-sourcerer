@@ -1,0 +1,28 @@
+# nextest configuration.
+#
+# Why this file exists: nextest runs one *process* per test, where
+# `cargo test` ran one thread per test inside one process per binary. That
+# is where its speed comes from, and it also means far more Tantivy indexes
+# are being created, committed and dropped at the same instant than this
+# suite has ever produced before — most of the 760 tests build their own.
+#
+# On Windows that collides with Defender. When Tantivy commits a segment,
+# Defender opens the newly written file to scan it and holds a handle while
+# Tantivy renames it, which surfaces as
+# `Tantivy("An IO error occurred: 'Access is denied. (os error 5)'")`.
+# CI already excludes the workspace, `$RUNNER_TEMP` and the process temp
+# directory from real-time scanning — see the long comment on that step in
+# `ci.yml`, which has been patched twice — and it still happens. Switching
+# to nextest took it from occasional to reproducible: two consecutive local
+# runs failed on three different tests.
+#
+# Capping a group rather than lowering `test-threads` globally keeps the
+# win. The index-building packages run four at a time; the other ~450 tests
+# still run at full width, and the suite stays far ahead of `cargo test`.
+
+[test-groups.tantivy]
+max-threads = 4
+
+[[profile.default.overrides]]
+filter = 'package(freally-index) or package(freally-query) or package(freally-indexd)'
+test-group = 'tantivy'

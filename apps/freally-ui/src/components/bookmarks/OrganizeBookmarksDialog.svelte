@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Modal from "../common/Modal.svelte";
   import { bookmarksStore } from "../../lib/stores/bookmarks.svelte";
   import { t } from "../../lib/i18n/t";
 
@@ -29,84 +30,55 @@
   }
 </script>
 
-{#if open}
-  <div
-    class="backdrop"
-    role="presentation"
-    onclick={onClose}
-    onkeydown={(e) => e.key === "Escape" && onClose()}
-  >
-    <div
-      class="modal"
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("bookmarks-organize-title")}
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    >
-      <header>
-        <h2>{t("bookmarks-organize-title")}</h2>
-        <button type="button" class="close" aria-label={t("bookmarks-close")} onclick={onClose}>×</button>
-      </header>
-      <div class="list">
-        {#if bookmarksStore.items.length === 0}
-          <div class="empty">{t("bookmarks-organize-empty")}</div>
-        {:else}
-          {#each bookmarksStore.items as bm (bm.id)}
-            <div class="row">
-              <div class="meta">
-                {#if editingId === bm.id}
-                  <!-- svelte-ignore a11y_autofocus -->
-                  <input
-                    type="text"
-                    class="rename-input"
-                    bind:value={editValue}
-                    autofocus
-                    onkeydown={(e) => {
-                      if (e.key === "Enter") void commitRename();
-                      else if (e.key === "Escape") {
-                        editingId = null;
-                        editValue = "";
-                      }
-                    }}
-                    onblur={commitRename}
-                  />
-                {:else}
-                  <span class="name">{bm.name}</span>
-                {/if}
-                <span class="query">{bm.query}</span>
-              </div>
-              <div class="actions">
-                <button type="button" onclick={() => startRename(bm.id, bm.name)}>{t("bookmarks-rename")}</button>
-                <button type="button" class="danger" onclick={() => remove(bm.id)}>{t("action-delete")}</button>
-              </div>
-            </div>
-          {/each}
-        {/if}
-      </div>
-    </div>
+<Modal
+  {open}
+  {onClose}
+  label={t("bookmarks-organize-title")}
+  style="width: 540px; max-height: 70vh; display: flex; flex-direction: column; border-radius: 8px;"
+>
+  <header>
+    <h2>{t("bookmarks-organize-title")}</h2>
+    <button type="button" class="close" aria-label={t("bookmarks-close")} onclick={onClose}>×</button>
+  </header>
+  <div class="list">
+    {#if bookmarksStore.items.length === 0}
+      <div class="empty">{t("bookmarks-organize-empty")}</div>
+    {:else}
+      {#each bookmarksStore.items as bm (bm.id)}
+        <div class="row">
+          <div class="meta">
+            {#if editingId === bm.id}
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                type="text"
+                class="rename-input"
+                bind:value={editValue}
+                autofocus
+                onkeydown={(e) => {
+                  if (e.key === "Enter") void commitRename();
+                  else if (e.key === "Escape") {
+                    editingId = null;
+                    editValue = "";
+                  }
+                }}
+                onblur={commitRename}
+              />
+            {:else}
+              <span class="name">{bm.name}</span>
+            {/if}
+            <span class="query">{bm.query}</span>
+          </div>
+          <div class="actions">
+            <button type="button" onclick={() => startRename(bm.id, bm.name)}>{t("bookmarks-rename")}</button>
+            <button type="button" class="danger" onclick={() => remove(bm.id)}>{t("action-delete")}</button>
+          </div>
+        </div>
+      {/each}
+    {/if}
   </div>
-{/if}
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .modal {
-    width: 540px;
-    max-height: 70vh;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
-  }
   header {
     display: flex;
     align-items: center;

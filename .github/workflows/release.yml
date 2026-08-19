@@ -22,6 +22,18 @@ on:
 permissions:
   contents: write
 
+# Deliberately no `concurrency` block. `ci.yml` cancels superseded runs;
+# a release build must never be cancelled — a half-uploaded draft with
+# some platforms missing is worse than a redundant run.
+env:
+  CARGO_TERM_COLOR: always
+  # Nothing here reads incremental state back, so it is written and
+  # cached for nobody. Off, builds are faster and the cache is smaller.
+  CARGO_INCREMENTAL: 0
+  # A flaky fetch should retry rather than fail a tagged release.
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+
 jobs:
   release:
     name: release (${{ matrix.label }})
@@ -48,10 +60,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # No submodules: the "More Freally apps" panel used to be one,
-          # pointing at a repository that no longer exists — which failed
-          # every leg at checkout before a build step could run. It is
-          # vendored as plain source at vendor/freally-central/ now.
+          # No submodules: this repository has none.
           submodules: false
 
       - name: Install Rust toolchain
@@ -104,7 +113,10 @@ jobs:
 
       - name: Install frontend deps
         working-directory: apps/freally-ui
-        run: pnpm install --frozen-lockfile=false
+        # Frozen here above all: these artifacts are what users install,
+        # so resolving a dependency tree other than the committed one
+        # would ship something nobody reviewed.
+        run: pnpm install --frozen-lockfile
 
       # The release notes the in-app updater shows. Pulled from the changelog
       # section for this exact tag, and the build FAILS if there is no such

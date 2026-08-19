@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = ブックマークのエクスポート�
 backup-toast-bookmarks-imported = ブックマークをインポートしました
 backup-toast-bookmarks-import-failed = ブックマークのインポートに失敗しました: { $error }
 backup-confirm-reset = すべての設定を既定値にリセットしますか？この操作は取り消せません（ダイアログは開いたままになります）。
+backup-confirm-import-commands = この設定ファイルには、お使いのコンピューター上でプログラムを実行できるカスタムコマンドが含まれています: { $programs }。取り込みますか？
 backup-toast-reset = すべての設定をリセットしました
 
 # Keyboard panel.
@@ -785,9 +786,6 @@ opt-log-info-default = Info（既定）
 opt-log-debug = Debug
 opt-log-trace = Trace
 
-# More Freally apps (Central inside panel) — host chrome
-menu-help-more-apps = その他の Freally アプリ…
-moreapps-title = その他の Freally アプリ
 
 # ---------------------------------------------------------------------
 # Build 1 — v0.21.0 (SRC-M01 … SRC-M08)

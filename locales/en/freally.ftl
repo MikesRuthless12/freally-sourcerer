@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Bookmark export failed: { $error }
 backup-toast-bookmarks-imported = Imported bookmarks
 backup-toast-bookmarks-import-failed = Bookmark import failed: { $error }
 backup-confirm-reset = Reset all settings to defaults? This cannot be undone (the dialog stays open).
+backup-confirm-import-commands = This settings file adds custom commands that can run programs on your computer: { $programs }. Import them?
 backup-toast-reset = All settings reset
 
 # Keyboard panel.
@@ -785,9 +786,6 @@ opt-log-info-default = Info (default)
 opt-log-debug = Debug
 opt-log-trace = Trace
 
-# More Freally apps (Central inside panel) — host chrome
-menu-help-more-apps = More Freally apps…
-moreapps-title = More Freally apps
 
 # ---------------------------------------------------------------------
 # Build 1 — v0.21.0 (SRC-M01 … SRC-M08)

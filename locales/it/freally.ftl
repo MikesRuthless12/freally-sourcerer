@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Esportazione dei segnalibri non riuscita:
 backup-toast-bookmarks-imported = Segnalibri importati
 backup-toast-bookmarks-import-failed = Importazione dei segnalibri non riuscita: { $error }
 backup-confirm-reset = Ripristinare tutte le impostazioni ai valori predefiniti? L'operazione non può essere annullata (la finestra di dialogo resta aperta).
+backup-confirm-import-commands = Questo file di impostazioni aggiunge comandi personalizzati in grado di eseguire programmi sul computer: { $programs }. Importarli?
 backup-toast-reset = Tutte le impostazioni ripristinate
 
 # Keyboard panel.
@@ -785,9 +786,6 @@ opt-log-info-default = Info (predefinito)
 opt-log-debug = Debug
 opt-log-trace = Trace
 
-# More Freally apps (Central inside panel) — host chrome
-menu-help-more-apps = Altre app Freally…
-moreapps-title = Altre app Freally
 
 # ---------------------------------------------------------------------
 # Build 1 — v0.21.0 (SRC-M01 … SRC-M08)

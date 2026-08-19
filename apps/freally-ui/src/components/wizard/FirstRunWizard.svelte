@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Modal from "../common/Modal.svelte";
   import { settingsStore } from "../../lib/stores/settings.svelte";
   import { themeStore } from "../../lib/stores/theme.svelte";
   import { foldersStore } from "../../lib/stores/folders.svelte";
@@ -67,96 +68,86 @@
   }
 </script>
 
-{#if !settingsStore.state.first_run_complete && settingsStore.loaded}
-  <div class="backdrop" role="presentation">
-    <div class="modal" role="dialog" aria-modal="true" aria-label={t("wizard-aria-label")}>
-      <header>
-        <h2>{t("wizard-title")}</h2>
-        <span class="step">{t("wizard-step-of-total", { step: step + 1, total: TOTAL_STEPS })}</span>
-      </header>
+<!-- A gate, not a dialog: there is no way to dismiss it, which is why
+     both `dismiss` props are off. It still wants the shell for the focus
+     handling and the `tabindex` that `role="dialog"` requires — the one
+     dialog left hand-rolled was the one every new user sees first. -->
+<Modal
+  open={!settingsStore.state.first_run_complete && settingsStore.loaded}
+  onClose={() => {}}
+  label={t("wizard-aria-label")}
+  dismissOnBackdrop={false}
+  dismissOnEscape={false}
+  style="width: 540px; display: flex; flex-direction: column; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);"
+>
+  <header>
+    <h2>{t("wizard-title")}</h2>
+    <span class="step">{t("wizard-step-of-total", { step: step + 1, total: TOTAL_STEPS })}</span>
+  </header>
 
-      <div class="body">
-        {#if step === 0}
-          <h3>{t("wizard-step-roots")}</h3>
-          <p class="hint">{t("wizard-roots-hint")}</p>
-          <div class="root-add">
-            <button type="button" class="primary" onclick={browseRoot}>{t("wizard-browse")}</button>
-            <input
-              type="text"
-              placeholder={t("wizard-roots-placeholder")}
-              bind:value={newRoot}
-              onkeydown={(e) => e.key === "Enter" && addRoot()}
-            />
-            <button type="button" onclick={addRoot}>{t("wizard-roots-add")}</button>
-          </div>
-          <ul class="roots">
-            {#each roots as r (r)}
-              <li>
-                <span class="path">{r}</span>
-                <button type="button" class="remove" onclick={() => removeRoot(r)}>{t("wizard-roots-remove")}</button>
-              </li>
-            {/each}
-            {#if roots.length === 0}
-              <li class="empty">{t("wizard-roots-empty")}</li>
-            {/if}
-          </ul>
-        {:else if step === 1}
-          <h3>{t("wizard-step-locale")}</h3>
-          <p class="hint">{t("wizard-locale-hint")}</p>
-          <select bind:value={locale}>
-            {#each LOCALES as l (l.value)}
-              <option value={l.value}>{l.label}</option>
-            {/each}
-          </select>
-        {:else if step === 2}
-          <h3>{t("wizard-step-theme")}</h3>
-          <p class="hint">{t("wizard-theme-hint")}</p>
-          <div class="themes">
-            {#each ["system", "light", "dark"] as id (id)}
-              <button
-                type="button"
-                class="theme-card"
-                class:active={themeChoice === id}
-                onclick={() => (themeChoice = id as "system" | "light" | "dark")}
-              >
-                {t(`theme-${id}`)}
-              </button>
-            {/each}
-          </div>
-        {/if}
+  <div class="body">
+    {#if step === 0}
+      <h3>{t("wizard-step-roots")}</h3>
+      <p class="hint">{t("wizard-roots-hint")}</p>
+      <div class="root-add">
+        <button type="button" class="primary" onclick={browseRoot}>{t("wizard-browse")}</button>
+        <input
+          type="text"
+          placeholder={t("wizard-roots-placeholder")}
+          bind:value={newRoot}
+          onkeydown={(e) => e.key === "Enter" && addRoot()}
+        />
+        <button type="button" onclick={addRoot}>{t("wizard-roots-add")}</button>
       </div>
-
-      <footer>
-        <button type="button" onclick={back} disabled={step === 0}>{t("wizard-back")}</button>
-        <span class="grow"></span>
-        {#if step < TOTAL_STEPS - 1}
-          <button type="button" class="primary" onclick={next}>{t("wizard-next")}</button>
-        {:else}
-          <button type="button" class="primary" onclick={finish}>{t("wizard-finish")}</button>
+      <ul class="roots">
+        {#each roots as r (r)}
+          <li>
+            <span class="path">{r}</span>
+            <button type="button" class="remove" onclick={() => removeRoot(r)}>{t("wizard-roots-remove")}</button>
+          </li>
+        {/each}
+        {#if roots.length === 0}
+          <li class="empty">{t("wizard-roots-empty")}</li>
         {/if}
-      </footer>
-    </div>
+      </ul>
+    {:else if step === 1}
+      <h3>{t("wizard-step-locale")}</h3>
+      <p class="hint">{t("wizard-locale-hint")}</p>
+      <select bind:value={locale}>
+        {#each LOCALES as l (l.value)}
+          <option value={l.value}>{l.label}</option>
+        {/each}
+      </select>
+    {:else if step === 2}
+      <h3>{t("wizard-step-theme")}</h3>
+      <p class="hint">{t("wizard-theme-hint")}</p>
+      <div class="themes">
+        {#each ["system", "light", "dark"] as id (id)}
+          <button
+            type="button"
+            class="theme-card"
+            class:active={themeChoice === id}
+            onclick={() => (themeChoice = id as "system" | "light" | "dark")}
+          >
+            {t(`theme-${id}`)}
+          </button>
+        {/each}
+      </div>
+    {/if}
   </div>
-{/if}
+
+  <footer>
+    <button type="button" onclick={back} disabled={step === 0}>{t("wizard-back")}</button>
+    <span class="grow"></span>
+    {#if step < TOTAL_STEPS - 1}
+      <button type="button" class="primary" onclick={next}>{t("wizard-next")}</button>
+    {:else}
+      <button type="button" class="primary" onclick={finish}>{t("wizard-finish")}</button>
+    {/if}
+  </footer>
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    display: grid;
-    place-items: center;
-    z-index: 200;
-  }
-  .modal {
-    width: 540px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
-    display: flex;
-    flex-direction: column;
-  }
   header {
     display: flex;
     align-items: baseline;

@@ -17,33 +17,23 @@
   // whatever the preview host could render, and a media file's payload
   // is "unsupported", which is precisely the case worth playing.
   const playable = $derived.by(() => {
-    const id = [...selectionStore.ids][0];
+    const id = selectionStore.first;
     if (!id) return null;
-    for (const batch of resultsStore.batches) {
-      const hit = batch.hits.find((h) => h.file_id === id);
-      if (!hit) continue;
-      const kind = mediaKind(hit.ext ?? "");
-      return kind ? { path: hit.path, name: hit.name, kind } : null;
-    }
-    return null;
+    const hit = resultsStore.hitById(id);
+    if (!hit) return null;
+    const kind = mediaKind(hit.ext ?? "");
+    return kind ? { path: hit.path, name: hit.name, kind } : null;
   });
 
   $effect(() => {
     if (!settingsStore.state.show_preview) return;
-    const id = [...selectionStore.ids][0];
+    const id = selectionStore.first;
     if (!id) {
       payload = null;
       lastPath = "";
       return;
     }
-    let path: string | undefined;
-    for (const batch of resultsStore.batches) {
-      const hit = batch.hits.find((h) => h.file_id === id);
-      if (hit) {
-        path = hit.path;
-        break;
-      }
-    }
+    const path = resultsStore.hitById(id)?.path;
     if (!path || path === lastPath) return;
     lastPath = path;
     loading = true;

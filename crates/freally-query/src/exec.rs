@@ -23,10 +23,11 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use std::borrow::Cow;
+
 use freally_audio::{AudioAttributes, AudioAttributesProvider};
 use freally_index::{DirStats, FileRow, Index};
 use freally_similarity::{SimilarityIndex, SimilarityOpts};
-use unicode_normalization::UnicodeNormalization;
 
 use crate::ast::{
     AudioPredicate, DateBound, DupeKey, EmptyKind, LensKind, ModifierKind, Query, QueryNode,
@@ -337,11 +338,19 @@ pub fn execute_with_catalogs(
     // With the keys harvested, the `dupe:` nodes have said everything
     // they have to say; strip them so the per-row evaluator never sees
     // a predicate it cannot answer.
-    let per_row_root = if dupe_keys.is_empty() {
-        q.root().clone()
+    // `strip_dupe_nodes` already rebuilds the tree, and so does
+    // `normalize_needles`; borrowing between them keeps it to one clone
+    // on the common path instead of two.
+    let stripped;
+    let base = if dupe_keys.is_empty() {
+        q.root()
     } else {
-        strip_dupe_nodes(q.root())
+        stripped = strip_dupe_nodes(q.root());
+        &stripped
     };
+    // Both per-row passes read needles off this tree, so the ladder runs
+    // here once rather than inside the matchers once per row.
+    let per_row_root = normalize_needles(base, &opts.match_mode);
     let plan = plan(q, &opts);
     // `match_path` widens the search target from the lowercased
     // filename to the full path. The name index only has filenames, so
@@ -353,16 +362,18 @@ pub fn execute_with_catalogs(
     // and must stay invariant under the query string alone, so that
     // toggling `match_path` between two callers with the same query
     // doesn't poison each other's cached plan.
-    // SRC-M23 adds the same problem for a different reason: ignoring
+    // SRC-M23 had the same problem for a different reason: ignoring
     // punctuation or whitespace rewrites the text before comparing, so
-    // the trigrams of the raw name no longer describe what the needle
-    // asks for. See `MatchMode::rewrites_text`.
-    let use_seed =
-        !plan.seed.is_empty() && !opts.match_mode.match_path && !opts.match_mode.rewrites_text();
+    // the trigrams of the *raw* name no longer describe what the needle
+    // asks for. Those modes now seed from a parallel set of postings
+    // built over stripped names instead of dropping to a full scan —
+    // see `NameIndex::for_each_seed_candidate_named`.
+    let seedable = !plan.seed.is_empty() && !opts.match_mode.match_path;
+    let use_stripped_seed = seedable && opts.match_mode.rewrites_text();
     let mut survivors_ids: Vec<u64> = Vec::new();
     let mut survivors_names: Vec<String> = Vec::new();
     let mut stats = ExecStats {
-        used_seed: use_seed,
+        used_seed: seedable,
         ..ExecStats::default()
     };
 
@@ -383,22 +394,37 @@ pub fn execute_with_catalogs(
     // evaluation is a no-op. We skip it entirely — the per-row test
     // would still return `true`, but the call cost is non-zero. The
     // optimizer's `is_audio_only_route` hands us this hint.
-    let skip_name_filter =
-        opts.match_mode.match_path || crate::optimizer::is_audio_only_route(q.root());
+    // Match Case joins the list for a structural reason: the name index
+    // stores lowercased keys and nothing else, so the pre-filter has no
+    // cased text to test against. Left in, it rejected every row before
+    // hydration could look at the real name — `Report` with Match Case on
+    // returned nothing at all. The trigram seed still applies, because it
+    // is built from the lowercased needle and so selects a superset of
+    // the cased answer; only the per-row test has to wait.
+    let skip_name_filter = opts.match_mode.match_case
+        || opts.match_mode.match_path
+        || crate::optimizer::is_audio_only_route(q.root());
 
-    if use_seed {
-        idx.name_index()
-            .for_each_candidate_named(&plan.seed, cap, |fid, key| {
-                stats.candidates += 1;
-                // The stored key may carry SRC-M12 readings; only the
-                // name half is the row's identity, so that is what
-                // sorting and hydration see.
-                let (name, phonetic) = split_phonetic(key);
-                if skip_name_filter || evaluator.matches(name, phonetic) {
-                    survivors_ids.push(fid);
-                    survivors_names.push(String::from_utf8_lossy(name).into_owned());
-                }
-            });
+    if seedable {
+        let mut collect = |fid: u64, key: &[u8]| {
+            stats.candidates += 1;
+            // The stored key may carry SRC-M12 readings; only the
+            // name half is the row's identity, so that is what
+            // sorting and hydration see.
+            let (name, phonetic) = split_phonetic(key);
+            if skip_name_filter || evaluator.matches(name, phonetic) {
+                survivors_ids.push(fid);
+                survivors_names.push(String::from_utf8_lossy(name).into_owned());
+            }
+        };
+        if use_stripped_seed {
+            let seed = freally_index::name_index::seed_key(&plan.seed);
+            idx.name_index()
+                .for_each_seed_candidate_named(&seed, cap, &mut collect);
+        } else {
+            idx.name_index()
+                .for_each_candidate_named(&plan.seed, cap, &mut collect);
+        }
     } else {
         let mut emitted = 0usize;
         idx.name_index().for_each_live(|fid, key| {
@@ -421,7 +447,10 @@ pub fn execute_with_catalogs(
     // matching applies (size / date / path / parent / attrib / ext /
     // audio modifier) or when `match_path` widens the target to the
     // full path.
-    let needs_full = plan.needs_hydration || opts.match_mode.match_path;
+    // Match Case needs `FileRow.name`, which only hydration provides —
+    // the name buffer is lowercased.
+    let needs_full =
+        plan.needs_hydration || opts.match_mode.match_path || opts.match_mode.match_case;
     let i64_ids: Vec<i64> = survivors_ids.iter().map(|&u| u as i64).collect();
     let mut rows: Vec<FileRow> = idx.store().get_many(&i64_ids)?;
     let dirs = dir_stats_for(idx, q.root())?;
@@ -741,12 +770,12 @@ fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
 }
 
 struct NameEvaluator<'a> {
-    root: &'a QueryNode,
+    root: &'a Prepared,
     opts: &'a ExecOpts,
 }
 
 impl<'a> NameEvaluator<'a> {
-    fn new(root: &'a QueryNode, opts: &'a ExecOpts) -> Self {
+    fn new(root: &'a Prepared, opts: &'a ExecOpts) -> Self {
         Self { root, opts }
     }
 
@@ -838,7 +867,7 @@ fn resolve_volume_needles(
 /// `needs_audio` is true) per-row audio-attribute lookups.
 fn filter_with_audio(
     rows: Vec<FileRow>,
-    root: &QueryNode,
+    root: &Prepared,
     mm: &MatchMode,
     audio: Option<&dyn AudioAttributesProvider>,
     needs_audio: bool,
@@ -903,6 +932,89 @@ struct EvalCtx<'a> {
     phonetic: Option<&'a str>,
     /// SRC-M14 `volume:` needles already resolved to volume ids.
     volumes: &'a VolumeNeedles,
+}
+
+/// Put every literal needle in the tree through [`normalized`] once, up
+/// front, instead of once per candidate row.
+///
+/// The needle is invariant for the whole query while the target changes
+/// every row, so the needle is the half of each comparison that can be
+/// hoisted out of the loop. On a query that falls back to a full scan —
+/// which is every query under Ignore Punctuation until the stripped key
+/// lands — that is one normalization instead of several million.
+///
+/// This does not live on the cached `ExecPlan`. `PlanCache` keys on the
+/// query string alone while the ladder depends on the match mode, so two
+/// callers running one query under different modes would poison each
+/// other's entry. That is a property of the cache as written rather than
+/// a law — the key could grow — but the cache has no production callers
+/// today, so widening it would be speculative work on dead code.
+///
+/// `path:` and `parent:` take the case fold only. Their matchers never
+/// folded diacritics or honoured the SRC-M23 modes, and quietly widening
+/// them here would be a behaviour change wearing a refactor's clothes.
+/// A query tree whose literal needles have already been through
+/// [`normalized`].
+///
+/// Every matcher assumes this: `literal_match`, `substring_match` and
+/// `anchored_match` normalize the *target* and compare the needle as
+/// given. That contract used to be prose in half a dozen comment blocks
+/// and enforced nowhere, so a third execution path that assembled an
+/// `EvalCtx` by hand would get quietly wrong answers rather than a
+/// compile error — `Café` would simply stop matching `cafe`, and no test
+/// would catch it, because the suite drives the two prepared entry
+/// points. Now the per-row evaluators will not accept anything else.
+///
+/// [`normalize_needles`] is the only way to build one.
+#[derive(Debug)]
+struct Prepared(QueryNode);
+
+impl std::ops::Deref for Prepared {
+    type Target = QueryNode;
+    fn deref(&self) -> &QueryNode {
+        &self.0
+    }
+}
+
+fn normalize_needles(node: &QueryNode, mm: &MatchMode) -> Prepared {
+    Prepared(normalize_node(node, mm))
+}
+
+fn normalize_node(node: &QueryNode, mm: &MatchMode) -> QueryNode {
+    // One ladder for every needle on the tree. `child:` and the anchored
+    // pair used to have their own, folding case unconditionally because
+    // the name index they ran against had no case to match; now that
+    // Match Case routes them at the hydrated row they fold on the same
+    // terms a bare term does, which makes the two rules one rule.
+    let fold = |s: &String| normalized(s, mm).into_owned();
+    match node {
+        QueryNode::Text(TextPattern::Literal(l)) => QueryNode::Text(TextPattern::Literal(fold(l))),
+        QueryNode::Modifier(m) => {
+            let kind = match &m.kind {
+                ModifierKind::Child(c) => ModifierKind::Child(fold(c)),
+                ModifierKind::NamePrefix(c) => ModifierKind::NamePrefix(fold(c)),
+                ModifierKind::NameSuffix(c) => ModifierKind::NameSuffix(fold(c)),
+                ModifierKind::Path(p) => ModifierKind::Path(p.to_lowercase()),
+                ModifierKind::Parent(p) => ModifierKind::Parent(p.to_lowercase()),
+                other => other.clone(),
+            };
+            QueryNode::Modifier(crate::ast::ModifierPredicate { kind })
+        }
+        QueryNode::Not(inner) => QueryNode::Not(Box::new(normalize_node(inner, mm))),
+        QueryNode::And(parts) => {
+            QueryNode::And(parts.iter().map(|p| normalize_node(p, mm)).collect())
+        }
+        QueryNode::Or(parts) => {
+            QueryNode::Or(parts.iter().map(|p| normalize_node(p, mm)).collect())
+        }
+        QueryNode::Lens { kind, inner } => QueryNode::Lens {
+            kind: *kind,
+            inner: Box::new(normalize_node(inner, mm)),
+        },
+        // Wildcards and regexes carry a compiled pattern rather than a
+        // needle, and quick filters carry no text at all.
+        QueryNode::Text(_) | QueryNode::QuickFilter(_) | QueryNode::True => node.clone(),
+    }
 }
 
 /// Can this subtree be decided from the name buffer alone?
@@ -971,11 +1083,37 @@ fn eval_name(node: &QueryNode, name_lower: &[u8], phonetic: Option<&[u8]>, mm: &
     }
 }
 
+/// What a text predicate compares against for this row.
+///
+/// Normally the lowercased name, or the lowercased path when Match Path
+/// widened the target. Under Match Case it is the name (or path) as the
+/// filesystem spells it, because that is the only copy with any case in
+/// it — everything the name index holds has already been folded.
+fn text_target<'a>(row: &'a FileRow, ctx: &EvalCtx<'a>) -> Cow<'a, str> {
+    match (ctx.mm.match_case, ctx.path_lower) {
+        (true, Some(_)) => row.path.to_string_lossy(),
+        (true, None) => Cow::Borrowed(row.name.as_str()),
+        (false, Some(p)) => Cow::Borrowed(p),
+        (false, None) => Cow::Borrowed(row.name_lower.as_str()),
+    }
+}
+
+/// The same choice for the filename-only modifiers. `child:Report` has to
+/// answer the way the bare term `Report` does — one query written two
+/// ways is one query.
+fn name_target<'a>(row: &'a FileRow, ctx: &EvalCtx<'_>) -> &'a str {
+    if ctx.mm.match_case {
+        row.name.as_str()
+    } else {
+        row.name_lower.as_str()
+    }
+}
+
 fn eval_full(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
     match node {
         QueryNode::True => true,
         QueryNode::Text(p) => {
-            let target = ctx.path_lower.unwrap_or(row.name_lower.as_str());
+            let target = text_target(row, ctx);
             match_text(p, target.as_bytes(), ctx.mm)
                 || ctx
                     .phonetic
@@ -1030,10 +1168,14 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow, ctx: &EvalCtx<'_>) -> bool 
             let mask: u64 = flags.iter().copied().fold(0u64, |m, f| m | f.bit());
             row.attrs & mask == mask
         }
-        ModifierKind::Path(needle) => {
-            let p = row.path.to_string_lossy().to_lowercase();
-            p.contains(&needle.to_lowercase())
-        }
+        // Needle lowercased once by `normalize_needles`.
+        ModifierKind::Path(needle) => match ctx.path_lower {
+            // `match_path` already lowered this row's path for the text
+            // predicate; lowering it a second time here would allocate
+            // the same string again for every hydrated row.
+            Some(p) => p.contains(needle),
+            None => row.path.to_string_lossy().to_lowercase().contains(needle),
+        },
         // SRC-M14. A row with no volume can never belong to a catalog,
         // so it never matches — including rows indexed before M14,
         // whose volume is empty. Those need a rescan to become
@@ -1059,11 +1201,28 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow, ctx: &EvalCtx<'_>) -> bool 
             .parent()
             .and_then(|p| p.file_name())
             .and_then(|s| s.to_str())
-            .map(|s| s.to_lowercase().contains(&needle.to_lowercase()))
+            .map(|s| s.to_lowercase().contains(needle))
             .unwrap_or(false),
-        ModifierKind::Child(needle) => row.name_lower.contains(&needle.to_lowercase()),
-        ModifierKind::NamePrefix(needle) => row.name_lower.starts_with(&needle.to_lowercase()),
-        ModifierKind::NameSuffix(needle) => row.name_lower.ends_with(&needle.to_lowercase()),
+        // These three run the same normalization ladder as their
+        // `eval_name` counterparts, and must keep doing so. Both passes
+        // execute on every query: the name pass filters candidates, this
+        // one re-tests the hydrated row. A bare `contains` /
+        // `starts_with` here quietly rejects rows the name pass accepted
+        // as soon as any hydrating modifier joins the query, so
+        // `name^:café` and `name^:café size:>1mb` would answer
+        // differently.
+        ModifierKind::Child(needle) => {
+            substring_match(name_target(row, ctx).as_bytes(), needle, ctx.mm)
+                || ctx
+                    .phonetic
+                    .is_some_and(|ph| substring_match(ph.as_bytes(), needle, ctx.mm))
+        }
+        ModifierKind::NamePrefix(needle) => {
+            anchored_match(name_target(row, ctx).as_bytes(), needle, ctx.mm, true)
+        }
+        ModifierKind::NameSuffix(needle) => {
+            anchored_match(name_target(row, ctx).as_bytes(), needle, ctx.mm, false)
+        }
         ModifierKind::Similar(_) => {
             // `execute_with` routes Similar-bearing queries through the
             // similarity-lens path before reaching here. Hitting this
@@ -1202,67 +1361,52 @@ fn match_text(pattern: &TextPattern, target: &[u8], mm: &MatchMode) -> bool {
         Ok(s) => s,
         Err(_) => return false,
     };
-    let folded_target;
-    let target_eff: &str = if mm.match_diacritics {
-        target_str
-    } else {
-        folded_target = strip_diacritics(target_str);
-        &folded_target
-    };
     match pattern {
-        TextPattern::Literal(needle) => {
-            let needle_eff: String = if mm.match_diacritics {
-                if mm.match_case {
-                    needle.clone()
-                } else {
-                    needle.to_lowercase()
-                }
-            } else {
-                strip_diacritics(needle)
-            };
-            literal_match(target_eff, &needle_eff, mm)
+        // The needle went through the ladder once, when the query was
+        // prepared — see `normalize_needles`. Only the target is
+        // per-row work from here.
+        TextPattern::Literal(needle) => literal_match(target_str, needle, mm),
+        // Wildcards and regexes stop one rung short: their syntax is
+        // written against the name as it is spelled, so dropping
+        // punctuation from the target would quietly change what `*.txt`
+        // asks for.
+        TextPattern::Wildcard { compiled, .. } => {
+            compiled.is_match(&folded(Cow::Borrowed(target_str), mm))
         }
-        TextPattern::Wildcard { compiled, .. } => compiled.is_match(target_eff),
         TextPattern::Regex { compiled, .. } => {
+            let target_eff = folded(Cow::Borrowed(target_str), mm);
             if mm.match_case {
-                compiled.is_match(target_eff)
+                compiled.is_match(&target_eff)
             } else {
                 // Re-run case-insensitively by relying on regex's own
                 // (?i) prefix when the user didn't supply one. We don't
                 // mutate the cached compiled regex — instead we lower
                 // both sides and run a new match.
-                let ci_target = target_eff.to_lowercase();
-                compiled.is_match(&ci_target)
+                compiled.is_match(&target_eff.to_lowercase())
             }
         }
     }
 }
 
-fn literal_match(target_lower_or_cased: &str, needle: &str, mm: &MatchMode) -> bool {
-    // The name index already lowercased, so there is nothing to fold on
-    // this side; `match_case` only decides what happens to the needle.
-    let target_eff = target_lower_or_cased;
-    let needle_lc = if mm.match_case {
-        needle.to_string()
+/// Compare a prepared needle against one row's target.
+///
+/// The needle has already been through [`normalized`]; the target has
+/// not, and is the half that changes every row. SRC-M23's strip runs on
+/// both sides — stripping only the target would make `foobar` find
+/// `foo-bar` while leaving `foo-bar` unable to find `foobar`, which
+/// reads as a bug rather than as a match mode.
+fn literal_match(target: &str, needle: &str, mm: &MatchMode) -> bool {
+    // Both sides run the same ladder; `mm` decides whether case folds,
+    // and the needle has already been through it once in
+    // `normalize_needles`. Idempotence is what makes that safe.
+    let target_eff = normalized(target, mm);
+    // Whole-word is meaningless once the separators that define word
+    // boundaries have been removed — `foo-bar` becomes one word. The
+    // stripped comparison is the more specific request, so it wins.
+    if mm.whole_word && !mm.rewrites_text() {
+        whole_word_contains(&target_eff, needle)
     } else {
-        needle.to_lowercase()
-    };
-    // SRC-M23 — strip the ignored classes from *both* sides. Stripping
-    // only the target would make `foobar` find `foo-bar` but leave
-    // `foo-bar` unable to find `foobar`, which reads as a bug rather
-    // than as a match mode.
-    if mm.rewrites_text() {
-        let t = strip_ignored(target_eff, mm);
-        let n = strip_ignored(&needle_lc, mm);
-        // Whole-word is meaningless once the separators that define word
-        // boundaries have been removed — `foo-bar` becomes one word. The
-        // stripped comparison is the more specific request, so it wins.
-        return t.contains(&n);
-    }
-    if mm.whole_word {
-        whole_word_contains(target_eff, &needle_lc)
-    } else {
-        target_eff.contains(&needle_lc)
+        target_eff.contains(needle)
     }
 }
 
@@ -1271,24 +1415,88 @@ fn literal_match(target_lower_or_cased: &str, needle: &str, mm: &MatchMode) -> b
 /// Uses Unicode's own categories rather than an ASCII list, so `’`
 /// and `–` are dropped alongside `'` and `-`.
 fn strip_ignored(s: &str, mm: &MatchMode) -> String {
-    s.chars()
-        .filter(|c| {
-            let drop_punct =
-                mm.ignore_punctuation && (c.is_ascii_punctuation() || is_unicode_punctuation(*c));
-            let drop_space = mm.ignore_whitespace && c.is_whitespace();
-            !drop_punct && !drop_space
-        })
-        .collect()
+    s.chars().filter(|c| !is_ignored(*c, mm)).collect()
 }
 
-/// Punctuation and symbols outside ASCII.
+/// Does the active match mode drop this character before comparing?
 ///
-/// `char` has no `is_punctuation`, and pulling in a Unicode-category
-/// crate for this would add a dependency to satisfy one predicate. The
-/// test is "not alphanumeric, not whitespace, not a control character",
-/// which over the non-ASCII range is exactly punctuation and symbols.
-fn is_unicode_punctuation(c: char) -> bool {
-    !c.is_ascii() && !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control()
+/// The punctuation test is `freally_index`'s, not a local copy. The
+/// stripped trigram key is built from the same predicate, and a seed
+/// that dropped *less* than a mode drops would turn that superset
+/// filter into a silent miss — so the two cannot be allowed to drift.
+fn is_ignored(c: char, mm: &MatchMode) -> bool {
+    let drop_punct = mm.ignore_punctuation && freally_index::name_index::is_punctuation(c);
+    let drop_space = mm.ignore_whitespace && c.is_whitespace();
+    drop_punct || drop_space
+}
+
+/// Rung one of the ladder: fold diacritics away unless the user asked to
+/// keep them.
+///
+/// Split out because wildcard and regex patterns stop here — see
+/// [`match_text`]. Borrows straight back for an ASCII string, which has
+/// no combining marks to strip and is what most filenames are.
+fn folded<'a>(c: Cow<'a, str>, mm: &MatchMode) -> Cow<'a, str> {
+    if mm.match_diacritics || c.is_ascii() {
+        c
+    } else {
+        Cow::Owned(strip_diacritics(&c))
+    }
+}
+
+/// The normalization ladder, in one place: case-fold → strip diacritics
+/// → drop the classes the mode ignores.
+///
+/// Every matcher runs exactly this, in exactly this order, so a new
+/// match-mode flag is one edit rather than four — and the matchers
+/// cannot drift apart again, which is what let `name^:` answer
+/// differently depending on the rest of the query.
+///
+/// Each rung hands its input straight back when it has nothing to do, so
+/// the common case — an ASCII lowercase name under the default mode —
+/// walks the string and allocates nothing.
+///
+/// Case folds on both sides unless Match Case is on. The name index
+/// stores lowercased keys, so folding a target is normally a scan that
+/// finds nothing to do — but *normally* is not always: NFKD can put
+/// uppercase back into an already-lowercased string (`№` decomposes to
+/// `No`), and a target-side rung that opted out on the "it is already
+/// lowercase" assumption would then compare `No5` against a folded needle
+/// of `no5`. There is no case where one side should fold and the other
+/// should not, so there is no knob for it.
+fn normalized<'a>(s: &'a str, mm: &MatchMode) -> Cow<'a, str> {
+    let fold_case = !mm.match_case;
+    // Diacritics first, then case. NFKD is a *compatibility* decomposition,
+    // so it can turn an uncased character into cased letters — `№` becomes
+    // `No`, `㎅` becomes `kB` — and folding case first would leave that `N`
+    // and `B` standing against an already-lowercased target. The code
+    // before the refactor ran these the other way round, which is the
+    // bug `the_ladder_folds_diacritics_before_case` pins.
+    let folded_out = folded(Cow::Borrowed(s), mm);
+    let lowered = if fold_case && changes_under_lowercase(&folded_out) {
+        Cow::Owned(folded_out.to_lowercase())
+    } else {
+        folded_out
+    };
+    if mm.rewrites_text() && lowered.chars().any(|c| is_ignored(c, mm)) {
+        Cow::Owned(strip_ignored(&lowered, mm))
+    } else {
+        lowered
+    }
+}
+
+/// Would `to_lowercase` change this string?
+///
+/// The obvious `any(char::is_uppercase)` is not the same question:
+/// titlecase characters (`ǅ`, `ǈ`, `ᾈ`) are `Lt`, not `Lu`, so they are not
+/// `is_uppercase` and would slip through unfolded while the lowercased
+/// target had already folded them. Asking each character directly costs a
+/// scan and still allocates nothing when the answer is no.
+fn changes_under_lowercase(s: &str) -> bool {
+    s.chars().any(|c| {
+        let mut lower = c.to_lowercase();
+        lower.next() != Some(c) || lower.next().is_some()
+    })
 }
 
 fn whole_word_contains(haystack: &str, needle: &str) -> bool {
@@ -1320,30 +1528,18 @@ fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
+/// `child:` / `name:`. Prepared needle, lowercased target from the name
+/// index.
+///
+/// SRC-M23 — `name:foo-bar` has to behave like the bare term `foo-bar`
+/// under Ignore Punctuation. Running the same ladder as
+/// [`literal_match`] is what keeps one query written two ways answering
+/// one way.
 fn substring_match(target_lower: &[u8], needle: &str, mm: &MatchMode) -> bool {
-    let s = match std::str::from_utf8(target_lower) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    let needle_lc = needle.to_lowercase();
-    let target_eff = if mm.match_diacritics {
-        s.to_string()
-    } else {
-        strip_diacritics(s)
-    };
-    let needle_eff = if mm.match_diacritics {
-        needle_lc
-    } else {
-        strip_diacritics(&needle_lc)
-    };
-    // SRC-M23 — `name:foo-bar` has to behave like the bare term
-    // `foo-bar` under Ignore Punctuation. Without this, turning the mode
-    // on would change what a literal matches but not what `name:`
-    // matches, which is the same query written two ways.
-    if mm.rewrites_text() {
-        return strip_ignored(&target_eff, mm).contains(&strip_ignored(&needle_eff, mm));
+    match std::str::from_utf8(target_lower) {
+        Ok(s) => normalized(s, mm).contains(needle),
+        Err(_) => false,
     }
-    target_eff.contains(&needle_eff)
 }
 
 /// SRC-M23 — `name^:` / `name$:`. Same normalization ladder as
@@ -1356,35 +1552,21 @@ fn anchored_match(target_lower: &[u8], needle: &str, mm: &MatchMode, prefix: boo
         Ok(s) => s,
         Err(_) => return false,
     };
-    let needle_lc = needle.to_lowercase();
-    let (mut target_eff, mut needle_eff) = if mm.match_diacritics {
-        (s.to_string(), needle_lc)
-    } else {
-        (strip_diacritics(s), strip_diacritics(&needle_lc))
-    };
-    if mm.rewrites_text() {
-        target_eff = strip_ignored(&target_eff, mm);
-        needle_eff = strip_ignored(&needle_eff, mm);
-    }
+    let target_eff = normalized(s, mm);
     if prefix {
-        target_eff.starts_with(&needle_eff)
+        target_eff.starts_with(needle)
     } else {
-        target_eff.ends_with(&needle_eff)
+        target_eff.ends_with(needle)
     }
 }
 
-/// NFKD-decompose, drop combining marks, recompose. Cheap diacritic
-/// stripper — not perfect for every script (Phase 5 perf-pass note)
-/// but matches Everything's "Match Diacritics" toggle behavior.
-fn strip_diacritics(s: &str) -> String {
-    s.nfkd().filter(|c| !is_combining_mark(*c)).collect()
-}
-
-fn is_combining_mark(c: char) -> bool {
-    matches!(c as u32,
-        0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF |
-        0x20D0..=0x20FF | 0xFE20..=0xFE2F)
-}
+/// Cheap diacritic stripper — not perfect for every script (Phase 5
+/// perf-pass note) but matches Everything's "Match Diacritics" toggle.
+///
+/// `freally_index` owns the definition because the stripped trigram key
+/// is built from it; a second copy here could drift into folding less
+/// than the seed does, and the seed would stop being a superset.
+use freally_index::name_index::strip_diacritics;
 
 /// Up-front gate: refuse to execute a query that names a Phase-5
 /// reserved modifier so callers see a typed error instead of empty
@@ -1508,6 +1690,10 @@ fn execute_similar(
     volumes: &VolumeNeedles,
 ) -> Result<ResultSet, QueryError> {
     let sim = similarity.ok_or(QueryError::SimilarityIndexUnavailable)?;
+    // Same prepared-needle contract as the trigram path: the matchers
+    // this route reaches expect needles that have already been through
+    // the ladder, so this tree has to make the same trip.
+    let per_row_root = normalize_needles(q.root(), &opts.match_mode);
     let cap = if opts.candidate_cap == 0 {
         usize::MAX
     } else {
@@ -1564,7 +1750,7 @@ fn execute_similar(
             phonetic: phonetic.as_deref(),
             volumes,
         };
-        if similarity_row_matches(q.root(), &r, &ctx) {
+        if similarity_row_matches(&per_row_root, &r, &ctx) {
             filtered.push(r);
         }
     }
@@ -1626,16 +1812,20 @@ fn execute_similar(
 /// `similar:foo ext:pdf size:>1mb` or
 /// `similar:bassdrop codec:flac length:>3:00` still filters
 /// correctly.
-fn similarity_row_matches(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
+fn similarity_row_matches(root: &Prepared, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
+    similarity_node_matches(root, row, ctx)
+}
+
+fn similarity_node_matches(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
     match node {
         QueryNode::True => true,
         QueryNode::Text(p) => {
-            let target = ctx.path_lower.unwrap_or(row.name_lower.as_str());
+            let target = text_target(row, ctx);
             match_text(p, target.as_bytes(), ctx.mm)
         }
-        QueryNode::Not(inner) => !similarity_row_matches(inner, row, ctx),
-        QueryNode::And(parts) => parts.iter().all(|p| similarity_row_matches(p, row, ctx)),
-        QueryNode::Or(parts) => parts.iter().any(|p| similarity_row_matches(p, row, ctx)),
+        QueryNode::Not(inner) => !similarity_node_matches(inner, row, ctx),
+        QueryNode::And(parts) => parts.iter().all(|p| similarity_node_matches(p, row, ctx)),
+        QueryNode::Or(parts) => parts.iter().any(|p| similarity_node_matches(p, row, ctx)),
         QueryNode::Modifier(m) => match &m.kind {
             ModifierKind::Similar(_) => true,
             _ => eval_modifier(&m.kind, row, ctx),
@@ -1650,6 +1840,131 @@ fn similarity_row_matches(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) ->
             kind: LensKind::Similar,
             ..
         } => true,
-        QueryNode::Lens { inner, .. } => similarity_row_matches(inner, row, ctx),
+        QueryNode::Lens { inner, .. } => similarity_node_matches(inner, row, ctx),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mode(f: impl FnOnce(&mut MatchMode)) -> MatchMode {
+        let mut m = MatchMode::default();
+        f(&mut m);
+        m
+    }
+
+    #[test]
+    fn the_ladder_runs_diacritics_then_case_then_the_ignored_classes() {
+        let all = mode(|m| {
+            m.ignore_punctuation = true;
+            m.ignore_whitespace = true;
+        });
+        assert_eq!(normalized("My Café-Notes.TXT", &all), "mycafenotestxt");
+        // Same input, one rung disabled at a time.
+        assert_eq!(
+            normalized("My Café-Notes.TXT", &MatchMode::default()),
+            "my cafe-notes.txt"
+        );
+        assert_eq!(
+            normalized("My Café-Notes.TXT", &mode(|m| m.match_diacritics = true)),
+            "my café-notes.txt"
+        );
+        // An already-lowercased target — what a name-index key looks
+        // like. It still goes through the same ladder, with nothing for
+        // the case rung to do.
+        assert_eq!(
+            normalized("my café-notes.txt", &MatchMode::default()),
+            "my cafe-notes.txt"
+        );
+    }
+
+    #[test]
+    fn the_ladder_borrows_when_it_has_nothing_to_do() {
+        // The hot path: an ASCII lowercase name under the default mode
+        // is walked and handed straight back, no allocation. This is the
+        // property that lets the matchers call it once per candidate row.
+        let m = MatchMode::default();
+        assert!(matches!(
+            normalized("alpha-report.md", &m),
+            Cow::Borrowed(_)
+        ));
+        // Punctuation only costs an allocation once the mode asks for it.
+        assert!(matches!(
+            normalized("alpha-report.md", &mode(|m| m.ignore_punctuation = true)),
+            Cow::Owned(_)
+        ));
+        // A name with no punctuation still borrows under that mode.
+        assert!(matches!(
+            normalized("alphareport", &mode(|m| m.ignore_punctuation = true)),
+            Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn the_ladder_folds_diacritics_before_case() {
+        // NFKD is a *compatibility* decomposition, so it can emit cased
+        // letters from an uncased character. Folding case first left that
+        // `N` standing: `№5` became `No5` and stopped matching `no5`.
+        //
+        // It is also why the target side has no opt-out. A name-index key
+        // is stored lowercased, so folding it again looks redundant — but
+        // NFKD can put uppercase back into it after the fact.
+        let m = MatchMode::default();
+        assert_eq!(normalized("№5", &m), "no5");
+        assert_eq!(normalized("№5-report.txt", &m), "no5-report.txt");
+    }
+
+    #[test]
+    fn the_case_fold_catches_titlecase_too() {
+        // `ǅ` is Lt, not Lu, so `char::is_uppercase` answers false for it.
+        // The guard that asked that question handed it through unfolded
+        // while the target had already folded it.
+        let m = MatchMode::default();
+        assert_eq!(normalized("ǅungla", &m), "dzungla");
+        assert!(changes_under_lowercase("ǅ"));
+        assert!(!changes_under_lowercase("already lower"));
+    }
+
+    #[test]
+    fn the_ladder_is_idempotent() {
+        // `normalize_needles` runs it on the needle and the matchers run
+        // it on the target, so a needle that came back through a matcher
+        // must not change again.
+        for m in [
+            MatchMode::default(),
+            mode(|m| m.ignore_punctuation = true),
+            mode(|m| m.ignore_whitespace = true),
+            mode(|m| m.match_diacritics = true),
+        ] {
+            for s in ["My Café-Notes.TXT", "plain", "ünïcödé", "a b-c_d"] {
+                let once = normalized(s, &m).into_owned();
+                assert_eq!(normalized(&once, &m), once, "{s:?} under {m:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn normalize_needles_leaves_compiled_patterns_alone() {
+        // Wildcards and regexes match against a target that stopped one
+        // rung short, so rewriting their source here would desynchronize
+        // the two sides.
+        let q = parser::parse("*.TXT").unwrap();
+        let before = format!("{:?}", q.root());
+        let after = format!("{:?}", *normalize_needles(q.root(), &MatchMode::default()));
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn normalize_needles_folds_the_needles_the_matchers_stopped_folding() {
+        let punct = mode(|m| m.ignore_punctuation = true);
+        let q = parser::parse("name^:My-Report").unwrap();
+        match &*normalize_needles(q.root(), &punct) {
+            QueryNode::Modifier(m) => match &m.kind {
+                ModifierKind::NamePrefix(n) => assert_eq!(n, "myreport"),
+                other => panic!("expected NamePrefix, got {other:?}"),
+            },
+            other => panic!("expected Modifier, got {other:?}"),
+        }
     }
 }

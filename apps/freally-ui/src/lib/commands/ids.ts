@@ -126,8 +126,7 @@ export const COMMAND_IDS = [
   "help.website",
   "help.check_for_updates",
   "help.sponsor",
-  "help.about",
-  "help.more_freally_apps"
+  "help.about"
 ] as const;
 
 export type CommandId = (typeof COMMAND_IDS)[number];

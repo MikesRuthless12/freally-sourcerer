@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = 书签导出失败：{ $error }
 backup-toast-bookmarks-imported = 已导入书签
 backup-toast-bookmarks-import-failed = 书签导入失败：{ $error }
 backup-confirm-reset = 将所有设置重置为默认值？此操作无法撤销（对话框将保持打开）。
+backup-confirm-import-commands = 此设置文件包含可在您的计算机上运行程序的自定义命令：{ $programs }。要导入吗？
 backup-toast-reset = 已重置所有设置
 
 # Keyboard panel.
@@ -785,9 +786,6 @@ opt-log-info-default = 信息（默认）
 opt-log-debug = 调试
 opt-log-trace = 跟踪
 
-# More Freally apps (Central inside panel) — host chrome
-menu-help-more-apps = 更多 Freally 应用…
-moreapps-title = 更多 Freally 应用
 
 # ---------------------------------------------------------------------
 # Build 1 — v0.21.0 (SRC-M01 … SRC-M08)

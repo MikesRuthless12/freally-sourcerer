@@ -70,6 +70,11 @@ pub struct SkippedPath {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PermissionLedger {
     entries: Vec<SkippedPath>,
+    /// The paths already in `entries`, for the dedupe test in
+    /// [`Self::record`]. Derived state, so it is rebuilt on
+    /// deserialization rather than persisted — see `seen()`.
+    #[serde(skip)]
+    seen: std::collections::HashSet<PathBuf>,
     /// Entries dropped after [`MAX_ENTRIES`], by reason. Counted rather
     /// than stored so the totals stay honest.
     dropped: u64,
@@ -89,8 +94,12 @@ impl PermissionLedger {
             return;
         }
         // A rescan re-walks the same tree, so the same directory would
-        // otherwise be recorded again on every pass.
-        if self.entries.iter().any(|e| e.path == path) {
+        // otherwise be recorded again on every pass. This runs from the
+        // scanner's error path, once per unreadable directory, so the
+        // linear scan it replaces was O(entries) per call all the way up
+        // to `MAX_ENTRIES`.
+        self.rebuild_seen_after_load();
+        if !self.seen.insert(path.to_path_buf()) {
             return;
         }
         self.entries.push(SkippedPath {
@@ -101,10 +110,30 @@ impl PermissionLedger {
         });
     }
 
+    /// Re-derive `seen` after a load from disk.
+    ///
+    /// `seen` is `#[serde(skip)]`, so deserialization is the *only*
+    /// thing that can leave it out of step: a ledger read back off disk
+    /// arrives with entries and an empty set. Every mutator in this file
+    /// keeps the two together, so an empty set beside a non-empty
+    /// `entries` is exactly that case and nothing else.
+    ///
+    /// Testing emptiness rather than comparing lengths on purpose: a
+    /// length check reads as a general staleness probe, and would
+    /// silently report "fresh" for a future count-preserving edit to
+    /// `entries` that it cannot actually detect.
+    fn rebuild_seen_after_load(&mut self) {
+        if !self.seen.is_empty() || self.entries.is_empty() {
+            return;
+        }
+        self.seen = self.entries.iter().map(|e| e.path.clone()).collect();
+    }
+
     /// Drop everything under `root` before rescanning it, so a fixed
     /// permission stops being reported.
     pub fn clear_under(&mut self, root: &Path) {
         self.entries.retain(|e| !e.path.starts_with(root));
+        self.seen.retain(|p| !p.starts_with(root));
         // `dropped` counted entries we never kept, so we cannot tell
         // which root they belonged to. Clearing it on any rescan is the
         // honest choice: the alternative is a number that only ever

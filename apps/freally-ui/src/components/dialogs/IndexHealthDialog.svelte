@@ -2,6 +2,7 @@
   // SRC-M13 — Tools → Index Health. Shows, per watched root, how far
   // behind live changes the index is, what it dropped, and what to do
   // about it.
+  import Modal from "../common/Modal.svelte";
   import { indexHealthStore } from "../../lib/stores/index_health.svelte";
   import { t } from "../../lib/i18n/t";
   import type { HealthAdvisory, VolumeHealth } from "../../lib/ipc/types";
@@ -42,127 +43,96 @@
   }
 </script>
 
-{#if open}
-  <div
-    class="backdrop"
-    role="presentation"
-    onclick={onClose}
-    onkeydown={(e) => e.key === "Escape" && onClose()}
-  >
-    <div
-      class="modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="index-health-title"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    >
-      <h2 id="index-health-title">{t("health-title")}</h2>
+<Modal
+  {open}
+  {onClose}
+  labelledBy="index-health-title"
+  style="width: 720px; max-width: 92vw; max-height: 82vh; overflow-y: auto; padding: 20px 24px 16px;"
+>
+  <h2 id="index-health-title">{t("health-title")}</h2>
 
-      {#if indexHealthStore.error}
-        <p class="error">{indexHealthStore.error}</p>
-      {:else if indexHealthStore.loading}
-        <p class="muted">{t("health-loading")}</p>
-      {:else if health}
-        {#if health.advisories.length > 0}
-          <ul class="advisories">
-            {#each health.advisories as a (a.id + (a.root ?? ""))}
-              <li class={a.severity}>
-                <span class="advice">{advisoryText(a)}</span>
-                {#if a.fix === "rebuild_index"}
-                  <button
-                    type="button"
-                    class="fix"
-                    disabled={indexHealthStore.fixing}
-                    onclick={() => void indexHealthStore.applyFix(a.fix)}
-                  >
-                    {t("health-fix-rebuild")}
-                  </button>
+  {#if indexHealthStore.error}
+    <p class="error">{indexHealthStore.error}</p>
+  {:else if indexHealthStore.loading}
+    <p class="muted">{t("health-loading")}</p>
+  {:else if health}
+    {#if health.advisories.length > 0}
+      <ul class="advisories">
+        {#each health.advisories as a (a.id + (a.root ?? ""))}
+          <li class={a.severity}>
+            <span class="advice">{advisoryText(a)}</span>
+            {#if a.fix === "rebuild_index"}
+              <button
+                type="button"
+                class="fix"
+                disabled={indexHealthStore.fixing}
+                onclick={() => void indexHealthStore.applyFix(a.fix)}
+              >
+                {t("health-fix-rebuild")}
+              </button>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="ok">{t("health-all-good")}</p>
+    {/if}
+
+    {#if health.volumes.length === 0}
+      <p class="muted">{t("health-no-watched-roots")}</p>
+    {:else}
+      <table>
+        <thead>
+          <tr>
+            <th>{t("health-col-volume")}</th>
+            <th>{t("health-col-status")}</th>
+            <th>{t("health-col-lag")}</th>
+            <th>{t("health-col-last-event")}</th>
+            <th>{t("health-col-applied")}</th>
+            <th>{t("health-col-dropped")}</th>
+            <th>{t("health-col-queue")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each health.volumes as v (v.root)}
+            <tr>
+              <td title={v.root}>{v.label}</td>
+              <td>
+                {#if v.monitoring}
+                  <span class="pill live">{t("health-status-live")}</span>
+                {:else}
+                  <span class="pill idle" title={v.unavailable_reason ?? ""}>
+                    {t("health-status-scan-only")}
+                  </span>
                 {/if}
-              </li>
-            {/each}
-          </ul>
-        {:else}
-          <p class="ok">{t("health-all-good")}</p>
-        {/if}
+              </td>
+              <td>{lag(v)}</td>
+              <td>{lastEvent(v)}</td>
+              <td>{v.events_applied} <span class="sub">({v.events_coalesced})</span></td>
+              <td class={v.events_dropped > 0 ? "bad" : ""}>{v.events_dropped}</td>
+              <td>{v.queue_depth}/{v.queue_capacity}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+      <p class="legend">{t("health-legend")}</p>
+    {/if}
 
-        {#if health.volumes.length === 0}
-          <p class="muted">{t("health-no-watched-roots")}</p>
-        {:else}
-          <table>
-            <thead>
-              <tr>
-                <th>{t("health-col-volume")}</th>
-                <th>{t("health-col-status")}</th>
-                <th>{t("health-col-lag")}</th>
-                <th>{t("health-col-last-event")}</th>
-                <th>{t("health-col-applied")}</th>
-                <th>{t("health-col-dropped")}</th>
-                <th>{t("health-col-queue")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each health.volumes as v (v.root)}
-                <tr>
-                  <td title={v.root}>{v.label}</td>
-                  <td>
-                    {#if v.monitoring}
-                      <span class="pill live">{t("health-status-live")}</span>
-                    {:else}
-                      <span class="pill idle" title={v.unavailable_reason ?? ""}>
-                        {t("health-status-scan-only")}
-                      </span>
-                    {/if}
-                  </td>
-                  <td>{lag(v)}</td>
-                  <td>{lastEvent(v)}</td>
-                  <td>{v.events_applied} <span class="sub">({v.events_coalesced})</span></td>
-                  <td class={v.events_dropped > 0 ? "bad" : ""}>{v.events_dropped}</td>
-                  <td>{v.queue_depth}/{v.queue_capacity}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-          <p class="legend">{t("health-legend")}</p>
-        {/if}
-
-        <p class="muted">
-          {#if health.extraction_backlog === undefined}
-            {t("health-extraction-untracked")}
-          {:else}
-            {t("health-extraction-backlog", { count: health.extraction_backlog })}
-          {/if}
-        </p>
+    <p class="muted">
+      {#if health.extraction_backlog === undefined}
+        {t("health-extraction-untracked")}
+      {:else}
+        {t("health-extraction-backlog", { count: health.extraction_backlog })}
       {/if}
+    </p>
+  {/if}
 
-      <footer>
-        <button type="button" onclick={onClose}>{t("close")}</button>
-      </footer>
-    </div>
-  </div>
-{/if}
+  <footer>
+    <button type="button" onclick={onClose}>{t("close")}</button>
+  </footer>
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .modal {
-    width: 720px;
-    max-width: 92vw;
-    max-height: 82vh;
-    overflow-y: auto;
-    padding: 20px 24px 16px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
-    color: var(--text-primary);
-  }
   h2 {
     margin: 0 0 16px;
     font-size: 16px;

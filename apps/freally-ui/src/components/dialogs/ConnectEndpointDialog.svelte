@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Modal from "../common/Modal.svelte";
   import { settingsStore } from "../../lib/stores/settings.svelte";
   import { t } from "../../lib/i18n/t";
 
@@ -45,79 +46,51 @@
   }
 </script>
 
-{#if open}
-  <div
-    class="backdrop"
-    role="presentation"
-    onclick={close}
-    onkeydown={(e) => e.key === "Escape" && close()}
+<Modal
+  {open}
+  onClose={close}
+  labelledBy="connect-endpoint-title"
+  style="width: 420px; padding: 20px 24px 16px;"
+>
+  <h2 id="connect-endpoint-title">{t("connect-ftp-title")}</h2>
+  <form
+    onsubmit={(e) => {
+      e.preventDefault();
+      void submit();
+    }}
   >
-    <div
-      class="modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="connect-endpoint-title"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    >
-      <h2 id="connect-endpoint-title">{t("connect-ftp-title")}</h2>
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          void submit();
-        }}
-      >
-        <label>
-          <span>{t("connect-ftp-host")}</span>
-          <input type="text" bind:value={host} autocomplete="off" />
-        </label>
-        <label>
-          <span>{t("connect-ftp-port")}</span>
-          <input type="number" min="1" max="65535" bind:value={port} />
-        </label>
-        <label>
-          <span>{t("connect-ftp-username")}</span>
-          <input type="text" bind:value={username} autocomplete="off" />
-        </label>
-        <label>
-          <span>{t("connect-ftp-password")}</span>
-          <input type="password" bind:value={password} autocomplete="off" />
-        </label>
-        <label>
-          <span>{t("connect-ftp-link-type")}</span>
-          <select bind:value={linkType}>
-            <option value="\\\\Server\\C">{"\\\\Server\\C"}</option>
-            <option value="C:\\">C:\</option>
-            <option value="/">/</option>
-          </select>
-        </label>
-        <footer>
-          <button type="submit" class="primary" disabled={!canSubmit}>{t("settings-ok")}</button>
-          <button type="button" onclick={close}>{t("settings-cancel")}</button>
-        </footer>
-      </form>
-    </div>
-  </div>
-{/if}
+    <label>
+      <span>{t("connect-ftp-host")}</span>
+      <input type="text" bind:value={host} autocomplete="off" />
+    </label>
+    <label>
+      <span>{t("connect-ftp-port")}</span>
+      <input type="number" min="1" max="65535" bind:value={port} />
+    </label>
+    <label>
+      <span>{t("connect-ftp-username")}</span>
+      <input type="text" bind:value={username} autocomplete="off" />
+    </label>
+    <label>
+      <span>{t("connect-ftp-password")}</span>
+      <input type="password" bind:value={password} autocomplete="off" />
+    </label>
+    <label>
+      <span>{t("connect-ftp-link-type")}</span>
+      <select bind:value={linkType}>
+        <option value="\\\\Server\\C">{"\\\\Server\\C"}</option>
+        <option value="C:\\">C:\</option>
+        <option value="/">/</option>
+      </select>
+    </label>
+    <footer>
+      <button type="submit" class="primary" disabled={!canSubmit}>{t("settings-ok")}</button>
+      <button type="button" onclick={close}>{t("settings-cancel")}</button>
+    </footer>
+  </form>
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .modal {
-    width: 420px;
-    padding: 20px 24px 16px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
-    color: var(--text-primary);
-  }
   h2 {
     margin: 0 0 16px;
     font-size: 16px;

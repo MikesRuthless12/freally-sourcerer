@@ -106,6 +106,36 @@ fn ipc_index_phase_round_trips_through_json() {
 /// user feels.
 const BUDGET_US: u128 = 4000;
 
+/// The same ceiling, widened for hardware we do not own.
+///
+/// This assertion has now failed twice for reasons that had nothing to do
+/// with the parser: macOS at 4097 us on a pull request that changed one
+/// HTML file, and Linux at 4595 us on one that changed no parser code
+/// either. Best-of-`ROUNDS` (below) absorbs a single stolen core; it
+/// cannot absorb a runner that is oversubscribed for the whole test, and
+/// a shared GitHub runner frequently is.
+///
+/// So on CI the number is still measured and still asserted — just
+/// against a ceiling chosen so that only a *real* regression trips it. A
+/// 2x factor is far outside the observed noise band (2.4% and 15%) and
+/// far inside anything a genuine algorithmic regression would produce:
+/// the failure this guards against is the parser going quadratic on
+/// query length, which overshoots by orders of magnitude, not by half.
+///
+/// The strict ceiling still applies on a developer machine, where
+/// `scripts/ci-local.mjs` runs these tests alone and the measurement
+/// means something.
+const CI_BUDGET_US: u128 = BUDGET_US * 2;
+
+/// `BUDGET_US`, or `CI_BUDGET_US` when running on a shared runner.
+fn budget_us() -> u128 {
+    if std::env::var_os("CI").is_some() {
+        CI_BUDGET_US
+    } else {
+        BUDGET_US
+    }
+}
+
 /// How many timed rounds to run. The fastest one wins.
 const ROUNDS: usize = 5;
 
@@ -147,9 +177,10 @@ fn magic_moment_parse_under_budget() {
     // 4ms = 4000us per-keystroke. The UI render budget for the
     // remaining work (DOM diff + paint + IPC dispatch on canned data)
     // is ~12ms on top, leaving the 16ms TASK-085 budget.
+    let budget = budget_us();
     assert!(
-        avg_us < BUDGET_US,
-        "parse_to_report took {avg_us} us/iter (best of {ROUNDS}) — exceeds magic-moment ceiling ({BUDGET_US} us)"
+        avg_us < budget,
+        "parse_to_report took {avg_us} us/iter (best of {ROUNDS}) — exceeds magic-moment ceiling ({budget} us)"
     );
     eprintln!("[magic-moment] parse_to_report best-of-{ROUNDS} avg: {avg_us} us/iter");
 }
@@ -164,9 +195,10 @@ fn magic_moment_realistic_query_under_budget() {
     let avg_us = fastest_avg_us(ROUNDS, 128, || {
         let _ = parse_to_report(q, ParseOpts::default());
     });
+    let budget = budget_us();
     assert!(
-        avg_us < BUDGET_US,
-        "parse_to_report on realistic query took {avg_us} us/iter (best of {ROUNDS}) — exceeds {BUDGET_US} us"
+        avg_us < budget,
+        "parse_to_report on realistic query took {avg_us} us/iter (best of {ROUNDS}) — exceeds {budget} us"
     );
     eprintln!("[magic-moment] realistic-query best-of-{ROUNDS} avg: {avg_us} us/iter");
 }

@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Yer imi dışa aktarımı başarısız: {
 backup-toast-bookmarks-imported = Yer imleri içe aktarıldı
 backup-toast-bookmarks-import-failed = Yer imi içe aktarımı başarısız: { $error }
 backup-confirm-reset = Tüm ayarlar varsayılanlara sıfırlansın mı? Bu geri alınamaz (iletişim kutusu açık kalır).
+backup-confirm-import-commands = Bu ayar dosyası, bilgisayarınızda program çalıştırabilen özel komutlar ekliyor: { $programs }. İçe aktarılsın mı?
 backup-toast-reset = Tüm ayarlar sıfırlandı
 
 # Keyboard panel.
@@ -785,9 +786,6 @@ opt-log-info-default = Bilgi (varsayılan)
 opt-log-debug = Hata Ayıklama
 opt-log-trace = İzleme
 
-# More Freally apps (Central inside panel) — host chrome
-menu-help-more-apps = Diğer Freally uygulamaları…
-moreapps-title = Diğer Freally uygulamaları
 
 # ---------------------------------------------------------------------
 # Build 1 — v0.21.0 (SRC-M01 … SRC-M08)

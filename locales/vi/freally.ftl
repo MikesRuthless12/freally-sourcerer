@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Xuất dấu trang thất bại: { $error
 backup-toast-bookmarks-imported = Đã nhập dấu trang
 backup-toast-bookmarks-import-failed = Nhập dấu trang thất bại: { $error }
 backup-confirm-reset = Đặt lại tất cả cài đặt về mặc định? Thao tác này không thể hoàn tác (hộp thoại vẫn mở).
+backup-confirm-import-commands = Tệp cài đặt này thêm các lệnh tùy chỉnh có thể chạy chương trình trên máy tính của bạn: { $programs }. Nhập chúng?
 backup-toast-reset = Đã đặt lại tất cả cài đặt
 
 # Keyboard panel.
@@ -785,9 +786,6 @@ opt-log-info-default = Info (mặc định)
 opt-log-debug = Debug
 opt-log-trace = Trace
 
-# More Freally apps (Central inside panel) — host chrome
-menu-help-more-apps = Ứng dụng Freally khác…
-moreapps-title = Ứng dụng Freally khác
 
 # ---------------------------------------------------------------------
 # Build 1 — v0.21.0 (SRC-M01 … SRC-M08)

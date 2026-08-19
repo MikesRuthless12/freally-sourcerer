@@ -26,14 +26,6 @@ fn app_exit(app: tauri::AppHandle) {
     app.exit(0);
 }
 
-/// TS-side debug bridge: forwards a message to the Rust tracing stream
-/// so console.log-style events show up in the cargo dev log (which is
-/// what external monitors tail).
-#[tauri::command]
-fn log_event(tag: String, message: String) {
-    tracing::info!(target: "freally::trace", tag = %tag, message = %message);
-}
-
 use commands::bookmarks::BookmarksStore;
 use commands::known_paths::KnownPaths;
 use commands::settings::SettingsStore;
@@ -53,7 +45,7 @@ fn init_tracing() {
             "warn,freally=info,freally_ui_lib=info,freally_indexd=info",
         )
     });
-    if let Some(file) = freally_rpc::portable::log_dir().and_then(open_log_file) {
+    if let Some(file) = freally_rpc::portable::open_log("freally-ui.log") {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_ansi(false)
@@ -62,15 +54,6 @@ fn init_tracing() {
         return;
     }
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
-}
-
-fn open_log_file(dir: std::path::PathBuf) -> Option<std::fs::File> {
-    std::fs::create_dir_all(&dir).ok()?;
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("freally-ui.log"))
-        .ok()
 }
 
 /// Single-instance enforcement: kill any other live `freally-ui` /

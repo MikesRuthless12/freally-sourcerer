@@ -7,14 +7,34 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# One run per ref. Pushing twice in a minute used to leave the first
+# push's three runners grinding to completion on code nobody will look
+# at; now the superseded run is cancelled as the new one starts.
+# `main` is exempt: those runs populate the shared build cache every
+# branch restores from, so cancelling one costs every later job.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Every CI run starts from a restored cache and compiles once, so
+  # incremental state is written, cached, and never read back. Off, it
+  # builds faster and the saved cache is substantially smaller — which
+  # is itself download time on every later job.
+  CARGO_INCREMENTAL: 0
+  # A flaky crates.io fetch should retry, not fail a three-OS matrix.
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
 
 jobs:
   ci:
     name: ci (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # The whole matrix finishes well inside this; it is here so a hung
+    # step fails in an hour instead of burning the six-hour default.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -24,10 +44,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # No submodules: the "More Freally apps" panel used to be one,
-          # pointing at a repository that no longer exists — which failed
-          # every leg at checkout before a build step could run. It is
-          # vendored as plain source at vendor/freally-central/ now.
+          # No submodules: this repository has none.
           submodules: false
 
       - name: Disable Defender real-time scan for workspace (Windows only)
@@ -67,6 +84,13 @@ jobs:
           workspaces: |
             .
             apps/freally-ui/src-tauri
+          # Only `main` writes the cache. Every branch reads it, so
+          # letting PRs save as well means they evict each other's
+          # entries — and the shared base — out of the 10 GB budget.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Install Linux build deps (ubuntu only)
         if: runner.os == 'Linux'
@@ -95,13 +119,53 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: clippy (workspace, -D warnings)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - name: cargo test
-        run: cargo test --workspace
+      # `apps/freally-ui/src-tauri` is `exclude`d from the workspace, so
+      # neither of the two steps above ever saw it — three clippy errors
+      # sat there failing silently for most of a release cycle. It needs
+      # its own invocation against its own manifest; the Linux system
+      # deps installed above are what let it configure on ubuntu.
+      - name: rustfmt + clippy (src-tauri, -D warnings)
+        working-directory: apps/freally-ui/src-tauri
+        run: |
+          cargo fmt -- --check
+          cargo clippy --all-targets --locked -- -D warnings
 
+      # nextest, not `cargo test`: one process per test instead of one
+      # thread, which this suite benefits from unusually much — most of
+      # the 760 tests build their own Tantivy index, and the
+      # process-per-test model keeps those off each other's locks.
+      # Measured warm on the dev machine: 100s to 37s.
+      # The timed-budget tests come out of the parallel run and go last,
+      # on their own. nextest's process-per-test model is the whole reason
+      # the suite is fast, and it is also a machine under sustained load —
+      # which is the one condition under which a wall-clock assertion
+      # measures the load instead of the code. `scripts/ci-local.mjs` does
+      # exactly this; the two have to agree or the local gate stops
+      # predicting this one.
+      - name: cargo nextest
+        shell: bash
+        run: cargo nextest run --workspace --locked -E 'not (test(magic_moment) or test(latency))'
+
+      - name: cargo nextest (timed budgets, run alone)
+        shell: bash
+        run: cargo nextest run --workspace --locked -E 'test(magic_moment) or test(latency)'
+
+      # nextest does not run doctests. There are none that execute
+      # today, and this is the guard that says so out loud rather than
+      # letting a future one be silently skipped. One OS is enough —
+      # doctests are not platform-specific.
+      - name: cargo test --doc
+        if: runner.os == 'Linux'
+        run: cargo test --workspace --doc --locked
+
+      # Validates the .ftl catalogues against each other. Nothing in it
+      # reads the platform, so running it three times only ever produced
+      # the same answer three times.
       - name: xtask i18n-lint
-        run: cargo run -p xtask -- i18n-lint
+        if: runner.os == 'Linux'
+        run: cargo run -p xtask --locked -- i18n-lint
 
       - name: Phase 13 — fsbench correctness + benchmark (1.5M files)
         # Generates a 1.5M-file synthetic tree, walks it once via the
@@ -188,7 +252,10 @@ jobs:
 
       - name: Install pnpm deps
         working-directory: apps/freally-ui
-        run: pnpm install --frozen-lockfile=false
+        # Frozen: the lockfile is committed, so CI resolving a different
+        # tree than the one that was reviewed is a failure, not a
+        # convenience. It is also the faster path — no resolution pass.
+        run: pnpm install --frozen-lockfile
 
       - name: pnpm svelte-check (type errors + a11y warnings)
         working-directory: apps/freally-ui

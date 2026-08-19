@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = 북마크 내보내기 실패: { $error }
 backup-toast-bookmarks-imported = 북마크를 가져왔습니다
 backup-toast-bookmarks-import-failed = 북마크 가져오기 실패: { $error }
 backup-confirm-reset = 모든 설정을 기본값으로 초기화할까요? 이 작업은 되돌릴 수 없습니다(대화 상자는 계속 열려 있습니다).
+backup-confirm-import-commands = 이 설정 파일에는 컴퓨터에서 프로그램을 실행할 수 있는 사용자 지정 명령이 포함되어 있습니다: { $programs }. 가져올까요?
 backup-toast-reset = 모든 설정이 초기화되었습니다
 
 # Keyboard panel.
@@ -785,9 +786,6 @@ opt-log-info-default = Info(기본값)
 opt-log-debug = Debug
 opt-log-trace = Trace
 
-# More Freally apps (Central inside panel) — host chrome
-menu-help-more-apps = 더 많은 Freally 앱…
-moreapps-title = 더 많은 Freally 앱
 
 # ---------------------------------------------------------------------
 # Build 1 — v0.21.0 (SRC-M01 … SRC-M08)

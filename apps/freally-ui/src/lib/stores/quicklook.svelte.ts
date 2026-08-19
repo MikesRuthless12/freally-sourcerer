@@ -28,11 +28,9 @@ class QuickLookStore {
 
   /** The row Quick Look is showing — the first selected one. */
   get current(): QueryHit | null {
-    // `.values().next()` rather than spreading: a Ctrl+A selection is
-    // tens of thousands of ids, and this runs per arrow key.
-    const id = selectionStore.ids.values().next().value;
+    const id = selectionStore.first;
     if (!id) return null;
-    return visibleHits().find((h) => h.file_id === id) ?? null;
+    return resultsStore.hitById(id);
   }
 
   /** Space with no selection would open an empty modal; don't. */
@@ -59,7 +57,7 @@ class QuickLookStore {
     if (hits.length === 0) return;
     // `.values().next()` rather than spreading: a Ctrl+A selection is
     // tens of thousands of ids, and this runs per arrow key.
-    const id = selectionStore.ids.values().next().value;
+    const id = selectionStore.first;
     const at = id ? hits.findIndex((h) => h.file_id === id) : -1;
     const next = Math.min(hits.length - 1, Math.max(0, at + delta));
     if (next === at) return;

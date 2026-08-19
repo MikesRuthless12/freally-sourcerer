@@ -4,6 +4,7 @@
   // The table is a view of the backend's plan, not an input to it: Apply
   // sends the same rule again and the backend re-derives every name. A
   // tampered preview therefore changes nothing.
+  import Modal from "../common/Modal.svelte";
   import { renameStore } from "../../lib/stores/rename.svelte";
   import { toastStore } from "../../lib/stores/toast.svelte";
   import { t } from "../../lib/i18n/t";
@@ -46,169 +47,137 @@
   }
 </script>
 
-{#if open}
-  <div
-    class="backdrop"
-    role="presentation"
-    onclick={close}
-    onkeydown={(e) => e.key === "Escape" && close()}
-  >
-    <div
-      class="modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="bulk-rename-title"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    >
-      <h2 id="bulk-rename-title">
-        {t("rename-title", { count: renameStore.paths.length })}
-      </h2>
+<Modal
+  {open}
+  onClose={close}
+  labelledBy="bulk-rename-title"
+  style="width: 720px; max-width: 92vw; max-height: 84vh; display: flex; flex-direction: column; padding: 20px 24px 16px;"
+>
+  <h2 id="bulk-rename-title">
+    {t("rename-title", { count: renameStore.paths.length })}
+  </h2>
 
-      <div class="rule">
-        <label>
-          <span>{t("rename-find")}</span>
-          <input
-            type="text"
-            value={renameStore.rule.find}
-            oninput={(e) => edit("find", e.currentTarget.value)}
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </label>
-        <label>
-          <span>{t("rename-replace")}</span>
-          <input
-            type="text"
-            value={renameStore.rule.replace}
-            oninput={(e) => edit("replace", e.currentTarget.value)}
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </label>
-        <div class="toggles">
-          <label class="inline">
-            <input
-              type="checkbox"
-              checked={renameStore.rule.use_regex}
-              onchange={(e) => edit("use_regex", e.currentTarget.checked)}
-            />
-            <span>{t("rename-use-regex")}</span>
-          </label>
-          <label class="inline">
-            <input
-              type="checkbox"
-              checked={renameStore.rule.ignore_case}
-              onchange={(e) => edit("ignore_case", e.currentTarget.checked)}
-            />
-            <span>{t("rename-ignore-case")}</span>
-          </label>
-          <label class="inline">
-            <span>{t("rename-part")}</span>
-            <select
-              value={renameStore.rule.part}
-              onchange={(e) => edit("part", e.currentTarget.value as "stem" | "full")}
-            >
-              <option value="stem">{t("rename-part-stem")}</option>
-              <option value="full">{t("rename-part-full")}</option>
-            </select>
-          </label>
-          <label class="inline">
-            <span>{t("rename-case")}</span>
-            <select
-              value={renameStore.rule.case}
-              onchange={(e) => edit("case", e.currentTarget.value as "none")}
-            >
-              <option value="none">{t("rename-case-none")}</option>
-              <option value="lower">{t("rename-case-lower")}</option>
-              <option value="upper">{t("rename-case-upper")}</option>
-              <option value="title">{t("rename-case-title")}</option>
-            </select>
-          </label>
-          <label class="inline">
-            <span>{t("rename-counter-start")}</span>
-            <input
-              type="number"
-              min="0"
-              value={renameStore.rule.counter_start}
-              oninput={(e) => edit("counter_start", Number(e.currentTarget.value) || 0)}
-            />
-          </label>
-        </div>
-        <p class="hint">{t("rename-hint")}</p>
-      </div>
-
-      {#if renameStore.error}
-        <p class="error">{renameStore.error}</p>
-      {/if}
-
-      {#if preview}
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{t("rename-col-before")}</th>
-                <th>{t("rename-col-after")}</th>
-                <th>{t("rename-col-status")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each preview.items as item (item.from)}
-                <tr class={item.status}>
-                  <td title={item.from}>{item.from_name}</td>
-                  <td>{item.to_name}</td>
-                  <td>{statusText(item)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <p class="summary" class:blocked={preview.blocked}>
-          {#if preview.blocked}
-            {t("rename-blocked")}
-          {:else}
-            {t("rename-summary", { count: preview.will_apply })}
-          {/if}
-        </p>
-      {/if}
-
-      <footer>
-        <button
-          type="button"
-          class="primary"
-          disabled={!renameStore.canApply}
-          onclick={() => void apply()}
+  <div class="rule">
+    <label>
+      <span>{t("rename-find")}</span>
+      <input
+        type="text"
+        value={renameStore.rule.find}
+        oninput={(e) => edit("find", e.currentTarget.value)}
+        autocomplete="off"
+        spellcheck="false"
+      />
+    </label>
+    <label>
+      <span>{t("rename-replace")}</span>
+      <input
+        type="text"
+        value={renameStore.rule.replace}
+        oninput={(e) => edit("replace", e.currentTarget.value)}
+        autocomplete="off"
+        spellcheck="false"
+      />
+    </label>
+    <div class="toggles">
+      <label class="inline">
+        <input
+          type="checkbox"
+          checked={renameStore.rule.use_regex}
+          onchange={(e) => edit("use_regex", e.currentTarget.checked)}
+        />
+        <span>{t("rename-use-regex")}</span>
+      </label>
+      <label class="inline">
+        <input
+          type="checkbox"
+          checked={renameStore.rule.ignore_case}
+          onchange={(e) => edit("ignore_case", e.currentTarget.checked)}
+        />
+        <span>{t("rename-ignore-case")}</span>
+      </label>
+      <label class="inline">
+        <span>{t("rename-part")}</span>
+        <select
+          value={renameStore.rule.part}
+          onchange={(e) => edit("part", e.currentTarget.value as "stem" | "full")}
         >
-          {t("rename-apply")}
-        </button>
-        <button type="button" onclick={close}>{t("settings-cancel")}</button>
-      </footer>
+          <option value="stem">{t("rename-part-stem")}</option>
+          <option value="full">{t("rename-part-full")}</option>
+        </select>
+      </label>
+      <label class="inline">
+        <span>{t("rename-case")}</span>
+        <select
+          value={renameStore.rule.case}
+          onchange={(e) => edit("case", e.currentTarget.value as "none")}
+        >
+          <option value="none">{t("rename-case-none")}</option>
+          <option value="lower">{t("rename-case-lower")}</option>
+          <option value="upper">{t("rename-case-upper")}</option>
+          <option value="title">{t("rename-case-title")}</option>
+        </select>
+      </label>
+      <label class="inline">
+        <span>{t("rename-counter-start")}</span>
+        <input
+          type="number"
+          min="0"
+          value={renameStore.rule.counter_start}
+          oninput={(e) => edit("counter_start", Number(e.currentTarget.value) || 0)}
+        />
+      </label>
     </div>
+    <p class="hint">{t("rename-hint")}</p>
   </div>
-{/if}
+
+  {#if renameStore.error}
+    <p class="error">{renameStore.error}</p>
+  {/if}
+
+  {#if preview}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>{t("rename-col-before")}</th>
+            <th>{t("rename-col-after")}</th>
+            <th>{t("rename-col-status")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each preview.items as item (item.from)}
+            <tr class={item.status}>
+              <td title={item.from}>{item.from_name}</td>
+              <td>{item.to_name}</td>
+              <td>{statusText(item)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+    <p class="summary" class:blocked={preview.blocked}>
+      {#if preview.blocked}
+        {t("rename-blocked")}
+      {:else}
+        {t("rename-summary", { count: preview.will_apply })}
+      {/if}
+    </p>
+  {/if}
+
+  <footer>
+    <button
+      type="button"
+      class="primary"
+      disabled={!renameStore.canApply}
+      onclick={() => void apply()}
+    >
+      {t("rename-apply")}
+    </button>
+    <button type="button" onclick={close}>{t("settings-cancel")}</button>
+  </footer>
+</Modal>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    display: grid;
-    place-items: center;
-    z-index: 100;
-  }
-  .modal {
-    width: 720px;
-    max-width: 92vw;
-    max-height: 84vh;
-    display: flex;
-    flex-direction: column;
-    padding: 20px 24px 16px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
-    color: var(--text-primary);
-  }
   h2 {
     margin: 0 0 16px;
     font-size: 16px;

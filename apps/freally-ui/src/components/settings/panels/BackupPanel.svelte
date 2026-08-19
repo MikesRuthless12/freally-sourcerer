@@ -29,6 +29,30 @@
     try {
       const raw = await readTextFile(path);
       const parsed = JSON.parse(raw);
+      // A settings file can define custom commands, and a custom command
+      // is a program to run — `run_custom_command` spawns its `program`
+      // with its `args`. Importing one silently would turn "here is my
+      // Freally setup" into a launcher the user never wrote, sitting in
+      // every result's context menu under a name its author chose. So the
+      // programs get named and the user gets asked; declining imports
+      // everything else. That is the whole difference between installed
+      // and consented.
+      // `parsed` is `any` out of `JSON.parse`, so the element type has to
+      // be stated or the callback below is an implicit `any`. `unknown`
+      // rather than `string`: this is an untrusted file, and the only
+      // thing done with the value is naming it back to the user.
+      const incoming: Array<{ program?: unknown }> = Array.isArray(parsed?.custom_commands)
+        ? parsed.custom_commands
+        : [];
+      if (incoming.length > 0) {
+        const named = incoming
+          .map((c) => c?.program)
+          .filter((p): p is string => typeof p === "string" && p !== "");
+        const programs = [...new Set(named)].join(", ");
+        if (!confirm(t("backup-confirm-import-commands", { programs }))) {
+          delete parsed.custom_commands;
+        }
+      }
       await settingsStore.patch(parsed);
       await settingsStore.flush();
       toast = t("backup-toast-imported");

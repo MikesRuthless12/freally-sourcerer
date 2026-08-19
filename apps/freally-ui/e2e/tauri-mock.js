@@ -99,7 +99,7 @@
     // SRC-M17 / About panel. Portable off so the gallery shows the
     // normal install; the portable rows are a separate concern.
     app_environment: () => ({
-      version: "0.23.0",
+      version: "0.23.1",
       portable: false,
       data_dir: null,
     }),

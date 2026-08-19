@@ -52,6 +52,20 @@ test("about dialog opens (Ctrl+F1)", async ({ page }) => {
   await page.screenshot({ path: SHOT("04-about-dialog"), fullPage: true });
 });
 
+test("Escape closes a dialog", async ({ page }) => {
+  // Regression: through Build 3 it did not. Every dialog bound its own
+  // Escape handler to the backdrop — a `role="presentation"` div with no
+  // tabindex, which cannot receive a keydown — and the panel on top of it
+  // stopped propagation anyway. Each spec above opens a dialog and
+  // asserts it is visible, so all of them passed while the keyboard route
+  // out was dead. The shared <Modal> binds Escape on `window`.
+  await bootMain(page);
+  await page.keyboard.press("Control+F1");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+});
+
 test("organize bookmarks dialog opens (Ctrl+Shift+B)", async ({ page }) => {
   await bootMain(page);
   await page.keyboard.press("Control+Shift+B");

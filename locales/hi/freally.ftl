@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = बुकमार्क निर्य�
 backup-toast-bookmarks-imported = बुकमार्क आयात किए गए
 backup-toast-bookmarks-import-failed = बुकमार्क आयात विफल: { $error }
 backup-confirm-reset = सभी सेटिंग को डिफ़ॉल्ट पर रीसेट करें? इसे पूर्ववत नहीं किया जा सकता (डायलॉग खुला रहता है)।
+backup-confirm-import-commands = यह सेटिंग फ़ाइल कस्टम कमांड जोड़ती है जो आपके कंप्यूटर पर प्रोग्राम चला सकते हैं: { $programs }. इन्हें आयात करें?
 backup-toast-reset = सभी सेटिंग रीसेट कर दी गईं
 
 # Keyboard panel.
@@ -785,9 +786,6 @@ opt-log-info-default = जानकारी (डिफ़ॉल्ट)
 opt-log-debug = डिबग
 opt-log-trace = ट्रेस
 
-# More Freally apps (Central inside panel) — host chrome
-menu-help-more-apps = और Freally ऐप्स…
-moreapps-title = और Freally ऐप्स
 
 # ---------------------------------------------------------------------
 # Build 1 — v0.21.0 (SRC-M01 … SRC-M08)

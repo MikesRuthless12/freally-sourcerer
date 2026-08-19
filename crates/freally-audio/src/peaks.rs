@@ -26,6 +26,16 @@ pub struct PeakCollector {
     /// Zero when the duration is unknown — see [`Self::push`].
     frames_per_bucket: u64,
     frames_seen: u64,
+    /// Index of the bucket `push` is currently filling, and the frame
+    /// count at which it rolls over to the next one.
+    ///
+    /// Carried rather than recomputed: the obvious
+    /// `frames_seen / frames_per_bucket` costs a 64-bit division on
+    /// every decoded frame, which is roughly 8 M of them for a
+    /// three-minute stereo track — on the same decode pass the
+    /// loudness and silence accumulators are already sharing.
+    bucket: usize,
+    next_bucket_at: u64,
     channels: usize,
 }
 
@@ -37,9 +47,12 @@ impl PeakCollector {
     pub fn new(buckets: usize, total_frames: u64, channels: u16) -> Self {
         let buckets = buckets.clamp(1, MAX_BUCKETS);
         let channels = channels.max(1) as usize;
+        let frames_per_bucket = (total_frames / buckets as u64).max(1);
         Self {
             buckets: vec![0.0; buckets],
-            frames_per_bucket: (total_frames / buckets as u64).max(1),
+            frames_per_bucket,
+            bucket: 0,
+            next_bucket_at: frames_per_bucket,
             frames_seen: 0,
             channels,
         }
@@ -58,10 +71,14 @@ impl PeakCollector {
                     peak = a;
                 }
             }
-            let idx = (self.frames_seen / self.frames_per_bucket) as usize;
-            let idx = idx.min(self.buckets.len() - 1);
-            if peak > self.buckets[idx] {
-                self.buckets[idx] = peak;
+            // Overflow past the last bucket folds into it, which is
+            // why the roll-over saturates instead of growing.
+            if self.frames_seen >= self.next_bucket_at && self.bucket + 1 < self.buckets.len() {
+                self.bucket += 1;
+                self.next_bucket_at += self.frames_per_bucket;
+            }
+            if peak > self.buckets[self.bucket] {
+                self.buckets[self.bucket] = peak;
             }
             self.frames_seen += 1;
         }
@@ -136,6 +153,37 @@ mod tests {
             v.len() < 4,
             "expected trailing empty buckets trimmed: {v:?}"
         );
+    }
+
+    #[test]
+    fn the_incremental_roll_over_lands_frames_where_the_division_did() {
+        // `push` carries the current bucket forward rather than
+        // recomputing `frames_seen / frames_per_bucket` per frame. The
+        // two have to agree for every frame, including the overrun that
+        // folds into the last bucket.
+        for (buckets, total) in [(4u64, 12u64), (3, 10), (8, 5), (1, 100), (5, 0)] {
+            let n = buckets as usize;
+            let frames_per_bucket = (total / buckets).max(1);
+            // Distinct, ascending amplitudes, so a frame landing in the
+            // wrong bucket changes that bucket maximum.
+            let frames: Vec<f32> = (0..20).map(|i| (i + 1) as f32 / 40.0).collect();
+
+            let mut c = PeakCollector::new(n, total, 1);
+            c.push(&frames);
+            let got = c.finish();
+
+            let mut want = vec![0.0f32; n];
+            for (i, s) in frames.iter().enumerate() {
+                let idx = ((i as u64 / frames_per_bucket) as usize).min(n - 1);
+                if *s > want[idx] {
+                    want[idx] = *s;
+                }
+            }
+            while want.len() > 1 && want.last() == Some(&0.0) {
+                want.pop();
+            }
+            assert_eq!(got, want, "buckets={n} total={total}");
+        }
     }
 
     #[test]

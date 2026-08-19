@@ -69,11 +69,12 @@ pub async fn media_waveform(
     // Decoding is CPU-bound and can run for seconds on a long file;
     // holding the async runtime's worker for that would stall every
     // other command.
-    let (attrs, peaks) =
-        tokio::task::spawn_blocking(move || freally_audio::analyze_with_peaks(&p, WAVEFORM_BUCKETS))
-            .await
-            .map_err(|e| format!("waveform task failed: {e}"))?
-            .map_err(|e| e.to_string())?;
+    let (attrs, peaks) = tokio::task::spawn_blocking(move || {
+        freally_audio::analyze_with_peaks(&p, WAVEFORM_BUCKETS)
+    })
+    .await
+    .map_err(|e| format!("waveform task failed: {e}"))?
+    .map_err(|e| e.to_string())?;
 
     Ok(Waveform {
         peaks,
@@ -81,7 +82,10 @@ pub async fn media_waveform(
         codec: attrs.codec.to_string(),
         sample_rate: attrs.sample_rate,
         channels: attrs.channels,
-        lufs_integrated: attrs.lufs_integrated.is_finite().then_some(attrs.lufs_integrated),
+        lufs_integrated: attrs
+            .lufs_integrated
+            .is_finite()
+            .then_some(attrs.lufs_integrated),
     })
 }
 
@@ -130,13 +134,16 @@ mod tests {
         // Guards against someone "simplifying" this to a token value:
         // the whole file lands in webview memory, so the number has to
         // stay in a range a renderer can actually hold.
-        assert!(MAX_INLINE_BYTES >= 64 * 1024 * 1024);
-        assert!(MAX_INLINE_BYTES <= 512 * 1024 * 1024);
+        //
+        // `const` blocks, so a bad value fails the build rather than
+        // waiting for someone to run the tests.
+        const { assert!(MAX_INLINE_BYTES >= 64 * 1024 * 1024) };
+        const { assert!(MAX_INLINE_BYTES <= 512 * 1024 * 1024) };
     }
 
     #[test]
     fn waveform_resolution_fits_a_hidpi_canvas() {
-        assert!(WAVEFORM_BUCKETS >= 400);
-        assert!(WAVEFORM_BUCKETS <= freally_audio::peaks::MAX_BUCKETS);
+        const { assert!(WAVEFORM_BUCKETS >= 400) };
+        const { assert!(WAVEFORM_BUCKETS <= freally_audio::peaks::MAX_BUCKETS) };
     }
 }
