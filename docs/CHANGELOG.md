@@ -6,7 +6,7 @@ All notable changes documented here. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-> Everything below predates the Build 1–3 releases and was never promoted into a version section. It is left here untouched rather than back-filed into `0.21.0`–`0.23.0` on a guess; sorting it is its own pass, noted in `HANDOFF.md`.
+> Everything below predates the Build 1–3 releases and was never promoted into a version section. It is left here untouched rather than back-filed into `0.21.0`–`0.23.0` on a guess; sorting it is its own pass.
 
 ### TASK-098 — full Fluent i18n end-to-end across all 18 locales (2026-05-11)
 
@@ -542,7 +542,7 @@ makes the desktop app pleasant to run repeatedly during development.
 
 ### Build 4 groundwork — closing out the Build 3 handoff
 
-Everything `HANDOFF.md` left open after v0.23.0, plus three bugs found
+Everything the previous handoff left open after v0.23.0, plus three bugs found
 while doing it. No new features; this is the cleanup pass that Build 4's
 property-lens work sits on top of.
 

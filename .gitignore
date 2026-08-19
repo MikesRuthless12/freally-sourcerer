@@ -85,6 +85,15 @@ docs/SECURITY.md
 LinuxOS-test.md
 macOS-test.md
 
+# IP scrub (2026-08-19) — same treatment, same reason. These three had
+# been tracked since Build 1 and were public in every release tag through
+# v0.23.1: the feature spec with all 106 items and their status, the
+# handoff notes (which describe open bugs and unmitigated boundaries in
+# shipped code), and the live to-do list. All refs and tags were rewritten.
+/Freally-Sourcerer-Feature-Roadmap.md
+/HANDOFF.md
+/Live-To-Do-List.md
+
 # Internal prompt docs — never track (Mike, 2026-06-20)
 *[Pp][Rr][Oo][Mm][Pp][Tt]*.md
 
