@@ -538,6 +538,61 @@ makes the desktop app pleasant to run repeatedly during development.
 
 ---
 
+## [0.23.2] — Updater key rotation and CI repair (2026-08-19)
+
+Same application as `0.23.1`, which was tagged but whose release was
+replaced rather than published. Everything in the `0.23.1` section below
+ships here; what follows is what changed on top of it.
+
+### Security
+
+- **New updater signing key.** Releases through `0.23.1` were signed with
+  `9F291C936CFA28B7`, whose private half existed only as a GitHub
+  repository secret. Repository secrets cannot be read back, so that key
+  could not be copied, moved, or recovered — and it is now gone. Releases
+  from `0.23.2` on are signed with `E5035E2194EB7E04`, whose private half,
+  password and public half are stored together outside GitHub.
+
+  **This breaks the updater for any install of `0.23.1` or earlier**: the
+  old binaries verify against a public key that no longer signs anything,
+  so an update will fail signature verification rather than install.
+  Reinstall from the downloads below. No install is known to be affected —
+  download counts on every prior release matched routine link-checking.
+
+### Fixed
+
+- **`apt-get update` could hang a Linux build indefinitely.** The Ubuntu
+  mirror the runner images prefer, `azure.archive.ubuntu.com`, returned
+  nothing for the whole jammy index set for several hours, and with no
+  timeout configured the step waited rather than failed — up to an hour
+  against a 72-second baseline, four times, each needing a manual cancel.
+  Builds now use `archive.ubuntu.com`, cap the step at ten minutes, and
+  retry. The same step subsequently ran in 41 seconds.
+- **`workflow_dispatch` on the release workflow built the wrong tree.** It
+  takes a tag as input and is the documented way to rebuild a release, but
+  its checkout step had no `ref`, so it checked out whatever branch it was
+  dispatched from while naming the artifacts after the input tag.
+- **The wall-clock budget tests ran under full parallel load in CI.**
+  `scripts/ci-local.mjs` had been changed to run them alone — because
+  nextest's process-per-test model puts the machine under sustained load
+  and the assertion then measures the load — but CI kept running them with
+  everything else, so the local gate had stopped predicting CI for exactly
+  the tests hardest to reproduce. CI now splits its nextest step the same
+  way, and the ceiling is widened on shared runners, where the measurement
+  means less.
+- **Two per-OS clippy errors** in `shell_actions/macos.rs` and
+  `shell_actions/linux.rs`, which no Windows build compiles and which the
+  `src-tauri` lint gate reached for the first time this pass.
+
+### Documentation
+
+- `README.md` advertised `v0.19.84` as the upcoming first release, four
+  releases after the fact, and linked five documents that are not part of
+  this repository.
+- Download sizes on the site were `0.23.0`'s, carried over with the links.
+
+---
+
 ## [0.23.1] — Build 4 groundwork · the Build 3 handoff, closed out (2026-08-19)
 
 ### Build 4 groundwork — closing out the Build 3 handoff
