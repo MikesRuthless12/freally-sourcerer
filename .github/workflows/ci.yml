@@ -94,8 +94,30 @@ jobs:
 
       - name: Install Linux build deps (ubuntu only)
         if: runner.os == 'Linux'
+        # `apt-get update` stalled mid-fetch three times in one day on this
+        # runner class — once in `ci.yml` and twice on the v0.23.1 release —
+        # each time after pulling the Google/Microsoft/jammy-updates indexes
+        # and never returning for the main jammy archive. A stalled fetch has
+        # no timeout by default, so the step sat for 30-46 minutes against a
+        # 72-second baseline and had to be cancelled by hand. Both of those
+        # were release-blocking.
+        #
+        # `Timeout` turns a dead mirror into an error instead of a hang;
+        # `Retries` plus the loop rides out a mirror that is merely flaky.
+        # `timeout-minutes` is the backstop: if it hangs anyway, the job
+        # fails in ten minutes rather than burning the six-hour default.
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
+          sudo tee /etc/apt/apt.conf.d/99-freally-timeouts >/dev/null <<'CONF'
+          Acquire::Retries "5";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          CONF
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then break; fi
+            echo "::warning::apt-get update failed (attempt $attempt/3) — retrying"
+            sleep 10
+          done
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
