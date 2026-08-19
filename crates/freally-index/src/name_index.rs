@@ -34,6 +34,7 @@ use std::sync::Arc;
 
 use memmap2::Mmap;
 use parking_lot::RwLock;
+use unicode_normalization::UnicodeNormalization;
 
 use crate::error::IndexError;
 
@@ -306,30 +307,33 @@ impl NameIndex {
         if self.inner.read().seed_trigrams.is_some() {
             return;
         }
-        let map = {
+        let (mut map, scanned_to) = {
             let inner = self.inner.read();
+            let scanned_to = inner.rows.len() as u32;
             let mut map: HashMap<[u8; 3], Vec<u32>> = HashMap::new();
-            for row_id in 0..inner.rows.len() as u32 {
-                if inner.file_ids.get(row_id as usize).copied() == Some(u64::MAX) {
-                    continue;
-                }
-                let Some(name) = name_bytes(&inner, row_id) else {
-                    continue;
-                };
-                let Ok(text) = std::str::from_utf8(name) else {
-                    continue;
-                };
-                push_trigrams(&mut map, seed_key(text).as_bytes(), row_id);
+            for row_id in 0..scanned_to {
+                seed_row(&inner, row_id, &mut map);
             }
-            map
+            (map, scanned_to)
         };
         let mut inner = self.inner.write();
         // Another caller may have installed one while the read lock was
-        // released. Theirs is as good as ours, and rows written in the gap
-        // are in theirs and not ours — so keep it and drop this.
-        if inner.seed_trigrams.is_none() {
-            inner.seed_trigrams = Some(map);
+        // down. Theirs is as complete as ours, and it is already being
+        // maintained by `upsert` — keep it and drop this.
+        if inner.seed_trigrams.is_some() {
+            return;
         }
+        // Rows appended while the lock was down are the reason this is not
+        // a plain install. `upsert` maintains the map only once it exists,
+        // so a row written in the gap saw `None`, skipped the seed
+        // postings, and is not in the snapshot either. Missing postings do
+        // not fail — they make that file silently unfindable under an
+        // ignore mode, forever, until something upserts it again. So catch
+        // up on the tail before publishing.
+        for row_id in scanned_to..inner.rows.len() as u32 {
+            seed_row(&inner, row_id, &mut map);
+        }
+        inner.seed_trigrams = Some(map);
     }
 
     /// SRC-M11: yield `(file_id, name_lower_bytes)` for rows that share
@@ -541,15 +545,61 @@ pub fn is_punctuation(c: char) -> bool {
 /// Borrows straight back when there is nothing to drop, which is the
 /// common case for a needle and for most filenames.
 pub fn seed_key(s: &str) -> std::borrow::Cow<'_, str> {
-    if s.chars().any(|c| is_punctuation(c) || c.is_whitespace()) {
-        std::borrow::Cow::Owned(
-            s.chars()
-                .filter(|c| !is_punctuation(*c) && !c.is_whitespace())
-                .collect(),
-        )
-    } else {
-        std::borrow::Cow::Borrowed(s)
+    // Diacritics fold here too, and they have to. The seed is only a
+    // valid pre-filter if it drops *at least* everything the match-time
+    // ladder drops, and the default `match_diacritics: false` folds them
+    // on both sides. Without this, Ignore Punctuation plus the default
+    // diacritic handling would seed `cafe` against a stored key of
+    // `cafénotestxt`, whose trigrams do not contain `afe` — an empty
+    // intersection and a silent zero-hit on a file that plainly matches.
+    //
+    // Folding more than a given mode asks for is always safe: NFKD maps
+    // each character independently, so the image of a contiguous
+    // substring stays contiguous, and the candidate set stays a
+    // superset. The exact test then runs per row as before.
+    // ASCII is already its own NFKD, so a pure-ASCII string with nothing
+    // to drop is handed straight back.
+    let drops = s.chars().any(|c| is_punctuation(c) || c.is_whitespace());
+    if s.is_ascii() && !drops {
+        return std::borrow::Cow::Borrowed(s);
     }
+    std::borrow::Cow::Owned(
+        strip_diacritics(s)
+            .chars()
+            .filter(|c| !is_punctuation(*c) && !c.is_whitespace())
+            .collect(),
+    )
+}
+
+/// NFKD-decompose, drop combining marks, recompose.
+///
+/// Lives here rather than in `freally-query` because the stripped seed
+/// key is built from it and the match-time ladder consumes it: two
+/// implementations that disagreed would make the seed drop *less* than
+/// a mode does, which turns the superset filter into a silent miss.
+pub fn strip_diacritics(s: &str) -> String {
+    s.nfkd().filter(|c| !is_combining_mark(*c)).collect()
+}
+
+fn is_combining_mark(c: char) -> bool {
+    matches!(c as u32,
+        0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF |
+        0x20D0..=0x20FF | 0xFE20..=0xFE2F)
+}
+
+/// Add one row's stripped-key trigrams to `map`, skipping tombstones and
+/// anything that is not valid UTF-8.
+fn seed_row(inner: &Inner, row_id: u32, map: &mut HashMap<[u8; 3], Vec<u32>>) {
+    if inner.file_ids.get(row_id as usize).copied() == Some(u64::MAX) {
+        return;
+    }
+    let Some(name) = name_bytes(inner, row_id) else {
+        return;
+    };
+    let Ok(text) = std::str::from_utf8(name) else {
+        return;
+    };
+    push_trigrams(map, seed_key(text).as_bytes(), row_id);
 }
 
 /// Push every 3-byte window of `bytes` into `map` under `row_id`.

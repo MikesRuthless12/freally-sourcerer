@@ -200,30 +200,6 @@ fn whole_word_strict() {
 }
 
 #[test]
-fn match_case_lowercase_needle_hits() {
-    // Phase-5 limitation note: the name index stores names lower-
-    // cased, so a `match_case`-strict query compares the user's needle
-    // against an already-lowered candidate. A lowercase needle still
-    // hits both files; an uppercase needle would currently miss every
-    // row. Phase 13 widens the name index with a parallel raw-case
-    // buffer; this test guards against the lower path regressing.
-    let idx = idx_with_files(vec![
-        create("/synth/Alpha.md", 1, 0),
-        create("/synth/alpha.md", 1, 0),
-    ]);
-    let opts = ExecOpts {
-        match_mode: MatchMode {
-            match_case: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let q = parse("alpha").unwrap();
-    let rs = execute(&idx, &q, opts).unwrap();
-    assert_eq!(rs.rows().len(), 2);
-}
-
-#[test]
 fn match_diacritics_default_strips() {
     // Default `match_diacritics: false` strips combining marks at
     // match-time. Phase-5 limitation: the trigram pre-filter is byte-
@@ -698,4 +674,169 @@ fn name_modifiers_answer_the_same_with_a_hydrating_modifier_alongside() {
             "`{bare}` and `{paired}` disagree"
         );
     }
+}
+
+// ---------- SRC-M23: Match Case ---------------------------------------
+
+#[test]
+fn match_case_is_off_by_default_and_matches_either_casing() {
+    let idx = idx_with_files(vec![
+        create("/synth/Report.txt", 1, 0),
+        create("/synth/report.txt", 1, 0),
+    ]);
+    for q in ["Report", "report"] {
+        let names = names_for(&idx, q, MatchMode::default());
+        assert_eq!(names, vec!["Report.txt", "report.txt"], "query `{q}`");
+    }
+}
+
+#[test]
+fn match_case_on_matches_only_the_casing_typed() {
+    // This shipped answering wrongly in *both* directions, and knowingly:
+    // the retired `match_case_lowercase_needle_hits` asserted the broken
+    // behaviour and deferred the fix to "Phase 13 widens the name index
+    // with a parallel raw-case buffer".
+    //
+    // No index change was needed in the end. The name index stores
+    // lowercased keys, so the pre-filter genuinely cannot answer a cased
+    // question — but it does not have to. Match Case now skips that
+    // pre-filter, exactly as Match Path already did, and the predicate runs
+    // against `FileRow.name`, the one copy that kept its case. The trigram
+    // seed still applies: it is built from the lowercased needle, so it
+    // selects a superset of the cased answer.
+    let idx = idx_with_files(vec![
+        create("/synth/Report.txt", 1, 0),
+        create("/synth/report.txt", 1, 0),
+    ]);
+    let cased = MatchMode {
+        match_case: true,
+        ..Default::default()
+    };
+    assert_eq!(names_for(&idx, "Report", cased), vec!["Report.txt"]);
+    assert_eq!(names_for(&idx, "report", cased), vec!["report.txt"]);
+}
+
+#[test]
+fn match_case_reaches_the_name_modifiers_too() {
+    // `name:Report` has to answer the way the bare term `Report` does —
+    // the same inconsistency the anchored modifiers had against `size:`.
+    let idx = idx_with_files(vec![
+        create("/synth/Report-final.txt", 1, 0),
+        create("/synth/report-final.txt", 1, 0),
+    ]);
+    let cased = MatchMode {
+        match_case: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        names_for(&idx, "name:Report", cased),
+        vec!["Report-final.txt"]
+    );
+    assert_eq!(
+        names_for(&idx, "name^:Report", cased),
+        vec!["Report-final.txt"]
+    );
+    assert_eq!(
+        names_for(&idx, "name$:Report-final.txt", cased),
+        vec!["Report-final.txt"]
+    );
+    // And the bare term agrees with all three.
+    assert_eq!(names_for(&idx, "Report", cased), vec!["Report-final.txt"]);
+}
+
+#[test]
+fn match_case_survives_a_hydrating_modifier() {
+    // Match Case forces hydration on its own; pairing it with `size:` must
+    // not change the answer.
+    let idx = idx_with_files(vec![
+        create("/synth/Report.txt", 4096, 0),
+        create("/synth/report.txt", 4096, 0),
+    ]);
+    let cased = MatchMode {
+        match_case: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        names_for(&idx, "Report", cased),
+        names_for(&idx, "Report size:>1kb", cased)
+    );
+}
+
+// ---------- the stripped seed must not narrow the answer --------------
+
+#[test]
+fn the_stripped_seed_still_folds_diacritics() {
+    // The seed is only a valid pre-filter if it drops at least everything
+    // the match-time ladder drops. `seed_key` folded punctuation and
+    // whitespace but not diacritics, while the default `match_diacritics:
+    // false` folds them on both sides — so `cafe` seeded trigrams `caf`
+    // and `afe` against a stored key of `cafénotestxt`, which has no
+    // `afe`. Empty intersection, zero hits, on a file that plainly
+    // matches. Before the seed existed this query full-scanned and found
+    // it, so the optimization had quietly narrowed the answer.
+    let idx = idx_with_files(vec![
+        create("/synth/Café-Notes.txt", 1, 0),
+        create("/synth/unrelated.txt", 1, 0),
+    ]);
+    let punct = MatchMode {
+        ignore_punctuation: true,
+        ..Default::default()
+    };
+    let names = names_for(&idx, "cafe", punct);
+    assert_eq!(names, vec!["Café-Notes.txt"]);
+
+    // …and with both ignore modes on, which is the case the superset
+    // argument was originally written for.
+    let both = MatchMode {
+        ignore_punctuation: true,
+        ignore_whitespace: true,
+        ..Default::default()
+    };
+    assert_eq!(names_for(&idx, "cafenotes", both), vec!["Café-Notes.txt"]);
+}
+
+#[test]
+fn a_row_written_while_the_seed_map_was_building_is_still_findable() {
+    // The map is snapshotted under a read lock and installed under a write
+    // lock. An `upsert` landing in that gap saw no map, so it skipped the
+    // seed postings — and it is not in the snapshot either. The row would
+    // have been permanently unfindable under an ignore mode, with nothing
+    // logged. `ensure_seed_trigrams` catches up on the tail before
+    // publishing; this asserts rows either side of the boundary.
+    let dir = tempfile::tempdir().unwrap();
+    let idx = Index::open(dir.path()).unwrap();
+    idx.apply(&[create("/synth/before-one.txt", 1, 0)]).unwrap();
+    idx.commit().unwrap();
+
+    let punct = MatchMode {
+        ignore_punctuation: true,
+        ..Default::default()
+    };
+    assert_eq!(names_for(&idx, "beforeone", punct), vec!["before-one.txt"]);
+
+    idx.apply(&[create("/synth/after-one.txt", 1, 0)]).unwrap();
+    idx.commit().unwrap();
+    assert_eq!(names_for(&idx, "afterone", punct), vec!["after-one.txt"]);
+    assert_eq!(names_for(&idx, "beforeone", punct), vec!["before-one.txt"]);
+}
+
+#[test]
+fn compatibility_decompositions_survive_the_case_fold() {
+    // `normalized` folds diacritics before case, because NFKD can emit
+    // cased letters from an uncased character: `№` decomposes to `No`.
+    // Folding case first left that `N` standing against an already
+    // lowercased target, and the term stopped matching.
+    //
+    // `report` rides along to give the trigram pre-filter a seed it can
+    // resolve — the seed is built from the raw needle, and `№`'s bytes
+    // share no trigram with `no5`. Same separate, documented limitation
+    // `match_diacritics_default_strips` describes.
+    let idx = idx_with_files(vec![
+        create("/synth/No5-report.txt", 1, 0),
+        create("/synth/other-report.txt", 1, 0),
+    ]);
+    assert_eq!(
+        names_for(&idx, "№5 report", MatchMode::default()),
+        vec!["No5-report.txt"]
+    );
 }

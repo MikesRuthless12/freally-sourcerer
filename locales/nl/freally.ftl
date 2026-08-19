@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Export van bladwijzers mislukt: { $error 
 backup-toast-bookmarks-imported = Bladwijzers geïmporteerd
 backup-toast-bookmarks-import-failed = Import van bladwijzers mislukt: { $error }
 backup-confirm-reset = Alle instellingen terugzetten naar standaardwaarden? Dit kan niet ongedaan worden gemaakt (het dialoogvenster blijft open).
+backup-confirm-import-commands = Dit instellingenbestand voegt aangepaste opdrachten toe die programma's op uw computer kunnen uitvoeren: { $programs }. Importeren?
 backup-toast-reset = Alle instellingen gereset
 
 # Keyboard panel.

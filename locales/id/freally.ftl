@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Ekspor markah gagal: { $error }
 backup-toast-bookmarks-imported = Markah diimpor
 backup-toast-bookmarks-import-failed = Impor markah gagal: { $error }
 backup-confirm-reset = Reset semua pengaturan ke bawaan? Ini tidak dapat dibatalkan (dialog tetap terbuka).
+backup-confirm-import-commands = Berkas pengaturan ini menambahkan perintah khusus yang dapat menjalankan program di komputer Anda: { $programs }. Impor?
 backup-toast-reset = Semua pengaturan direset
 
 # Keyboard panel.

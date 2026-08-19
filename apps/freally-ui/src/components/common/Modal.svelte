@@ -73,6 +73,30 @@
     return () => restoreTo?.focus?.();
   });
 
+  /**
+   * Keys pressed inside the panel stop here.
+   *
+   * `bootstrap.ts` binds the app's shortcuts on `window`, so without
+   * this every keystroke typed into a dialog also runs a global command:
+   * Ctrl+Z in a text field reverts the last file operation **on disk**
+   * instead of undoing the typo, F2 opens Bulk Rename over the open
+   * dialog, Ctrl+, opens Settings on top of itself. Each dialog used to
+   * carry its own `onkeydown={(e) => e.stopPropagation()}` for exactly
+   * this; the shell has to keep doing it.
+   *
+   * Escape is handled here rather than being allowed through, because
+   * the shield would otherwise swallow it — which is the trap the old
+   * per-dialog handlers fell into and why Escape never closed anything.
+   */
+  function onPanelKeydown(e: KeyboardEvent) {
+    e.stopPropagation();
+    if (dismissOnEscape && e.key === "Escape") onClose();
+  }
+
+  /**
+   * The same Escape, for when focus is not inside the panel — the panel
+   * is focused on open, but nothing traps focus there.
+   */
   function onWindowKeydown(e: KeyboardEvent) {
     if (!open || !dismissOnEscape || e.key !== "Escape") return;
     // Stop here so Escape closes the dialog rather than also reaching
@@ -102,6 +126,7 @@
       {style}
       data-testid={testId}
       onclick={(e) => e.stopPropagation()}
+      onkeydown={onPanelKeydown}
     >
       {@render children()}
     </div>

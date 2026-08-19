@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Lesezeichen-Export fehlgeschlagen: { $err
 backup-toast-bookmarks-imported = Lesezeichen importiert
 backup-toast-bookmarks-import-failed = Lesezeichen-Import fehlgeschlagen: { $error }
 backup-confirm-reset = Alle Einstellungen auf Standardwerte zurücksetzen? Dies kann nicht rückgängig gemacht werden (der Dialog bleibt geöffnet).
+backup-confirm-import-commands = Diese Einstellungsdatei fügt benutzerdefinierte Befehle hinzu, die Programme auf Ihrem Computer ausführen können: { $programs }. Importieren?
 backup-toast-reset = Alle Einstellungen zurückgesetzt
 
 # Keyboard panel.

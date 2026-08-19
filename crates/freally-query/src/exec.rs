@@ -28,7 +28,6 @@ use std::borrow::Cow;
 use freally_audio::{AudioAttributes, AudioAttributesProvider};
 use freally_index::{DirStats, FileRow, Index};
 use freally_similarity::{SimilarityIndex, SimilarityOpts};
-use unicode_normalization::UnicodeNormalization;
 
 use crate::ast::{
     AudioPredicate, DateBound, DupeKey, EmptyKind, LensKind, ModifierKind, Query, QueryNode,
@@ -395,8 +394,16 @@ pub fn execute_with_catalogs(
     // evaluation is a no-op. We skip it entirely — the per-row test
     // would still return `true`, but the call cost is non-zero. The
     // optimizer's `is_audio_only_route` hands us this hint.
-    let skip_name_filter =
-        opts.match_mode.match_path || crate::optimizer::is_audio_only_route(q.root());
+    // Match Case joins the list for a structural reason: the name index
+    // stores lowercased keys and nothing else, so the pre-filter has no
+    // cased text to test against. Left in, it rejected every row before
+    // hydration could look at the real name — `Report` with Match Case on
+    // returned nothing at all. The trigram seed still applies, because it
+    // is built from the lowercased needle and so selects a superset of
+    // the cased answer; only the per-row test has to wait.
+    let skip_name_filter = opts.match_mode.match_case
+        || opts.match_mode.match_path
+        || crate::optimizer::is_audio_only_route(q.root());
 
     if seedable {
         let mut collect = |fid: u64, key: &[u8]| {
@@ -440,7 +447,10 @@ pub fn execute_with_catalogs(
     // matching applies (size / date / path / parent / attrib / ext /
     // audio modifier) or when `match_path` widens the target to the
     // full path.
-    let needs_full = plan.needs_hydration || opts.match_mode.match_path;
+    // Match Case needs `FileRow.name`, which only hydration provides —
+    // the name buffer is lowercased.
+    let needs_full =
+        plan.needs_hydration || opts.match_mode.match_path || opts.match_mode.match_case;
     let i64_ids: Vec<i64> = survivors_ids.iter().map(|&u| u as i64).collect();
     let mut rows: Vec<FileRow> = idx.store().get_many(&i64_ids)?;
     let dirs = dir_stats_for(idx, q.root())?;
@@ -971,20 +981,19 @@ fn normalize_needles(node: &QueryNode, mm: &MatchMode) -> Prepared {
 }
 
 fn normalize_node(node: &QueryNode, mm: &MatchMode) -> QueryNode {
-    let fold_text = |s: &String| normalized(s, mm, !mm.match_case).into_owned();
-    // `child:` and the anchored pair have always lowercased their needle
-    // regardless of Match Case — they run against the name index, whose
-    // keys carry no case to match.
-    let fold_name = |s: &String| normalized(s, mm, true).into_owned();
+    // One ladder for every needle on the tree. `child:` and the anchored
+    // pair used to have their own, folding case unconditionally because
+    // the name index they ran against had no case to match; now that
+    // Match Case routes them at the hydrated row they fold on the same
+    // terms a bare term does, which makes the two rules one rule.
+    let fold = |s: &String| normalized(s, mm).into_owned();
     match node {
-        QueryNode::Text(TextPattern::Literal(l)) => {
-            QueryNode::Text(TextPattern::Literal(fold_text(l)))
-        }
+        QueryNode::Text(TextPattern::Literal(l)) => QueryNode::Text(TextPattern::Literal(fold(l))),
         QueryNode::Modifier(m) => {
             let kind = match &m.kind {
-                ModifierKind::Child(c) => ModifierKind::Child(fold_name(c)),
-                ModifierKind::NamePrefix(c) => ModifierKind::NamePrefix(fold_name(c)),
-                ModifierKind::NameSuffix(c) => ModifierKind::NameSuffix(fold_name(c)),
+                ModifierKind::Child(c) => ModifierKind::Child(fold(c)),
+                ModifierKind::NamePrefix(c) => ModifierKind::NamePrefix(fold(c)),
+                ModifierKind::NameSuffix(c) => ModifierKind::NameSuffix(fold(c)),
                 ModifierKind::Path(p) => ModifierKind::Path(p.to_lowercase()),
                 ModifierKind::Parent(p) => ModifierKind::Parent(p.to_lowercase()),
                 other => other.clone(),
@@ -1074,11 +1083,37 @@ fn eval_name(node: &QueryNode, name_lower: &[u8], phonetic: Option<&[u8]>, mm: &
     }
 }
 
+/// What a text predicate compares against for this row.
+///
+/// Normally the lowercased name, or the lowercased path when Match Path
+/// widened the target. Under Match Case it is the name (or path) as the
+/// filesystem spells it, because that is the only copy with any case in
+/// it — everything the name index holds has already been folded.
+fn text_target<'a>(row: &'a FileRow, ctx: &EvalCtx<'a>) -> Cow<'a, str> {
+    match (ctx.mm.match_case, ctx.path_lower) {
+        (true, Some(_)) => row.path.to_string_lossy(),
+        (true, None) => Cow::Borrowed(row.name.as_str()),
+        (false, Some(p)) => Cow::Borrowed(p),
+        (false, None) => Cow::Borrowed(row.name_lower.as_str()),
+    }
+}
+
+/// The same choice for the filename-only modifiers. `child:Report` has to
+/// answer the way the bare term `Report` does — one query written two
+/// ways is one query.
+fn name_target<'a>(row: &'a FileRow, ctx: &EvalCtx<'_>) -> &'a str {
+    if ctx.mm.match_case {
+        row.name.as_str()
+    } else {
+        row.name_lower.as_str()
+    }
+}
+
 fn eval_full(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) -> bool {
     match node {
         QueryNode::True => true,
         QueryNode::Text(p) => {
-            let target = ctx.path_lower.unwrap_or(row.name_lower.as_str());
+            let target = text_target(row, ctx);
             match_text(p, target.as_bytes(), ctx.mm)
                 || ctx
                     .phonetic
@@ -1177,16 +1212,16 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow, ctx: &EvalCtx<'_>) -> bool 
         // `name^:café` and `name^:café size:>1mb` would answer
         // differently.
         ModifierKind::Child(needle) => {
-            substring_match(row.name_lower.as_bytes(), needle, ctx.mm)
+            substring_match(name_target(row, ctx).as_bytes(), needle, ctx.mm)
                 || ctx
                     .phonetic
                     .is_some_and(|ph| substring_match(ph.as_bytes(), needle, ctx.mm))
         }
         ModifierKind::NamePrefix(needle) => {
-            anchored_match(row.name_lower.as_bytes(), needle, ctx.mm, true)
+            anchored_match(name_target(row, ctx).as_bytes(), needle, ctx.mm, true)
         }
         ModifierKind::NameSuffix(needle) => {
-            anchored_match(row.name_lower.as_bytes(), needle, ctx.mm, false)
+            anchored_match(name_target(row, ctx).as_bytes(), needle, ctx.mm, false)
         }
         ModifierKind::Similar(_) => {
             // `execute_with` routes Similar-bearing queries through the
@@ -1361,10 +1396,10 @@ fn match_text(pattern: &TextPattern, target: &[u8], mm: &MatchMode) -> bool {
 /// `foo-bar` while leaving `foo-bar` unable to find `foobar`, which
 /// reads as a bug rather than as a match mode.
 fn literal_match(target: &str, needle: &str, mm: &MatchMode) -> bool {
-    // The name index already lowercased, so there is nothing to fold on
-    // this side; `match_case` only ever decided what happened to the
-    // needle, and that has happened.
-    let target_eff = normalized(target, mm, false);
+    // Both sides run the same ladder; `mm` decides whether case folds,
+    // and the needle has already been through it once in
+    // `normalize_needles`. Idempotence is what makes that safe.
+    let target_eff = normalized(target, mm);
     // Whole-word is meaningless once the separators that define word
     // boundaries have been removed — `foo-bar` becomes one word. The
     // stripped comparison is the more specific request, so it wins.
@@ -1421,20 +1456,47 @@ fn folded<'a>(c: Cow<'a, str>, mm: &MatchMode) -> Cow<'a, str> {
 /// the common case — an ASCII lowercase name under the default mode —
 /// walks the string and allocates nothing.
 ///
-/// `fold_case` is false for targets read out of the name index, whose
-/// keys are stored lowercased already.
-fn normalized<'a>(s: &'a str, mm: &MatchMode, fold_case: bool) -> Cow<'a, str> {
-    let lowered = if fold_case && s.chars().any(char::is_uppercase) {
-        Cow::Owned(s.to_lowercase())
-    } else {
-        Cow::Borrowed(s)
-    };
-    let folded_out = folded(lowered, mm);
-    if mm.rewrites_text() && folded_out.chars().any(|c| is_ignored(c, mm)) {
-        Cow::Owned(strip_ignored(&folded_out, mm))
+/// Case folds on both sides unless Match Case is on. The name index
+/// stores lowercased keys, so folding a target is normally a scan that
+/// finds nothing to do — but *normally* is not always: NFKD can put
+/// uppercase back into an already-lowercased string (`№` decomposes to
+/// `No`), and a target-side rung that opted out on the "it is already
+/// lowercase" assumption would then compare `No5` against a folded needle
+/// of `no5`. There is no case where one side should fold and the other
+/// should not, so there is no knob for it.
+fn normalized<'a>(s: &'a str, mm: &MatchMode) -> Cow<'a, str> {
+    let fold_case = !mm.match_case;
+    // Diacritics first, then case. NFKD is a *compatibility* decomposition,
+    // so it can turn an uncased character into cased letters — `№` becomes
+    // `No`, `㎅` becomes `kB` — and folding case first would leave that `N`
+    // and `B` standing against an already-lowercased target. The code
+    // before the refactor ran these the other way round, which is the
+    // bug `the_ladder_folds_diacritics_before_case` pins.
+    let folded_out = folded(Cow::Borrowed(s), mm);
+    let lowered = if fold_case && changes_under_lowercase(&folded_out) {
+        Cow::Owned(folded_out.to_lowercase())
     } else {
         folded_out
+    };
+    if mm.rewrites_text() && lowered.chars().any(|c| is_ignored(c, mm)) {
+        Cow::Owned(strip_ignored(&lowered, mm))
+    } else {
+        lowered
     }
+}
+
+/// Would `to_lowercase` change this string?
+///
+/// The obvious `any(char::is_uppercase)` is not the same question:
+/// titlecase characters (`ǅ`, `ǈ`, `ᾈ`) are `Lt`, not `Lu`, so they are not
+/// `is_uppercase` and would slip through unfolded while the lowercased
+/// target had already folded them. Asking each character directly costs a
+/// scan and still allocates nothing when the answer is no.
+fn changes_under_lowercase(s: &str) -> bool {
+    s.chars().any(|c| {
+        let mut lower = c.to_lowercase();
+        lower.next() != Some(c) || lower.next().is_some()
+    })
 }
 
 fn whole_word_contains(haystack: &str, needle: &str) -> bool {
@@ -1475,7 +1537,7 @@ fn is_word_char(c: char) -> bool {
 /// one way.
 fn substring_match(target_lower: &[u8], needle: &str, mm: &MatchMode) -> bool {
     match std::str::from_utf8(target_lower) {
-        Ok(s) => normalized(s, mm, false).contains(needle),
+        Ok(s) => normalized(s, mm).contains(needle),
         Err(_) => false,
     }
 }
@@ -1490,7 +1552,7 @@ fn anchored_match(target_lower: &[u8], needle: &str, mm: &MatchMode, prefix: boo
         Ok(s) => s,
         Err(_) => return false,
     };
-    let target_eff = normalized(s, mm, false);
+    let target_eff = normalized(s, mm);
     if prefix {
         target_eff.starts_with(needle)
     } else {
@@ -1498,18 +1560,13 @@ fn anchored_match(target_lower: &[u8], needle: &str, mm: &MatchMode, prefix: boo
     }
 }
 
-/// NFKD-decompose, drop combining marks, recompose. Cheap diacritic
-/// stripper — not perfect for every script (Phase 5 perf-pass note)
-/// but matches Everything's "Match Diacritics" toggle behavior.
-fn strip_diacritics(s: &str) -> String {
-    s.nfkd().filter(|c| !is_combining_mark(*c)).collect()
-}
-
-fn is_combining_mark(c: char) -> bool {
-    matches!(c as u32,
-        0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF |
-        0x20D0..=0x20FF | 0xFE20..=0xFE2F)
-}
+/// Cheap diacritic stripper — not perfect for every script (Phase 5
+/// perf-pass note) but matches Everything's "Match Diacritics" toggle.
+///
+/// `freally_index` owns the definition because the stripped trigram key
+/// is built from it; a second copy here could drift into folding less
+/// than the seed does, and the seed would stop being a superset.
+use freally_index::name_index::strip_diacritics;
 
 /// Up-front gate: refuse to execute a query that names a Phase-5
 /// reserved modifier so callers see a typed error instead of empty
@@ -1763,7 +1820,7 @@ fn similarity_node_matches(node: &QueryNode, row: &FileRow, ctx: &EvalCtx<'_>) -
     match node {
         QueryNode::True => true,
         QueryNode::Text(p) => {
-            let target = ctx.path_lower.unwrap_or(row.name_lower.as_str());
+            let target = text_target(row, ctx);
             match_text(p, target.as_bytes(), ctx.mm)
         }
         QueryNode::Not(inner) => !similarity_node_matches(inner, row, ctx),
@@ -1798,31 +1855,26 @@ mod tests {
     }
 
     #[test]
-    fn the_ladder_runs_case_then_diacritics_then_the_ignored_classes() {
+    fn the_ladder_runs_diacritics_then_case_then_the_ignored_classes() {
         let all = mode(|m| {
             m.ignore_punctuation = true;
             m.ignore_whitespace = true;
         });
-        assert_eq!(
-            normalized("My Café-Notes.TXT", &all, true),
-            "mycafenotestxt"
-        );
+        assert_eq!(normalized("My Café-Notes.TXT", &all), "mycafenotestxt");
         // Same input, one rung disabled at a time.
         assert_eq!(
-            normalized("My Café-Notes.TXT", &MatchMode::default(), true),
+            normalized("My Café-Notes.TXT", &MatchMode::default()),
             "my cafe-notes.txt"
         );
         assert_eq!(
-            normalized(
-                "My Café-Notes.TXT",
-                &mode(|m| m.match_diacritics = true),
-                true
-            ),
+            normalized("My Café-Notes.TXT", &mode(|m| m.match_diacritics = true)),
             "my café-notes.txt"
         );
-        // `fold_case: false` is the name-index target, already lowercase.
+        // An already-lowercased target — what a name-index key looks
+        // like. It still goes through the same ladder, with nothing for
+        // the case rung to do.
         assert_eq!(
-            normalized("my café-notes.txt", &MatchMode::default(), false),
+            normalized("my café-notes.txt", &MatchMode::default()),
             "my cafe-notes.txt"
         );
     }
@@ -1834,27 +1886,44 @@ mod tests {
         // property that lets the matchers call it once per candidate row.
         let m = MatchMode::default();
         assert!(matches!(
-            normalized("alpha-report.md", &m, false),
-            Cow::Borrowed(_)
-        ));
-        assert!(matches!(
-            normalized("alpha-report.md", &m, true),
+            normalized("alpha-report.md", &m),
             Cow::Borrowed(_)
         ));
         // Punctuation only costs an allocation once the mode asks for it.
         assert!(matches!(
-            normalized(
-                "alpha-report.md",
-                &mode(|m| m.ignore_punctuation = true),
-                false
-            ),
+            normalized("alpha-report.md", &mode(|m| m.ignore_punctuation = true)),
             Cow::Owned(_)
         ));
         // A name with no punctuation still borrows under that mode.
         assert!(matches!(
-            normalized("alphareport", &mode(|m| m.ignore_punctuation = true), false),
+            normalized("alphareport", &mode(|m| m.ignore_punctuation = true)),
             Cow::Borrowed(_)
         ));
+    }
+
+    #[test]
+    fn the_ladder_folds_diacritics_before_case() {
+        // NFKD is a *compatibility* decomposition, so it can emit cased
+        // letters from an uncased character. Folding case first left that
+        // `N` standing: `№5` became `No5` and stopped matching `no5`.
+        //
+        // It is also why the target side has no opt-out. A name-index key
+        // is stored lowercased, so folding it again looks redundant — but
+        // NFKD can put uppercase back into it after the fact.
+        let m = MatchMode::default();
+        assert_eq!(normalized("№5", &m), "no5");
+        assert_eq!(normalized("№5-report.txt", &m), "no5-report.txt");
+    }
+
+    #[test]
+    fn the_case_fold_catches_titlecase_too() {
+        // `ǅ` is Lt, not Lu, so `char::is_uppercase` answers false for it.
+        // The guard that asked that question handed it through unfolded
+        // while the target had already folded it.
+        let m = MatchMode::default();
+        assert_eq!(normalized("ǅungla", &m), "dzungla");
+        assert!(changes_under_lowercase("ǅ"));
+        assert!(!changes_under_lowercase("already lower"));
     }
 
     #[test]
@@ -1869,8 +1938,8 @@ mod tests {
             mode(|m| m.match_diacritics = true),
         ] {
             for s in ["My Café-Notes.TXT", "plain", "ünïcödé", "a b-c_d"] {
-                let once = normalized(s, &m, true).into_owned();
-                assert_eq!(normalized(&once, &m, true), once, "{s:?} under {m:?}");
+                let once = normalized(s, &m).into_owned();
+                assert_eq!(normalized(&once, &m), once, "{s:?} under {m:?}");
             }
         }
     }

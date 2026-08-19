@@ -63,8 +63,18 @@ const hasUi = existsSync(join(uiDir, "package.json"));
 // them off each other's locks). Fall back to `cargo test` when it isn't
 // installed rather than making it a hard prerequisite.
 const hasNextest = hasRust && have("cargo nextest --version");
+// A handful of tests assert a wall-clock budget, and the lanes below run
+// concurrently — so those two facts cannot both hold at once. Measured
+// while `vitest` and `svelte-check` are competing for cores, the parser
+// budget test fails on a machine that is fine: it is measuring the load,
+// not the parser. Its own comment says so, and best-of-5 rounds cannot
+// escape *sustained* load the way it escapes a single stolen core.
+//
+// So they come out of the parallel phase and run on their own at the end,
+// which is the only condition under which the number means anything.
+const TIMED = "test(magic_moment) or test(latency)";
 const testCmd = hasNextest
-  ? "cargo nextest run --workspace --locked"
+  ? `cargo nextest run --workspace --locked -E "not (${TIMED})"`
   : "cargo test --workspace --locked";
 // Probed once: the step and the note that explains its absence have to
 // agree, and two separate `have()` calls is two chances for them not to.
@@ -181,6 +191,14 @@ if (buffered) {
 } else {
   await runLane(rustLane, results);
   await runLane(uiLane, results);
+}
+
+// After both lanes are done, with nothing else running.
+if (!uiOnly && hasRust && hasNextest) {
+  await runLane(
+    [["rust: timed budgets", `cargo nextest run --workspace --locked -E "${TIMED}"`, repoRoot]],
+    results
+  );
 }
 const wallSecs = Number((process.hrtime.bigint() - wall) / 1_000_000n) / 1000;
 

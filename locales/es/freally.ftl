@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Error al exportar los marcadores: { $erro
 backup-toast-bookmarks-imported = Marcadores importados
 backup-toast-bookmarks-import-failed = Error al importar los marcadores: { $error }
 backup-confirm-reset = ¿Restablecer toda la configuración a los valores predeterminados? Esta acción no se puede deshacer (el cuadro de diálogo permanece abierto).
+backup-confirm-import-commands = Este archivo de configuración añade comandos personalizados que pueden ejecutar programas en su equipo: { $programs }. ¿Importarlos?
 backup-toast-reset = Se ha restablecido toda la configuración
 
 # Keyboard panel.

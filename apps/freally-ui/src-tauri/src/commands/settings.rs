@@ -614,6 +614,15 @@ const MIN_COL_WIDTH_PX: u32 = 60;
 const MAX_COL_WIDTH_PX: u32 = 800;
 const MIN_ZOOM: f64 = 0.5;
 const MAX_ZOOM: f64 = 2.5;
+// `custom_commands` reached `settings_set` completely unvalidated —
+// unbounded array, unbounded strings — because until this build it never
+// reached `settings_set` at all: the allowlist rejected it, which is the
+// bug that stopped any setting persisting. H17's whole job is keeping a
+// hostile patch from bloating the on-disk file, and this was the one
+// allowlisted key it did not cover.
+const MAX_CUSTOM_COMMANDS: usize = 64;
+const MAX_CUSTOM_COMMAND_TEXT: usize = 512;
+const MAX_CUSTOM_COMMAND_ARGS: usize = 32;
 
 #[tauri::command]
 pub fn settings_set(
@@ -643,6 +652,65 @@ pub fn settings_set(
     Ok(next)
 }
 
+/// Shape- and size-check `custom_commands`.
+///
+/// This is the one allowlisted key whose value names a **program to
+/// run** — `shell_actions::run_custom_command` spawns `program` with
+/// `args` — so a malformed or unbounded value matters more here than
+/// anywhere else in the schema.
+///
+/// Note what this deliberately does *not* claim. It makes the value
+/// well-formed and bounded; it cannot make the key safe. Anything that
+/// can write settings can name a program, and the webview is what writes
+/// settings. `commands/shell_verbs.rs` takes a command *id* rather than a
+/// body for exactly this reason, and that argument only holds as far as
+/// the stored set is trustworthy. See `docs/SECURITY.md`.
+fn validate_custom_commands(s: &SettingsState) -> Result<(), String> {
+    let Some(raw) = s.extras.get("custom_commands") else {
+        return Ok(());
+    };
+    let cmds: Vec<crate::shell_actions::CustomCommand> = serde_json::from_value(raw.clone())
+        .map_err(|e| format!("custom_commands is malformed: {e}"))?;
+    if cmds.len() > MAX_CUSTOM_COMMANDS {
+        return Err(format!(
+            "too many custom commands ({} > {MAX_CUSTOM_COMMANDS})",
+            cmds.len()
+        ));
+    }
+    for c in &cmds {
+        if c.id.trim().is_empty() {
+            return Err("custom command has no id".into());
+        }
+        for (field, value) in [("id", &c.id), ("name", &c.name), ("program", &c.program)] {
+            if value.len() > MAX_CUSTOM_COMMAND_TEXT {
+                return Err(format!(
+                    "custom command {field} too long ({} > {MAX_CUSTOM_COMMAND_TEXT})",
+                    value.len()
+                ));
+            }
+        }
+        // `extensions` is the other unbounded `Vec<String>` on this
+        // struct. It never reaches a process — `applies_to` only compares
+        // against it — but the point of these caps is what a hostile
+        // patch can commit to disk, and an unbounded extension list
+        // bloats the settings file exactly as well as an unbounded
+        // `args` does. Same bound, one loop, so neither can be given the
+        // cap without the other.
+        for (field, list) in [("arguments", &c.args), ("extensions", &c.extensions)] {
+            if list.len() > MAX_CUSTOM_COMMAND_ARGS {
+                return Err(format!(
+                    "custom command has too many {field} ({} > {MAX_CUSTOM_COMMAND_ARGS})",
+                    list.len()
+                ));
+            }
+            if list.iter().any(|v| v.len() > MAX_CUSTOM_COMMAND_TEXT) {
+                return Err(format!("custom command {field} entry too long"));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_and_clamp(s: &mut SettingsState) -> Result<(), String> {
     if s.hotkey.len() > MAX_HOTKEY_LEN {
         return Err(format!(
@@ -660,6 +728,7 @@ fn validate_and_clamp(s: &mut SettingsState) -> Result<(), String> {
         return Err("zoom must be finite".into());
     }
     s.zoom = s.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+    validate_custom_commands(s)?;
     for profile in &mut s.column_profiles {
         if profile.name.len() > MAX_PROFILE_NAME_LEN {
             return Err("column profile name too long".into());
@@ -834,5 +903,96 @@ mod patch_key_tests {
         assert!(!allowed.contains("not_a_setting"));
         assert!(!allowed.contains("__proto__"));
         assert!(!allowed.contains(""));
+    }
+}
+
+#[cfg(test)]
+mod custom_command_bounds {
+    use super::*;
+
+    fn state_with(commands: serde_json::Value) -> SettingsState {
+        let mut s = SettingsState::defaults();
+        s.extras.insert("custom_commands".into(), commands);
+        s
+    }
+
+    #[test]
+    fn a_well_formed_command_passes() {
+        let mut s = state_with(serde_json::json!([{
+            "id": "open-in-vscode",
+            "name": "Open in VS Code",
+            "program": "code",
+            "args": ["{path}"],
+            "extensions": []
+        }]));
+        assert!(validate_and_clamp(&mut s).is_ok());
+    }
+
+    #[test]
+    fn the_default_empty_list_passes() {
+        // Every save sends the whole state, so this runs on literally
+        // every settings write.
+        let mut s = SettingsState::defaults();
+        assert!(validate_and_clamp(&mut s).is_ok());
+    }
+
+    #[test]
+    fn a_malformed_value_is_rejected_rather_than_stored() {
+        // Before this build the key never reached validation, so anything
+        // at all could be written under it and `configured_command` would
+        // silently find nothing at read time.
+        let mut s = state_with(serde_json::json!("not an array"));
+        assert!(validate_and_clamp(&mut s).is_err());
+    }
+
+    #[test]
+    fn oversized_values_are_rejected() {
+        let big = "x".repeat(MAX_CUSTOM_COMMAND_TEXT + 1);
+        let one = |program: &str, args: serde_json::Value| serde_json::json!([{ "id": "a", "name": "a", "program": program, "args": args }]);
+        let mut s = state_with(one(&big, serde_json::json!([])));
+        assert!(validate_and_clamp(&mut s).is_err(), "long program accepted");
+
+        let mut s = state_with(one("sh", serde_json::json!([big.as_str()])));
+        assert!(validate_and_clamp(&mut s).is_err(), "long arg accepted");
+
+        let args: Vec<&str> = vec!["-c"; MAX_CUSTOM_COMMAND_ARGS + 1];
+        let mut s = state_with(one("sh", serde_json::json!(args)));
+        assert!(validate_and_clamp(&mut s).is_err(), "arg flood accepted");
+
+        let exts: Vec<&str> = vec!["txt"; MAX_CUSTOM_COMMAND_ARGS + 1];
+        let mut s = state_with(serde_json::json!([{
+            "id": "a", "name": "a", "program": "sh", "extensions": exts
+        }]));
+        assert!(
+            validate_and_clamp(&mut s).is_err(),
+            "extension flood accepted"
+        );
+
+        let mut s = state_with(serde_json::json!([{
+            "id": "a", "name": "a", "program": "sh", "extensions": [big.as_str()]
+        }]));
+        assert!(
+            validate_and_clamp(&mut s).is_err(),
+            "long extension accepted"
+        );
+
+        let many: Vec<serde_json::Value> = (0..MAX_CUSTOM_COMMANDS + 1)
+            .map(|i| serde_json::json!({ "id": i.to_string(), "name": "a", "program": "sh" }))
+            .collect();
+        let mut s = state_with(serde_json::json!(many));
+        assert!(
+            validate_and_clamp(&mut s).is_err(),
+            "command flood accepted"
+        );
+    }
+
+    #[test]
+    fn an_idless_command_is_rejected() {
+        // `run_custom_command` resolves by id; a blank one is unreachable
+        // by design and only bloats the file.
+        let mut s = state_with(serde_json::json!([{
+            "id": "  ", "name": "a", "program": "sh"
+        }]));
+        assert!(validate_and_clamp(&mut s).is_err());
     }
 }

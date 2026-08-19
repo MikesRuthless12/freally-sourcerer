@@ -13,6 +13,7 @@ description = "Freally index core â€” Tantivy + custom name index + SQLite 
 path = "src/lib.rs"
 
 [dependencies]
+unicode-normalization = "0.1"
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = فشل تصدير الإشارات الم
 backup-toast-bookmarks-imported = تم استيراد الإشارات المرجعية
 backup-toast-bookmarks-import-failed = فشل استيراد الإشارات المرجعية: { $error }
 backup-confirm-reset = إعادة تعيين كل الإعدادات إلى الافتراضي؟ لا يمكن التراجع عن ذلك (تبقى نافذة الحوار مفتوحة).
+backup-confirm-import-commands = يضيف ملف الإعدادات هذا أوامر مخصصة يمكنها تشغيل برامج على جهازك: { $programs }. هل تريد استيرادها؟
 backup-toast-reset = تمت إعادة تعيين كل الإعدادات
 
 # Keyboard panel.

@@ -6,7 +6,7 @@
 
 [![ci](https://github.com/MikesRuthless12/freally-sourcerer/actions/workflows/ci.yml/badge.svg)](https://github.com/MikesRuthless12/freally-sourcerer/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-All%20Rights%20Reserved-d33)](LICENSE.md)
-[![version](https://img.shields.io/badge/version-0.19.84-blue)](#status)
+[![version](https://img.shields.io/badge/version-0.23.1-blue)](#status)
 [![platforms](https://img.shields.io/badge/platforms-Win%20%7C%20macOS%20%7C%20Linux-success)](#)
 [![rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org)
 
@@ -162,7 +162,12 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full crate boundary m
 
 ## Status
 
-Freally is in active phased development. The first public release will be tagged **v0.19.84**.
+Freally is in active phased development. The Must-Have feature gate closed at
+**v0.23.0** (Aug 3, 2026), and the current release is **v0.23.1** (Aug 19, 2026) —
+a patch that repairs four faults that shipped silently in it. Installers for
+Windows, macOS and Linux are on the
+[releases page](https://github.com/MikesRuthless12/freally-sourcerer/releases/latest);
+what changed in each is in [`docs/CHANGELOG.md`](docs/CHANGELOG.md).
 
 - [x] Phase 0 — Cross-platform scaffold
 - [x] Phase 1 — NTFS USN journal subscriber (Windows)

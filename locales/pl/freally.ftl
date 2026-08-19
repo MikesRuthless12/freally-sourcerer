@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Eksport zakładek nie powiódł się: { $
 backup-toast-bookmarks-imported = Zaimportowano zakładki
 backup-toast-bookmarks-import-failed = Import zakładek nie powiódł się: { $error }
 backup-confirm-reset = Przywrócić wszystkie ustawienia domyślne? Tej operacji nie można cofnąć (okno pozostanie otwarte).
+backup-confirm-import-commands = Ten plik ustawień dodaje polecenia niestandardowe, które mogą uruchamiać programy na tym komputerze: { $programs }. Zaimportować je?
 backup-toast-reset = Zresetowano wszystkie ustawienia
 
 # Keyboard panel.

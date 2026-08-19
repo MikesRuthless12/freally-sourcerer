@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Не вдалося експортува�
 backup-toast-bookmarks-imported = Закладки імпортовано
 backup-toast-bookmarks-import-failed = Не вдалося імпортувати закладки: { $error }
 backup-confirm-reset = Скинути всі параметри до типових? Це не можна скасувати (діалог залишиться відкритим).
+backup-confirm-import-commands = Цей файл налаштувань додає користувацькі команди, які можуть запускати програми на вашому комп'ютері: { $programs }. Імпортувати їх?
 backup-toast-reset = Усі параметри скинуто
 
 # Keyboard panel.

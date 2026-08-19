@@ -28,10 +28,17 @@ export interface RunOpts {
 
 export function run(source: string, opts: RunOpts = {}): Promise<QueryRunHandle> {
   const m = opts.search_opts ?? {};
+  // camelCase keys. `#[tauri::command]` renames its arguments to camelCase
+  // by default and looks them up by exact name, so `strict_everything`
+  // simply never bound to `strict_everything: bool` — it read as `None`,
+  // silently, exactly like the match-mode flags did. Every other call site
+  // in the app already had this right (`{ ext, isDir }`, `{ handlerId }`,
+  // `{ commandId }`); this one file did not, so Strict Everything mode and
+  // the per-lens limits had never reached the daemon either.
   return call<QueryRunHandle>("query_run", {
     source,
-    strict_everything: opts.strict_everything ?? false,
-    per_lens_limits: opts.per_lens_limits ?? null,
+    strictEverything: opts.strict_everything ?? false,
+    perLensLimits: opts.per_lens_limits ?? null,
     // Field-by-field rather than spreading `search_opts`: the settings
     // key is `match_whole_word` and the wire field is `whole_word`, so a
     // spread would drop that flag on the floor with no type error.
@@ -43,7 +50,7 @@ export function run(source: string, opts: RunOpts = {}): Promise<QueryRunHandle>
     // through Build 3 it declared none of these, so the flags were sent
     // and discarded. `QuerySearchOpts` in `commands/query.rs` is the
     // landing spot; it forwards these names on to the daemon unchanged.
-    search_opts: {
+    searchOpts: {
       match_case: m.match_case ?? false,
       whole_word: m.match_whole_word ?? false,
       match_path: m.match_path ?? false,
@@ -52,7 +59,7 @@ export function run(source: string, opts: RunOpts = {}): Promise<QueryRunHandle>
       ignore_punctuation: m.ignore_punctuation ?? false,
       ignore_whitespace: m.ignore_whitespace ?? false
     },
-    natural_sort: opts.natural_sort ?? true
+    naturalSort: opts.natural_sort ?? true
   });
 }
 

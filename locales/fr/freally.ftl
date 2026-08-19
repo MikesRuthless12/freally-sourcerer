@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Échec de l'export des favoris : { $error
 backup-toast-bookmarks-imported = Favoris importés
 backup-toast-bookmarks-import-failed = Échec de l'import des favoris : { $error }
 backup-confirm-reset = Réinitialiser tous les paramètres aux valeurs par défaut ? Cette action est irréversible (la boîte de dialogue reste ouverte).
+backup-confirm-import-commands = Ce fichier de paramètres ajoute des commandes personnalisées pouvant exécuter des programmes sur votre ordinateur : { $programs }. Les importer ?
 backup-toast-reset = Tous les paramètres ont été réinitialisés
 
 # Keyboard panel.

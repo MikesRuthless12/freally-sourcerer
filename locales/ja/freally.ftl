@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = ブックマークのエクスポート�
 backup-toast-bookmarks-imported = ブックマークをインポートしました
 backup-toast-bookmarks-import-failed = ブックマークのインポートに失敗しました: { $error }
 backup-confirm-reset = すべての設定を既定値にリセットしますか？この操作は取り消せません（ダイアログは開いたままになります）。
+backup-confirm-import-commands = この設定ファイルには、お使いのコンピューター上でプログラムを実行できるカスタムコマンドが含まれています: { $programs }。取り込みますか？
 backup-toast-reset = すべての設定をリセットしました
 
 # Keyboard panel.

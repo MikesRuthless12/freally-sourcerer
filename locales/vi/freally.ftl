@@ -480,6 +480,7 @@ backup-toast-bookmarks-export-failed = Xuất dấu trang thất bại: { $error
 backup-toast-bookmarks-imported = Đã nhập dấu trang
 backup-toast-bookmarks-import-failed = Nhập dấu trang thất bại: { $error }
 backup-confirm-reset = Đặt lại tất cả cài đặt về mặc định? Thao tác này không thể hoàn tác (hộp thoại vẫn mở).
+backup-confirm-import-commands = Tệp cài đặt này thêm các lệnh tùy chỉnh có thể chạy chương trình trên máy tính của bạn: { $programs }. Nhập chúng?
 backup-toast-reset = Đã đặt lại tất cả cài đặt
 
 # Keyboard panel.
