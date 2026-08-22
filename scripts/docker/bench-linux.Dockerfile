@@ -31,9 +31,11 @@ RUN apt-get update \
 # Pinned to `rust-toolchain.toml`. `clippy` because of the note above;
 # `rustfmt` because the same step in CI runs `cargo fmt -- --check`.
 ARG RUST_VERSION=1.97.1
+# `-c` once per component: `--component clippy rustfmt` swallows the second
+# name as a positional and rustup-init exits 1.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --profile minimal --default-toolchain ${RUST_VERSION} \
-        --component clippy rustfmt
+        -c clippy -c rustfmt
 ENV PATH=/root/.cargo/bin:$PATH
 
 # Out of the bind-mounted source tree, so a Linux build never fights the
