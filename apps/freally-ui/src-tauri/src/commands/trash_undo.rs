@@ -22,7 +22,6 @@
 //! leg only. Two copies is the minimum; `support_matches_the_platform` pins
 //! them against `trash_restore_supported()`.
 
-use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 
@@ -36,9 +35,8 @@ use std::path::PathBuf;
     )
 ))]
 mod supported {
-    use super::display_name;
     use std::collections::HashMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     /// Restore `paths` from the OS trash.
     ///
@@ -99,6 +97,38 @@ mod supported {
             })
             .collect()
     }
+
+    /// The file's own name, for an error a user reads. The full path is often
+    /// long enough to bury the one part that identifies which file this was.
+    ///
+    /// Lives in here rather than at module level because `select_restorable`
+    /// is its only caller: at module level it is dead code on macOS, and this
+    /// crate builds with `-D warnings`.
+    fn display_name(p: &Path) -> String {
+        p.file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| p.to_string_lossy().into_owned())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn display_name_prefers_the_file_name() {
+            assert_eq!(
+                display_name(Path::new("/vault/docs/report.pdf")),
+                "report.pdf"
+            );
+        }
+
+        #[test]
+        fn display_name_falls_back_to_the_whole_path() {
+            // A path ending in `..` has no file name; an empty string in the
+            // error would be worse than showing the path.
+            assert_eq!(display_name(Path::new("/vault/..")), "/vault/..");
+        }
+    }
 }
 
 #[cfg(not(any(
@@ -116,8 +146,8 @@ mod supported {
     /// Unreachable in practice — the entry is recorded as not undoable on
     /// this platform, so `apply_journal_entry` refuses before reaching here.
     /// A real error rather than an `unreachable!` because a stale journal
-    /// written by a build that *did* support it is a file on disk, not a
-    /// code path we control.
+    /// written by a build that *did* support it is a file on disk, not a code
+    /// path we control.
     pub fn restore_from_trash(_paths: &[PathBuf]) -> Result<usize, String> {
         Err("this platform cannot restore from the trash; use Finder's Put Back".into())
     }
@@ -125,32 +155,9 @@ mod supported {
 
 pub use supported::restore_from_trash;
 
-/// The file's own name, for an error a user reads. The full path is often
-/// long enough to bury the one part that identifies which file this was.
-fn display_name(p: &Path) -> String {
-    p.file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| p.to_string_lossy().into_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn display_name_prefers_the_file_name() {
-        assert_eq!(
-            display_name(Path::new("/vault/docs/report.pdf")),
-            "report.pdf"
-        );
-    }
-
-    #[test]
-    fn display_name_falls_back_to_the_whole_path() {
-        // A path ending in `..` has no file name; showing an empty string
-        // in the error would be worse than showing the path.
-        assert_eq!(display_name(Path::new("/vault/..")), "/vault/..");
-    }
 
     /// The reason a delete is or is not offered back must match what the
     /// `trash` crate can actually do. The two cfgs above are written out
