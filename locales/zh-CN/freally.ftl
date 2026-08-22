@@ -262,7 +262,6 @@ settings-ix-throttle = 后台索引节流
 # §8.12 Indexes → Volumes.
 settings-vol-auto-fixed = 自动包含新的固定卷
 settings-vol-auto-removable = 自动包含新的可移动卷
-settings-vol-auto-remove-offline = 自动移除离线卷
 settings-vol-detected = 检测到的卷
 settings-vol-include = 包含在索引中
 settings-vol-include-only = 仅包含（glob/正则）
@@ -981,3 +980,6 @@ media-play-pause = 播放或暂停
 media-seek = 跳转
 media-loop = 循环
 media-volume = 音量
+
+ops-not-undoable-trash-restore-unsupported = This delete cannot be undone: macOS does not let apps restore from the Trash. Open the Trash in Finder and use Put Back.
+ops-not-undoable-source-changed = This cannot be undone: the file has moved or changed since the operation.

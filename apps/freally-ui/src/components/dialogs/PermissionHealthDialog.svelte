@@ -70,7 +70,7 @@
   {onClose}
   label={t("permissions-title")}
   testId="permission-health"
-  style="display: flex; flex-direction: column; width: min(720px, 92vw); max-height: 82vh; border-radius: 8px; overflow: hidden;"
+  style="display: flex; flex-direction: column; width: min(720px, 92vw); max-height: 82vh; overflow: hidden;"
 >
   <header>
     <strong>{t("permissions-title")}</strong>

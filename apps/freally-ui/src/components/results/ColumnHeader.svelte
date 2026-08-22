@@ -34,6 +34,22 @@
     (ev.target as HTMLElement).releasePointerCapture(ev.pointerId);
   }
 
+  // The grip was focusable but had no keyboard route at all, so tabbing to it
+  // reached a control that could not be operated. This is the ARIA window
+  // splitter: arrows nudge, Home/End jump to the bounds.
+  const KEY_STEP = 8;
+
+  function onGripKey(ev: KeyboardEvent) {
+    let next: number | null = null;
+    if (ev.key === "ArrowLeft") next = width - KEY_STEP;
+    else if (ev.key === "ArrowRight") next = width + KEY_STEP;
+    else if (ev.key === "Home") next = MIN_COL_WIDTH;
+    else if (ev.key === "End") next = MAX_COL_WIDTH;
+    if (next === null) return;
+    ev.preventDefault();
+    void columnsStore.setWidth(id, Math.max(MIN_COL_WIDTH, Math.min(MAX_COL_WIDTH, next)));
+  }
+
   function onSortClick() {
     sortStore.toggle(id);
   }
@@ -53,12 +69,24 @@
     {label}
     {#if arrow}<span class="arrow" aria-hidden="true">{arrow}</span>{/if}
   </button>
+  <!-- ARIA's window-splitter pattern: a `separator` that is focusable is a
+       widget role and takes aria-valuenow/min/max, which is exactly what a
+       column-resize grip is. Svelte's a11y rules classify `separator` as
+       non-interactive unconditionally and so cannot express that, hence the
+       two suppressions rather than a role that fits the linter better than it
+       fits the control. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="grip"
     role="separator"
     aria-orientation="vertical"
     aria-label={t("column-resize", { name: label })}
+    aria-valuenow={width}
+    aria-valuemin={MIN_COL_WIDTH}
+    aria-valuemax={MAX_COL_WIDTH}
     tabindex="0"
+    onkeydown={onGripKey}
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}

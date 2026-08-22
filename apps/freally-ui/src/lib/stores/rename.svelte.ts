@@ -2,6 +2,7 @@
 
 import * as renameIpc from "../ipc/rename";
 import type {
+  NotUndoable,
   OperationEntry,
   OperationListing,
   RenamePreview,
@@ -120,6 +121,29 @@ class OpsStore {
 
   get canUndo(): boolean {
     return !this.busy && this.undoId !== null;
+  }
+
+  /**
+   * Why Ctrl+Z is doing nothing, when it is.
+   *
+   * `next_undo` returns nothing when the newest live entry is not
+   * undoable, deliberately refusing to skip past it to an older one. That
+   * is right, but it left the whole reason on the floor: on macOS a delete
+   * is never restorable — Finder owns Put Back and exposes no API — so
+   * Undo went quiet after every delete with nothing said. The daemon sends
+   * a code precisely so this can be a sentence in the user's language.
+   */
+  get undoBlockedReason(): NotUndoable | null {
+    if (this.undoId !== null) return null;
+    let newest: OperationEntry | undefined;
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      if (!this.entries[i]!.undone) {
+        newest = this.entries[i];
+        break;
+      }
+    }
+    if (!newest || newest.undoable) return null;
+    return newest.not_undoable_reason ?? null;
   }
   get canRedo(): boolean {
     return !this.busy && this.redoId !== null;

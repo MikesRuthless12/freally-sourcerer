@@ -368,6 +368,13 @@ function registerHandlers() {
     dialogsStore.open("bulk_rename");
   });
   registry.register("edit.undo", async () => {
+    // Say why before trying: `opsStore.undo()` is a no-op when the newest
+    // entry cannot be undone, and a silent no-op reads as a broken Ctrl+Z.
+    const blocked = opsStore.undoBlockedReason;
+    if (blocked !== null) {
+      toastStore.error(t(`ops-not-undoable-${blocked.replace(/_/g, "-")}`));
+      return;
+    }
     const moved = await opsStore.undo();
     if (moved !== null) {
       toastStore.show(t("ops-toast-undone", { count: moved }));

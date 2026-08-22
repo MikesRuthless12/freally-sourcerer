@@ -82,16 +82,22 @@
   }
 
   let openIdx = $state<number | null>(null);
-  let openSubmenuPath = $state<string | null>(null);
+  // A hovered submenu closes again as soon as the pointer leaves its row. A
+  // *pinned* one — opened by click or by keyboard — stays put until it is
+  // dismissed, so reaching its children never means racing the pointer.
+  //
+  // One value rather than a path plus a `pinned` flag: pinned-with-nothing-
+  // open is not a state this menu can be in, and two fields could express it.
+  let openSubmenu = $state<{ key: string; pinned: boolean } | null>(null);
 
   function toggle(i: number) {
     openIdx = openIdx === i ? null : i;
-    openSubmenuPath = null;
+    openSubmenu = null;
   }
 
   function close() {
     openIdx = null;
-    openSubmenuPath = null;
+    openSubmenu = null;
     menuHoverStore.clear();
   }
 
@@ -141,15 +147,17 @@
   function submenuKey(ev: KeyboardEvent, key: string) {
     if (ev.key === "ArrowRight" || ev.key === "Enter") {
       ev.preventDefault();
-      openSubmenuPath = key;
+      // The keyboard leaves the pointer wherever it was, so a hover-opened
+      // submenu would be closed by the next re-render. Pin it.
+      openSubmenu = { key, pinned: true };
     } else if (ev.key === "ArrowLeft") {
       ev.preventDefault();
-      openSubmenuPath = null;
+      openSubmenu = null;
     }
   }
 
   function isSubmenuOpen(key: string): boolean {
-    return openSubmenuPath === key;
+    return openSubmenu?.key === key;
   }
 </script>
 
@@ -186,14 +194,23 @@
                 class:submenu-open={isSubmenuOpen(subKey)}
                 onmouseenter={() => {
                   onItemEnter(child, root.hint);
-                  openSubmenuPath = subKey;
+                  // Re-entering a row a click already pinned must not
+                  // silently unpin it.
+                  if (openSubmenu?.key !== subKey) openSubmenu = { key: subKey, pinned: false };
                 }}
                 onmouseleave={() => {
-                  if (openSubmenuPath === subKey) openSubmenuPath = null;
+                  if (openSubmenu?.key === subKey && !openSubmenu.pinned) openSubmenu = null;
                 }}
                 onfocusin={() => {
                   onItemEnter(child, root.hint);
-                  openSubmenuPath = subKey;
+                  // The guard is load-bearing, and not for the reason the
+                  // one on `onmouseenter` is. A pointer click focuses the
+                  // trigger *before* it fires `onclick`, so pinning here
+                  // unconditionally would leave the click seeing an
+                  // already-pinned submenu and toggling it straight back
+                  // shut. Only focus that arrives without the pointer —
+                  // Tab, or ArrowDown into the row — has nothing open yet.
+                  if (openSubmenu?.key !== subKey) openSubmenu = { key: subKey, pinned: true };
                 }}
                 onkeydown={(e) => submenuKey(e, subKey)}
                 role="presentation"
@@ -206,7 +223,11 @@
                   aria-expanded={isSubmenuOpen(subKey)}
                   onclick={(e) => {
                     e.stopPropagation();
-                    openSubmenuPath = isSubmenuOpen(subKey) ? null : subKey;
+                    // Click pins a hover-opened submenu rather than toggling
+                    // it shut, so one click always leaves the children
+                    // reachable. A second click dismisses it.
+                    if (isSubmenuOpen(subKey) && openSubmenu?.pinned) openSubmenu = null;
+                    else openSubmenu = { key: subKey, pinned: true };
                   }}
                 >
                   <span class="check" aria-hidden="true"></span>

@@ -262,7 +262,6 @@ settings-ix-throttle = バックグラウンドインデックス作成の制限
 # §8.12 Indexes → Volumes.
 settings-vol-auto-fixed = 新しい固定ボリュームを自動的に追加
 settings-vol-auto-removable = 新しいリムーバブルボリュームを自動的に追加
-settings-vol-auto-remove-offline = オフラインのボリュームを自動的に削除
 settings-vol-detected = 検出されたボリューム
 settings-vol-include = インデックスに含める
 settings-vol-include-only = 次のみを含める（glob／正規表現）
@@ -981,3 +980,6 @@ media-play-pause = 再生／一時停止
 media-seek = シーク
 media-loop = ループ
 media-volume = 音量
+
+ops-not-undoable-trash-restore-unsupported = This delete cannot be undone: macOS does not let apps restore from the Trash. Open the Trash in Finder and use Put Back.
+ops-not-undoable-source-changed = This cannot be undone: the file has moved or changed since the operation.

@@ -94,6 +94,7 @@
   type="button"
   class="row {hit.lens}"
   class:selected
+  role="option"
   aria-selected={selected}
   title={showTooltips ? hit.path : undefined}
   style="height: {heightVar};"

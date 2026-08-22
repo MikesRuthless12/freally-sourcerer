@@ -69,7 +69,7 @@
     </header>
     {#if !collapsed}
       <ColumnHeaderRow />
-      <div class="rows" role="listbox" aria-label={title}>
+      <div class="rows" role="listbox" aria-label={title} aria-multiselectable="true">
         {#if grouped}
           {#each clusters as cluster (cluster.label + cluster.start)}
             <div class="group-header" role="presentation">

@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+use super::command_approvals;
 use super::files::MAX_CLIPBOARD_BYTES;
 use super::known_paths::{KnownPaths, Provenance};
 use super::settings::SettingsStore;
@@ -186,10 +188,16 @@ pub async fn open_terminal_here(path: String, known: State<'_, KnownPaths>) -> R
 /// `program` field over IPC would make this an arbitrary-process-
 /// execution primitive: argv-safety is no protection when the caller
 /// also chooses the executable, and `/bin/sh -c …` is one call away.
+///
+/// That reasoning holds only as far as the saved set is trustworthy, and
+/// `settings_set` — the write path a compromised webview would use — is what
+/// saves it. So a program also has to be approved once, at a native dialog,
+/// before it can run. See [`command_approvals`].
 #[tauri::command]
 pub async fn run_custom_command(
     command_id: String,
     path: String,
+    app: AppHandle,
     known: State<'_, KnownPaths>,
     settings: State<'_, SettingsStore>,
 ) -> Result<(), String> {
@@ -205,7 +213,53 @@ pub async fn run_custom_command(
             command.name
         ));
     }
+    // `spawn_blocking`: the approval both reads a file and parks on a native
+    // modal that a user can leave open for minutes. Doing that on the async
+    // runtime holds one of its workers for the whole time.
+    let for_approval = command.clone();
+    let approved =
+        tauri::async_runtime::spawn_blocking(move || approve_program_blocking(&app, &for_approval))
+            .await
+            .map_err(|e| e.to_string())??;
+    if !approved {
+        // Not an error the user needs to see twice — they just declined.
+        return Ok(());
+    }
     shell_actions::run_custom_command(&command, &p).map_err(|e| e.to_string())
+}
+
+/// Has this program been approved to run? Asks once, natively, if not.
+///
+/// Blocking rather than async because the answer gates a spawn: returning
+/// early and launching on a callback would reintroduce exactly the
+/// no-user-gesture path this closes. The caller runs it on a blocking
+/// thread so neither the file read nor the modal occupies a runtime worker.
+fn approve_program_blocking(app: &AppHandle, command: &CustomCommand) -> Result<bool, String> {
+    let path = command_approvals::approvals_path(app);
+    let mut approvals = command_approvals::Approvals::load(&path);
+    if approvals.contains(&command.program) {
+        return Ok(true);
+    }
+    let approved = app
+        .dialog()
+        .message(command_approvals::prompt_body(
+            &command.name,
+            &command.program,
+            &command.args,
+        ))
+        .title("Run this program?")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Run".into(),
+            "Cancel".into(),
+        ))
+        .blocking_show();
+    if !approved {
+        return Ok(false);
+    }
+    approvals.insert(&command.program);
+    approvals.save(&path);
+    Ok(true)
 }
 
 /// Look one command up in the persisted settings. Returns `None` for an

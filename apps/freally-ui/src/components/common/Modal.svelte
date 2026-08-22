@@ -24,6 +24,7 @@
   // with no backdrop at all are not this component wearing a hat.
 
   import type { Snippet } from "svelte";
+  import { chromeOverrides } from "../../lib/util/modal_style";
 
   interface Props {
     open: boolean;
@@ -43,7 +44,14 @@
      * the app unconfigured with no way back to it.
      */
     dismissOnEscape?: boolean;
-    /** Per-dialog box metrics — width, height, padding, overflow. */
+    /**
+     * Per-dialog box **metrics** — width, height, padding, overflow, layout.
+     *
+     * Not chrome: background, border, border-radius, box-shadow and color
+     * belong to the shell, and are what make every dialog look like the same
+     * app. Setting one here beats the scoped class silently, so it is caught
+     * in dev rather than discovered later as a second corner radius.
+     */
     style?: string;
     /** `data-testid` on the panel, where an e2e spec targets one. */
     testId?: string;
@@ -62,6 +70,22 @@
   }: Props = $props();
 
   let panel = $state<HTMLElement | undefined>();
+
+  if (import.meta.env.DEV) {
+    // In an effect, not read once at init: a dialog that recomputes its
+    // metrics can reach into chrome on a later render than the first.
+    $effect(() => {
+      const stolen = chromeOverrides(style);
+      if (stolen.length === 0) return;
+      console.error(
+        "Modal: style sets shell chrome (" +
+          stolen.join(", ") +
+          "). The `style` prop is for box metrics; chrome belongs to `.panel` " +
+          "so every dialog matches. Change it in Modal's own stylesheet if " +
+          "the whole app should follow."
+      );
+    });
+  }
 
   $effect(() => {
     if (!open) return;

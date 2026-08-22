@@ -262,7 +262,6 @@ settings-ix-throttle = पृष्ठभूमि अनुक्रमण थ�
 # §8.12 Indexes → Volumes.
 settings-vol-auto-fixed = नए स्थिर वॉल्यूम स्वतः शामिल करें
 settings-vol-auto-removable = नए हटाने योग्य वॉल्यूम स्वतः शामिल करें
-settings-vol-auto-remove-offline = ऑफ़लाइन वॉल्यूम स्वतः हटाएँ
 settings-vol-detected = पता लगाए गए वॉल्यूम
 settings-vol-include = अनुक्रमणिका में शामिल करें
 settings-vol-include-only = केवल शामिल करें (glob/regex)
@@ -981,3 +980,6 @@ media-play-pause = चलाएँ या रोकें
 media-seek = आगे-पीछे करें
 media-loop = दोहराएँ
 media-volume = आवाज़
+
+ops-not-undoable-trash-restore-unsupported = This delete cannot be undone: macOS does not let apps restore from the Trash. Open the Trash in Finder and use Put Back.
+ops-not-undoable-source-changed = This cannot be undone: the file has moved or changed since the operation.

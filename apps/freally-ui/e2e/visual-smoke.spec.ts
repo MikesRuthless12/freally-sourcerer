@@ -85,62 +85,18 @@ test("connect-endpoint dialog opens via Tools menu", async ({ page }) => {
 
 // ---- Build 2 (v0.22.0) ----
 
-// The panel itself is fine — this is the *test* failing to drive a
-// submenu that opens on `mouseenter` and closes on `mouseleave`. Six
-// approaches all fail the same way: the item is found and reported
-// visible, then detaches before the next call. Synthetic events and
-// keyboard routes leave the real pointer parked on the "Tools" button, so
-// the next Svelte re-render fires a `mouseenter` there and resets the
-// open submenu; moving the real pointer in makes it flap instead.
-//
-// Left failing-visibly rather than deleted or forced green: every other
-// Tools entry is reachable in one click, and this is the only submenu in
-// the menu bar. Worth revisiting when the menu grows a click-to-pin
-// submenu (which would also help anyone using a trackpad), rather than
-// contorting the spec further.
-test.fixme("index health panel opens via Tools › Index maintenance (SRC-M13)", async ({ page }) => {
+// Submenus are click-to-pin: a click holds the submenu open regardless of
+// where the pointer then travels, so the child is reachable without racing
+// a `mouseleave`. Before that, this spec was `test.fixme` — the submenu
+// opened on `mouseenter` and closed on `mouseleave`, so every route toward
+// the child detached it mid-click.
+test("index health panel opens via Tools › Index maintenance (SRC-M13)", async ({ page }) => {
   await bootMain(page);
   await page.getByRole("button", { name: "Tools" }).click();
-  // Open the submenu and activate its child in a single in-page step.
-  //
-  // The submenu opens on `mouseenter` and closes on `mouseleave`, so any
-  // route that moves Playwright's pointer toward the child crosses out of
-  // the parent row and detaches the item mid-click; Playwright then
-  // retries until timeout while still reporting it visible. Driving it by
-  // keyboard opens it, but the item still vanishes between the assertion
-  // and the next re-resolve.
-  //
-  // What this test is actually for is whether the *panel* renders, so the
-  // navigation is done in one evaluate where nothing can re-resolve. The
-  // menu's own hover behaviour is exercised by `06-connect-endpoint`,
-  // which needs no submenu.
-  // Move the *real* pointer into the submenu row and leave it there.
-  //
-  // The row opens on `mouseenter` and closes on `mouseleave`. Anything
-  // that leaves the real pointer elsewhere — a synthetic event, or a
-  // keyboard-only route — lets the next Svelte re-render fire a
-  // `mouseenter` on whatever the pointer is genuinely over (the "Tools"
-  // button), which resets the open submenu. The item then vanishes
-  // between an assertion and the very next call.
-  //
-  // `mouse.move` jumps straight to the target rather than interpolating,
-  // and the submenu panel is a DOM descendant of the row, so moving from
-  // the row into the panel never fires the row's `mouseleave`.
-  const center = async (name: RegExp) => {
-    const box = await page.getByRole("menuitem", { name }).first().boundingBox();
-    if (!box) throw new Error(`no box for ${name}`);
-    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  };
-
-  const parent = await center(/Index maintenance/);
-  await page.mouse.move(parent.x, parent.y);
-
+  await page.getByRole("menuitem", { name: /Index maintenance/ }).click();
   const child = page.getByRole("menuitem", { name: /Index Health/ });
   await expect(child).toBeVisible();
-  const childPt = await center(/Index Health/);
-  await page.mouse.move(childPt.x, childPt.y);
-  await page.mouse.down();
-  await page.mouse.up();
+  await child.click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   // Both watcher states and the advisory that carries a one-click fix.

@@ -2,6 +2,7 @@
   // SRC-M13 — Tools → Index Health. Shows, per watched root, how far
   // behind live changes the index is, what it dropped, and what to do
   // about it.
+  import { untrack } from "svelte";
   import Modal from "../common/Modal.svelte";
   import { indexHealthStore } from "../../lib/stores/index_health.svelte";
   import { t } from "../../lib/i18n/t";
@@ -14,11 +15,16 @@
   let { open, onClose }: Props = $props();
 
   // Polling costs an RPC every 2s, so it only runs while the panel is up.
+  //
+  // `untrack` so this effect depends on `open` and nothing else — the same
+  // guard `SettingsDialog` uses around `settingsDialog.openDialog`. The store
+  // no longer reads reactive state in `start()`, so this is belt and braces;
+  // it is here because an effect whose cleanup stops a poller and whose body
+  // starts one must never be able to re-run on that poller's own output.
   $effect(() => {
-    if (open) {
-      indexHealthStore.start();
-      return () => indexHealthStore.stop();
-    }
+    if (!open) return;
+    untrack(() => indexHealthStore.start());
+    return () => indexHealthStore.stop();
   });
 
   const health = $derived(indexHealthStore.health);

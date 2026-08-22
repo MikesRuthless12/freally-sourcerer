@@ -262,7 +262,6 @@ settings-ix-throttle = Ograniczanie indeksowania w tle
 # §8.12 Indexes → Volumes.
 settings-vol-auto-fixed = Automatycznie dołączaj nowe woluminy stałe
 settings-vol-auto-removable = Automatycznie dołączaj nowe woluminy wymienne
-settings-vol-auto-remove-offline = Automatycznie usuwaj woluminy offline
 settings-vol-detected = Wykryte woluminy
 settings-vol-include = Dołącz do indeksu
 settings-vol-include-only = Dołącz tylko (glob/regex)
@@ -981,3 +980,6 @@ media-play-pause = Odtwórz lub wstrzymaj
 media-seek = Przewiń
 media-loop = Zapętl
 media-volume = Głośność
+
+ops-not-undoable-trash-restore-unsupported = This delete cannot be undone: macOS does not let apps restore from the Trash. Open the Trash in Finder and use Put Back.
+ops-not-undoable-source-changed = This cannot be undone: the file has moved or changed since the operation.

@@ -74,7 +74,14 @@
   }
 </script>
 
-<aside class="tree" role="tree" aria-label={t("settings-title")}>
+<!-- Deliberately not `role="tree"`. Nothing here implements tree semantics:
+     there is no roving tabindex and no arrow-key navigation, and the thing a
+     user actually operates is the <button> inside each item, which a real
+     treeitem must not contain. Announcing "tree" promised assistive tech a
+     widget that was not there, and the missing aria-selected was the symptom.
+     What this is, is a labelled navigation landmark over a grouped list; the
+     selected panel is already marked with aria-current="page". -->
+<nav class="tree" aria-label={t("settings-title")}>
   <input
     type="search"
     aria-label={t("settings-title")}
@@ -87,11 +94,11 @@
       {@const showThis = matches(group, settingsDialog.search)}
       {#if showThis}
         {#if group.children}
-          <li role="treeitem" aria-expanded="true">
+          <li>
             <span class="group">{t(group.labelKey)}</span>
-            <ul>
+            <ul aria-label={t(group.labelKey)}>
               {#each visibleChildren(group, settingsDialog.search) as child (child.id)}
-                <li role="treeitem">
+                <li>
                   <button
                     type="button"
                     class="leaf"
@@ -109,7 +116,7 @@
             </ul>
           </li>
         {:else}
-          <li role="treeitem">
+          <li>
             <button
               type="button"
               class="leaf top"
@@ -127,7 +134,7 @@
       {/if}
     {/each}
   </ul>
-</aside>
+</nav>
 
 <style>
   .tree {

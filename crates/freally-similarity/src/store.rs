@@ -172,15 +172,21 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<PersistedIndex, SimilarityError> {
         }
         // Bounds-check the heap reference. A truncated write would
         // surface here as `Format`, not as an OOB panic later.
-        if name_len != 0 && file_id != TOMBSTONE_FILE_ID {
-            let s = name_off as usize;
-            let e = s + name_len as usize;
-            if e > heap.len() {
-                return Err(SimilarityError::Format(format!(
-                    "row name slice [{s}..{e}] exceeds heap length {}",
-                    heap.len()
-                )));
-            }
+        //
+        // Checked for **every** row, including tombstoned ones. Skipping
+        // them let a corrupt file carry an out-of-range slice on a row that
+        // nothing reads *today* — the guarantee "a decoded index has only
+        // in-bounds offsets" is worth more than the branch, because the
+        // first code path that revives or inspects a tombstone would
+        // otherwise inherit an OOB read with nothing to point at.
+        // `tombstone_row_locked` zeroes `name_len`, so our own files pass.
+        let s = name_off as usize;
+        let e = s.saturating_add(name_len as usize);
+        if e > heap.len() {
+            return Err(SimilarityError::Format(format!(
+                "row name slice [{s}..{e}] exceeds heap length {}",
+                heap.len()
+            )));
         }
         rows.push(PersistedRow {
             file_id,
@@ -196,6 +202,78 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<PersistedIndex, SimilarityError> {
 mod tests {
     use super::*;
     use crate::minhash::MinHashFamily;
+
+    /// TASK-046a. The heap bounds check used to be skipped for tombstoned
+    /// rows and for zero-length names, so a corrupt or hostile `minhash.idx`
+    /// could carry an out-of-range slice on a row `decode` happily admitted.
+    /// Nothing dereferences a tombstone's name today — which is exactly why
+    /// this needs a test rather than a comment: the first code path that
+    /// revives or inspects one would inherit an out-of-bounds read with
+    /// nothing left to point at the cause.
+    #[test]
+    fn a_tombstoned_row_cannot_smuggle_an_out_of_range_name_slice() {
+        let mh = MinHashFamily::new();
+        let mut idx = PersistedIndex::default();
+        idx.heap.extend_from_slice(b"hello.txt");
+        idx.rows.push(PersistedRow {
+            file_id: TOMBSTONE_FILE_ID,
+            name_off: 0,
+            // Nine bytes of heap, forty claimed.
+            name_len: 40,
+            signature: mh.signature("hello.txt"),
+        });
+        let err = decode(&encode(&idx)).expect_err("out-of-range slice must be refused");
+        assert!(
+            matches!(err, SimilarityError::Format(_)),
+            "expected a Format error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_live_row_whose_slice_runs_past_the_heap_is_refused() {
+        let mh = MinHashFamily::new();
+        let mut idx = PersistedIndex::default();
+        idx.heap.extend_from_slice(b"hello.txt");
+        idx.rows.push(PersistedRow {
+            file_id: 42,
+            name_off: 8,
+            name_len: 40,
+            signature: mh.signature("hello.txt"),
+        });
+        assert!(decode(&encode(&idx)).is_err());
+    }
+
+    /// The offset alone can be past the end even when the length is zero,
+    /// which the old `name_len != 0` guard waved through.
+    #[test]
+    fn a_zero_length_name_past_the_heap_end_is_refused() {
+        let mh = MinHashFamily::new();
+        let mut idx = PersistedIndex::default();
+        idx.heap.extend_from_slice(b"hello.txt");
+        idx.rows.push(PersistedRow {
+            file_id: 42,
+            name_off: 99,
+            name_len: 0,
+            signature: mh.signature("hello.txt"),
+        });
+        assert!(decode(&encode(&idx)).is_err());
+    }
+
+    /// A tombstone written by *this* build zeroes `name_len`, so the stricter
+    /// check must not reject a file we produced ourselves.
+    #[test]
+    fn our_own_tombstones_still_decode() {
+        let mh = MinHashFamily::new();
+        let mut idx = PersistedIndex::default();
+        idx.heap.extend_from_slice(b"hello.txt");
+        idx.rows.push(PersistedRow {
+            file_id: TOMBSTONE_FILE_ID,
+            name_off: 0,
+            name_len: 0,
+            signature: mh.signature("hello.txt"),
+        });
+        assert!(decode(&encode(&idx)).is_ok());
+    }
 
     #[test]
     fn header_round_trips() {

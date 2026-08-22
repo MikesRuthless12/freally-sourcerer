@@ -56,6 +56,17 @@ pub struct FileRow {
     pub volume: String,
 }
 
+/// Ids per `IN (…)` batch. See [`Store::get_many`].
+const ID_CHUNK: usize = 250;
+
+/// The hydration SELECT for `n` bound ids.
+fn select_by_ids_sql(n: usize) -> String {
+    let placeholders = std::iter::repeat_n("?", n).collect::<Vec<_>>().join(",");
+    format!(
+        "SELECT file_id, path, name, name_lower, ext, size, mtime_ns, ctime_ns, attrs, volume FROM files WHERE file_id IN ({placeholders})"
+    )
+}
+
 impl Store {
     pub fn open(db_path: &Path) -> Result<Self, IndexError> {
         let conn = Connection::open_with_flags(
@@ -70,6 +81,8 @@ impl Store {
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
             PRAGMA temp_store=MEMORY;
+            PRAGMA cache_size=-65536;
+            PRAGMA mmap_size=268435456;
             PRAGMA foreign_keys=ON;
             ",
         )?;
@@ -263,23 +276,32 @@ impl Store {
     /// query executor; per-row `get()` would burn the 16ms budget on
     /// large candidate sets. Order of returned rows is unspecified —
     /// the caller sorts by their `SortSpec`.
+    /// Ids per `IN (…)`. SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` is 999
+    /// (older) / 32766 (newer); this stays well under the conservative bound.
     pub fn get_many(&self, file_ids: &[i64]) -> Result<Vec<FileRow>, IndexError> {
         if file_ids.is_empty() {
             return Ok(Vec::new());
         }
         let conn = self.inner.lock();
         let mut out = Vec::with_capacity(file_ids.len());
-        // SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999 (older) /
-        // 32766 (newer). Stay well under the conservative bound.
-        for chunk in file_ids.chunks(250) {
-            let placeholders = std::iter::repeat_n("?", chunk.len())
-                .collect::<Vec<_>>()
-                .join(",");
-            let sql = format!(
-                "SELECT file_id, path, name, name_lower, ext, size, mtime_ns, ctime_ns, attrs, volume \
-                 FROM files WHERE file_id IN ({placeholders})"
-            );
-            let mut stmt = conn.prepare(&sql)?;
+        // The full-chunk SQL is built once rather than once per chunk: it is a
+        // ~600-byte string that is then handed to `prepare_cached` as its hash
+        // key, and a 250k-candidate query walks a thousand chunks.
+        let full_sql = select_by_ids_sql(ID_CHUNK);
+        for chunk in file_ids.chunks(ID_CHUNK) {
+            // Only the final short chunk needs a shape of its own.
+            let tail_sql;
+            let sql = if chunk.len() == ID_CHUNK {
+                &full_sql
+            } else {
+                tail_sql = select_by_ids_sql(chunk.len());
+                &tail_sql
+            };
+            // `prepare_cached`, not `prepare`: every full chunk is the same
+            // statement, so SQLite compiles it once for the whole query rather
+            // than once per chunk. Compiling it per chunk was part of what made
+            // hydration ~78% of a filename query.
+            let mut stmt = conn.prepare_cached(sql)?;
             let params = rusqlite::params_from_iter(chunk.iter());
             let mut rows = stmt.query(params)?;
             while let Some(r) = rows.next()? {

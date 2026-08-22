@@ -262,7 +262,6 @@ settings-ix-throttle = Arka plan dizinleme kısıtlaması
 # §8.12 Indexes → Volumes.
 settings-vol-auto-fixed = Yeni sabit birimleri otomatik dahil et
 settings-vol-auto-removable = Yeni çıkarılabilir birimleri otomatik dahil et
-settings-vol-auto-remove-offline = Çevrimdışı birimleri otomatik kaldır
 settings-vol-detected = Algılanan birimler
 settings-vol-include = Dizine dahil et
 settings-vol-include-only = Yalnızca dahil et (glob/regex)
@@ -981,3 +980,6 @@ media-play-pause = Oynat veya duraklat
 media-seek = İleri sar
 media-loop = Döngü
 media-volume = Ses düzeyi
+
+ops-not-undoable-trash-restore-unsupported = This delete cannot be undone: macOS does not let apps restore from the Trash. Open the Trash in Finder and use Put Back.
+ops-not-undoable-source-changed = This cannot be undone: the file has moved or changed since the operation.

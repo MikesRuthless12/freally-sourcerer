@@ -262,7 +262,6 @@ settings-ix-throttle = Обмеження фонового індексуван�
 # §8.12 Indexes → Volumes.
 settings-vol-auto-fixed = Автоматично додавати нові фіксовані томи
 settings-vol-auto-removable = Автоматично додавати нові знімні томи
-settings-vol-auto-remove-offline = Автоматично вилучати недоступні томи
 settings-vol-detected = Виявлені томи
 settings-vol-include = Додати до індексу
 settings-vol-include-only = Лише ці (glob/regex)
@@ -981,3 +980,6 @@ media-play-pause = Відтворити або пауза
 media-seek = Перемотати
 media-loop = Повтор
 media-volume = Гучність
+
+ops-not-undoable-trash-restore-unsupported = This delete cannot be undone: macOS does not let apps restore from the Trash. Open the Trash in Finder and use Put Back.
+ops-not-undoable-source-changed = This cannot be undone: the file has moved or changed since the operation.

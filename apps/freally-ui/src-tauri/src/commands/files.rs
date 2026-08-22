@@ -157,10 +157,46 @@ pub fn files_delete(paths: Vec<String>, known: State<'_, KnownPaths>) -> Result<
     // calling. The `trash` crate routes to the right native API on each
     // OS — Recycle Bin on Windows, Trash on macOS, ~/.local/share/Trash
     // (XDG) on Linux.
-    for p in &paths {
-        trash::delete(p).map_err(|e| format!("failed to trash {p}: {e}"))?;
+    //
+    // Journal what actually went, not what was asked for: the loop stops at
+    // the first failure, so recording `paths` up front would offer an undo
+    // for files still sitting on disk.
+    let mut trashed = Vec::with_capacity(paths.len());
+    let outcome = paths.iter().try_for_each(|p| {
+        trash::delete(p)
+            .map(|()| trashed.push(p.clone()))
+            .map_err(|e| format!("failed to trash {p}: {e}"))
+    });
+    record_delete(&trashed);
+    outcome
+}
+
+/// Record a delete so Undo can offer it back.
+///
+/// Undoability is the platform's answer, not an assumption: Windows and
+/// freedesktop Linux can enumerate and restore the trash, macOS cannot —
+/// Finder owns Put Back and exposes no API. Recording the entry anyway, with
+/// the reason attached, is what makes the gap visible in the UI instead of
+/// leaving Undo silently doing nothing after a delete.
+fn record_delete(trashed: &[String]) {
+    if trashed.is_empty() {
+        return;
     }
-    Ok(())
+    super::rename::record_operation(
+        freally_rpc::OperationKind::Delete,
+        trashed
+            .iter()
+            .map(|p| freally_rpc::OperationItem {
+                from: p.clone(),
+                // Empty by construction — `validate_shape` rejects a delete
+                // that carries a destination, since that would be a rename
+                // wearing a delete's label.
+                to: String::new(),
+            })
+            .collect(),
+        (!freally_rpc::trash_restore_supported())
+            .then_some(freally_rpc::NotUndoable::TrashRestoreUnsupported),
+    );
 }
 
 #[tauri::command]

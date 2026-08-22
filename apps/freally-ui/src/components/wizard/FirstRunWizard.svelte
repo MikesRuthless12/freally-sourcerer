@@ -78,7 +78,7 @@
   label={t("wizard-aria-label")}
   dismissOnBackdrop={false}
   dismissOnEscape={false}
-  style="width: 540px; display: flex; flex-direction: column; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);"
+  style="width: 540px; display: flex; flex-direction: column;"
 >
   <header>
     <h2>{t("wizard-title")}</h2>

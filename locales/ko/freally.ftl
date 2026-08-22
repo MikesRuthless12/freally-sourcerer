@@ -262,7 +262,6 @@ settings-ix-throttle = 백그라운드 색인 제한
 # §8.12 Indexes → Volumes.
 settings-vol-auto-fixed = 새 고정 볼륨 자동 포함
 settings-vol-auto-removable = 새 이동식 볼륨 자동 포함
-settings-vol-auto-remove-offline = 오프라인 볼륨 자동 제거
 settings-vol-detected = 감지된 볼륨
 settings-vol-include = 색인에 포함
 settings-vol-include-only = 포함만(glob/regex)
@@ -981,3 +980,6 @@ media-play-pause = 재생 또는 일시정지
 media-seek = 탐색
 media-loop = 반복
 media-volume = 음량
+
+ops-not-undoable-trash-restore-unsupported = This delete cannot be undone: macOS does not let apps restore from the Trash. Open the Trash in Finder and use Put Back.
+ops-not-undoable-source-changed = This cannot be undone: the file has moved or changed since the operation.

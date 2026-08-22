@@ -262,7 +262,6 @@ settings-ix-throttle = تقييد الفهرسة في الخلفية
 # §8.12 Indexes → Volumes.
 settings-vol-auto-fixed = تضمين وحدات التخزين الثابتة الجديدة تلقائيًا
 settings-vol-auto-removable = تضمين وحدات التخزين القابلة للإزالة الجديدة تلقائيًا
-settings-vol-auto-remove-offline = إزالة وحدات التخزين غير المتصلة تلقائيًا
 settings-vol-detected = وحدات التخزين المكتشفة
 settings-vol-include = تضمين في الفهرس
 settings-vol-include-only = التضمين فقط (glob/regex)
@@ -981,3 +980,6 @@ media-play-pause = تشغيل أو إيقاف مؤقت
 media-seek = تقديم
 media-loop = تكرار
 media-volume = مستوى الصوت
+
+ops-not-undoable-trash-restore-unsupported = This delete cannot be undone: macOS does not let apps restore from the Trash. Open the Trash in Finder and use Put Back.
+ops-not-undoable-source-changed = This cannot be undone: the file has moved or changed since the operation.

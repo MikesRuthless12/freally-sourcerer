@@ -677,9 +677,20 @@ fn validate_custom_commands(s: &SettingsState) -> Result<(), String> {
             cmds.len()
         ));
     }
+    // Ids must be unique. `configured_command` resolves a run request with
+    // `.find(|c| c.id == id)`, so a duplicate id is not a cosmetic problem:
+    // the first entry wins and the second is unreachable, which means a
+    // patch can *shadow* a command the user set up and trusts by inserting
+    // its own copy ahead of it under the same id. Rejecting the whole patch
+    // is the right call over de-duplicating it — silently dropping one of
+    // two commands a user can see in Settings is its own surprise.
+    let mut seen: HashSet<&str> = HashSet::with_capacity(cmds.len());
     for c in &cmds {
         if c.id.trim().is_empty() {
             return Err("custom command has no id".into());
+        }
+        if !seen.insert(c.id.as_str()) {
+            return Err(format!("duplicate custom command id `{}`", c.id));
         }
         for (field, value) in [("id", &c.id), ("name", &c.name), ("program", &c.program)] {
             if value.len() > MAX_CUSTOM_COMMAND_TEXT {
@@ -795,9 +806,6 @@ pub fn settings_apply_to_daemon(state: SettingsState) -> Result<(), String> {
         }
         if let Some(b) = vc.get("auto_include_removable").and_then(|v| v.as_bool()) {
             payload.insert("auto_include_removable".into(), serde_json::Value::Bool(b));
-        }
-        if let Some(b) = vc.get("auto_remove_offline").and_then(|v| v.as_bool()) {
-            payload.insert("auto_remove_offline".into(), serde_json::Value::Bool(b));
         }
     }
     daemon
@@ -994,5 +1002,35 @@ mod custom_command_bounds {
             "id": "  ", "name": "a", "program": "sh"
         }]));
         assert!(validate_and_clamp(&mut s).is_err());
+    }
+
+    /// TASK-098a. `configured_command` resolves with `.find(|c| c.id == id)`,
+    /// so of two commands sharing an id the first wins and the second can
+    /// never run. That makes a duplicate a *shadowing* primitive rather than
+    /// a cosmetic flaw: a patch can put its own entry ahead of one the user
+    /// set up and trusts, and the run request still names the id the user's
+    /// menu shows.
+    #[test]
+    fn a_duplicate_command_id_is_rejected() {
+        let mut s = state_with(serde_json::json!([
+            { "id": "edit", "name": "Open in editor", "program": "code" },
+            { "id": "edit", "name": "Open in editor", "program": "definitely-not-code" }
+        ]));
+        let err = validate_and_clamp(&mut s).expect_err("duplicate id accepted");
+        assert!(
+            err.contains("duplicate"),
+            "the error should name the problem, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn distinct_ids_still_pass() {
+        // The guard must not reject two commands that merely point at the
+        // same program, which is an ordinary thing to want.
+        let mut s = state_with(serde_json::json!([
+            { "id": "edit", "name": "Open in editor", "program": "code" },
+            { "id": "diff", "name": "Diff", "program": "code", "args": ["--diff"] }
+        ]));
+        assert!(validate_and_clamp(&mut s).is_ok());
     }
 }

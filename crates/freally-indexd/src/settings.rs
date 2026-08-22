@@ -15,8 +15,6 @@ pub struct SettingsApply {
     pub auto_include_fixed: Option<bool>,
     #[serde(default)]
     pub auto_include_removable: Option<bool>,
-    #[serde(default)]
-    pub auto_remove_offline: Option<bool>,
     /// Default ExtractorMode at the pipeline level.
     #[serde(default)]
     pub default_extractor_mode: Option<freally_rpc::ExtractorMode>,
@@ -35,9 +33,6 @@ impl SettingsApply {
         }
         if let Some(b) = self.auto_include_removable {
             state.volumes.write().await.auto_include_removable = b;
-        }
-        if let Some(b) = self.auto_remove_offline {
-            state.volumes.write().await.auto_remove_offline = b;
         }
         if let Some(m) = self.default_extractor_mode {
             let pipeline = state.pipeline.write().await;

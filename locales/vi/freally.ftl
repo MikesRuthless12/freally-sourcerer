@@ -262,7 +262,6 @@ settings-ix-throttle = Điều tiết lập chỉ mục nền
 # §8.12 Indexes → Volumes.
 settings-vol-auto-fixed = Tự động thêm ổ đĩa cố định mới
 settings-vol-auto-removable = Tự động thêm ổ đĩa di động mới
-settings-vol-auto-remove-offline = Tự động gỡ ổ đĩa ngoại tuyến
 settings-vol-detected = Ổ đĩa đã phát hiện
 settings-vol-include = Đưa vào chỉ mục
 settings-vol-include-only = Chỉ đưa vào (glob/regex)
@@ -981,3 +980,6 @@ media-play-pause = Phát hoặc tạm dừng
 media-seek = Tua
 media-loop = Lặp
 media-volume = Âm lượng
+
+ops-not-undoable-trash-restore-unsupported = This delete cannot be undone: macOS does not let apps restore from the Trash. Open the Trash in Finder and use Put Back.
+ops-not-undoable-source-changed = This cannot be undone: the file has moved or changed since the operation.

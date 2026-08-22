@@ -34,7 +34,7 @@
   {open}
   {onClose}
   label={t("bookmarks-organize-title")}
-  style="width: 540px; max-height: 70vh; display: flex; flex-direction: column; border-radius: 8px;"
+  style="width: 540px; max-height: 70vh; display: flex; flex-direction: column;"
 >
   <header>
     <h2>{t("bookmarks-organize-title")}</h2>
