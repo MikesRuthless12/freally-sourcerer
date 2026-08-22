@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>freally-sourcerer</id>
+    <version>0.23.2</version>
+    <packageSourceUrl>https://github.com/MikesRuthless12/freally-sourcerer/tree/main/packaging/chocolatey</packageSourceUrl>
+    <owners>Mike Weaver</owners>
+    <title>Freally Sourcerer</title>
+    <authors>Mike Weaver</authors>
+    <projectUrl>https://github.com/MikesRuthless12/freally-sourcerer</projectUrl>
+    <iconUrl>https://raw.githubusercontent.com/MikesRuthless12/freally-sourcerer/main/assets/icons/freally.svg</iconUrl>
+    <copyright>Copyright (c) 2026 Mike Weaver. All rights reserved.</copyright>
+    <licenseUrl>https://github.com/MikesRuthless12/freally-sourcerer/blob/main/LICENSE.md</licenseUrl>
+    <requireLicenseAcceptance>true</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/MikesRuthless12/freally-sourcerer</projectSourceUrl>
+    <docsUrl>https://mikesruthless12.github.io/freally-sourcerer/documentation.html</docsUrl>
+    <bugTrackerUrl>https://github.com/MikesRuthless12/freally-sourcerer/issues</bugTrackerUrl>
+    <tags>search file-search everything productivity indexer</tags>
+    <summary>One search. Every source. Every OS.</summary>
+    <description>Freally is a cross-platform realtime filesystem search engine — filename, content, audio, and similarity lenses on one journal-fed index.</description>
+    <releaseNotes>https://github.com/MikesRuthless12/freally-sourcerer/releases/tag/v0.23.2</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

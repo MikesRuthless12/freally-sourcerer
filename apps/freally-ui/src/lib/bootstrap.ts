@@ -684,7 +684,6 @@ function registerHandlers() {
       "https://github.com/MikesRuthless12/freally-sourcerer/wiki/similarity",
     "help.command_line_options": "https://github.com/MikesRuthless12/freally-sourcerer/wiki/cli",
     "help.website": "https://github.com/MikesRuthless12/freally-sourcerer",
-    "help.check_for_updates": "https://github.com/MikesRuthless12/freally-sourcerer/releases",
     "help.sponsor": "https://github.com/sponsors/MikesRuthless12"
   };
   for (const [id, url] of Object.entries(helpUrls)) {
@@ -697,6 +696,14 @@ function registerHandlers() {
     });
   }
   registry.register("help.about", async () => dialogsStore.open("about"));
+  registry.register("help.report_bug", async () => dialogsStore.open("bug_report"));
+  // TASK-UP1 — this used to open the releases page in a browser, which
+  // told the user nothing about the copy they are running. It opens the
+  // Updates panel, which asks the updater and can install from there.
+  registry.register("help.check_for_updates", async () => {
+    settingsDialog.setSelected("privacy");
+    dialogsStore.open("settings");
+  });
 
   // Sanity: every CommandId must have a handler. Cheap startup check.
   for (const id of COMMAND_IDS) {

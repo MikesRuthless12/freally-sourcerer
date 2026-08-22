@@ -3,7 +3,7 @@
 //
 // Mirrors the single matrix `ci` job (windows / macOS / ubuntu):
 //   Rust: cargo fmt --check · clippy -D warnings · nextest · doctests ·
-//         src-tauri fmt+clippy · xtask i18n-lint (+ cargo-deny if
+//         src-tauri fmt+clippy+test · xtask i18n-lint (+ cargo-deny if
 //         installed — CI runs it on Linux only)
 //   UI (apps/freally-ui, pnpm): svelte-check · vitest unit · tauri build
 //         --debug --no-bundle
@@ -104,6 +104,10 @@ if (!uiOnly && hasRust) {
     "cargo clippy --all-targets --locked -- -D warnings",
     tauriDir
   ]);
+  // Its tests too. Same exclusion, same consequence one step over: the
+  // menu-bar / status-bar parity suites and the Phase-13 packaging +
+  // updater gates live here, and `--workspace` has never run them.
+  rustLane.push(["rust: test (src-tauri)", "cargo test --locked", tauriDir]);
   rustLane.push([hasNextest ? "rust: nextest" : "rust: test", testCmd, repoRoot]);
   // nextest does not run doctests, so CI runs them separately (Linux
   // only, since they are not platform-specific). Mirrored here or a

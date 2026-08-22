@@ -21,12 +21,40 @@
   import QuickLook from "./components/preview/QuickLook.svelte";
   import { bootstrap } from "./lib/bootstrap";
   import { dialogsStore } from "./lib/stores/dialogs.svelte";
+  import BugReportDialog from "./components/dialogs/BugReportDialog.svelte";
+  import { context as bugReportContext } from "./lib/ipc/bugreport";
+  import { checkOnLaunch } from "./lib/stores/updates.svelte";
   import { settingsStore } from "./lib/stores/settings.svelte";
   import { queryStore } from "./lib/stores/query.svelte";
   import { quickLookStore } from "./lib/stores/quicklook.svelte";
 
   onMount(() => {
     void bootstrap();
+    // TASK-BR1 — if the last run left a crash report behind, offer it.
+    // An offer, not a send: the dialog shows the exact text and every
+    // submit button opens a draft the user reads first.
+    //
+    // Runs alongside bootstrap rather than after it: the dialog only
+    // needs the window, which `onMount` already guarantees, and waiting
+    // for the daemon to boot would leave a crash unacknowledged for the
+    // ten-odd seconds a canonical-store replay takes. Failure is
+    // swallowed because a bug reporter that breaks the app it reports on
+    // is worse than one that stays quiet.
+    void (async () => {
+      let hasPendingCrash = false;
+      try {
+        const ctx = await bugReportContext();
+        hasPendingCrash = !!ctx.pendingCrash;
+        if (hasPendingCrash) dialogsStore.open("bug_report");
+      } catch (e) {
+        console.warn("[bugreport] pending-crash check failed:", e);
+      }
+      // TASK-UP1 — the launch check, which stands down when a crash
+      // report is already claiming the dialog slot. Being asked to update
+      // by the app that just crashed on you, before it acknowledges the
+      // crash, reads as the app ignoring what happened.
+      await checkOnLaunch(hasPendingCrash);
+    })();
   });
 
   // Live "always on top" effect: re-applies on every settings change AND
@@ -93,6 +121,10 @@
 />
 <PermissionHealthDialog
   open={dialogsStore.active === "permission_health"}
+  onClose={() => dialogsStore.close()}
+/>
+<BugReportDialog
+  open={dialogsStore.active === "bug_report"}
   onClose={() => dialogsStore.close()}
 />
 <ResultContextMenu />

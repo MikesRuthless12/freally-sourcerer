@@ -6,6 +6,7 @@
 //! `src/lib/ipc/types.ts` is stable across the swap; `commands/` types
 //! mirror that contract byte-for-byte.
 
+pub mod bugreport;
 pub mod commands;
 pub mod daemon;
 pub mod hotkey;
@@ -13,6 +14,7 @@ pub mod menu_spec;
 pub mod native_menu;
 pub mod preview;
 pub mod shell_actions;
+pub mod updates;
 pub mod url_protocol;
 
 use std::sync::Arc;
@@ -159,6 +161,15 @@ pub fn run() {
                 })
                 .expect("failed to spawn daemon-boot thread");
 
+            // TASK-BR1 — chain the crash-capturing hook onto the tracing
+            // one installed before the builder. It has to happen here
+            // rather than there because the crash directory comes from
+            // `app_data_root`, and a panicking thread cannot ask Tauri
+            // for a path while it is dying.
+            bugreport::install_panic_hook(
+                commands::settings::app_data_root(handle).join("crash-reports"),
+            );
+
             app.manage(BookmarksStore::new(handle));
             app.manage(SettingsStore::new(handle));
             app.manage(KnownPaths::new());
@@ -183,6 +194,18 @@ pub fn run() {
             app_exit,
             // Version + portable-mode status, read from the process.
             commands::app_env::app_environment,
+            // TASK-BR1 — opt-in anonymous bug reporting. Every one of
+            // these ends at a draft the user submits; nothing sends.
+            bugreport::bug_report_context,
+            bugreport::bug_report_preview,
+            bugreport::bug_report_submit,
+            bugreport::bug_report_clear_crash,
+            bugreport::bug_report_simulate_crash,
+            bugreport::bug_report_force_crash,
+            // TASK-UP1 — check reports, install acts. Split so that
+            // looking never commits you to installing.
+            updates::updates_check,
+            updates::updates_install,
             // Real-but-local: parse runs in-process at keystroke rate.
             commands::query::query_parse,
             // SRC-M20 regex builder — same engine as the executor.

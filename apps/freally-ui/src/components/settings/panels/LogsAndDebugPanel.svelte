@@ -9,6 +9,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import type { LogsAndDebugSettings } from "../../../lib/ipc/types";
   import { t } from "../../../lib/i18n/t";
+  import { dialogsStore } from "../../../lib/stores/dialogs.svelte";
 
   function patch(p: Partial<LogsAndDebugSettings>) {
     settingsStore.patch({ logs_and_debug: { ...settingsStore.state.logs_and_debug, ...p } });
@@ -33,6 +34,32 @@
       console.warn("diagnostics bundle export failed (Phase 13)", e);
     }
   }
+
+  // TASK-BR1 drills. The crash → relaunch → offer loop is otherwise only
+  // exercised by a real crash, which is a poor moment to discover that
+  // the offer never appears.
+  //
+  // The simulate button keeps the session: it writes a clearly-labelled
+  // fake crash file and returns, so the report dialog can be opened
+  // against it from Help → Report a Bug. The force button drills the
+  // whole loop and therefore really does exit.
+  async function simulateCrash() {
+    try {
+      await invoke("bug_report_simulate_crash");
+      dialogsStore.open("bug_report");
+    } catch (e) {
+      console.warn("simulate crash report failed", e);
+    }
+  }
+
+  // No confirmation: this is behind a Logs & Debug section titled
+  // "Crash-report drills", the button says it exits, and a modal asking
+  // "are you sure you want to test the crash test" is noise. It does not
+  // reach a user who has not gone looking for it. No catch either — the
+  // command does not return.
+  async function forceCrash() {
+    await invoke("bug_report_force_crash");
+  }
 </script>
 
 <h1>{t("settings-group-logs")}</h1>
@@ -56,6 +83,11 @@
 <Section title={t("section-tools")}>
   <button type="button" onclick={openFolder}>{t("settings-logs-open-folder")}</button>
   <button type="button" onclick={exportBundle}>{t("settings-logs-export-bundle")}</button>
+</Section>
+
+<Section title={t("logs-crash-drills")}>
+  <button type="button" onclick={simulateCrash}>{t("logs-simulate-crash")}</button>
+  <button type="button" onclick={forceCrash}>{t("logs-force-crash")}</button>
 </Section>
 
 <style>

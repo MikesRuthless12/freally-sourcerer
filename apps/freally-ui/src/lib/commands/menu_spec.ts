@@ -291,6 +291,7 @@ export const MENU_BAR: MenuRoot[] = [
       { kind: "item", id: "help.command_line_options", label: "Command Line Options", l10n: "menu-help-cli-options" },
       { kind: "item", id: "help.website", label: "Freally Website", l10n: "menu-help-website" },
       { kind: "item", id: "help.check_for_updates", label: "Check for Updates…", l10n: "menu-help-check-updates" },
+      { kind: "item", id: "help.report_bug", label: "Report a Bug…", l10n: "menu-help-report-bug" },
       { kind: "item", id: "help.sponsor", label: "Sponsor / Donate", l10n: "menu-help-sponsor" },
       { kind: "separator" },
       { kind: "item", id: "help.about", label: "About Freally…", l10n: "menu-help-about", accelerator: "Ctrl+F1" }

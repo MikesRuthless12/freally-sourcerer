@@ -216,7 +216,10 @@
   .vlist .size { color: var(--text-secondary); font-size: 11px; }
   .status { font-size: 16px; line-height: 0; }
   .status-indexed, .status-indexing { color: var(--accent-cyan); }
-  .status-paused { color: #888; }
+  /* Was a hard-coded #888. Every sibling status here reads a token,
+     and mid-grey on the light theme’s pale canvas is the one that
+     disappears — which is the state a user most needs to see. */
+  .status-paused { color: var(--text-secondary); }
   .status-offline, .status-error { color: var(--accent-orange); }
   .remove { margin-top: 8px; padding: 4px 10px; background: var(--bg-canvas); border: 1px solid var(--border); color: var(--text-primary); border-radius: 3px; cursor: pointer; }
   .vdetail { flex: 1; }

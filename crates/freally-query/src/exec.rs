@@ -371,8 +371,30 @@ pub fn execute_with_catalogs(
     // see `NameIndex::for_each_seed_candidate_named`.
     let seedable = !plan.seed.is_empty() && !opts.match_mode.match_path;
     let use_stripped_seed = seedable && opts.match_mode.rewrites_text();
+    // Hydration is needed when any predicate beyond name-only matching
+    // applies (size / date / path / parent / attrib / ext / audio
+    // modifier) or when `match_path` widens the target to the full path.
+    // Match Case needs `FileRow.name`, which only hydration provides —
+    // the name buffer is lowercased.
+    let needs_full =
+        plan.needs_hydration || opts.match_mode.match_path || opts.match_mode.match_case;
+    // Limit pushdown. When nothing after the name pass can drop a row and
+    // the sort reads the one column the name buffer already carries, the
+    // page that survives the sort can be picked *before* hydrating — a
+    // thousand rows instead of every survivor. Which fields qualify is
+    // `name_order_serves`'s answer, not a second list here.
+    let push_limit =
+        !needs_full && dupe_keys.is_empty() && opts.limit > 0 && name_order_serves(opts.sort.field);
     let mut survivors_ids: Vec<u64> = Vec::new();
-    let mut survivors_names: Vec<String> = Vec::new();
+    // Survivor names, for the pushdown only — nothing else pays for them.
+    //
+    // One flat buffer with an end offset per name, not a `String` each.
+    // On the default (pushdown-eligible) path survivors are bounded only
+    // by `candidate_cap`, so a short query would otherwise allocate up to
+    // 100 000 separate strings to choose 1 000 of them. This also makes
+    // the names contiguous, which is what the partition below walks.
+    let mut names_buf = String::new();
+    let mut names_end: Vec<u32> = Vec::new();
     let mut stats = ExecStats {
         used_seed: seedable,
         ..ExecStats::default()
@@ -415,7 +437,10 @@ pub fn execute_with_catalogs(
             let (name, phonetic) = split_phonetic(key);
             if skip_name_filter || evaluator.matches(name, phonetic) {
                 survivors_ids.push(fid);
-                survivors_names.push(String::from_utf8_lossy(name).into_owned());
+                if push_limit {
+                    names_buf.push_str(&String::from_utf8_lossy(name));
+                    names_end.push(names_buf.len() as u32);
+                }
             }
         };
         if use_stripped_seed {
@@ -436,7 +461,10 @@ pub fn execute_with_catalogs(
             let (name, phonetic) = split_phonetic(key);
             if skip_name_filter || evaluator.matches(name, phonetic) {
                 survivors_ids.push(fid);
-                survivors_names.push(String::from_utf8_lossy(name).into_owned());
+                if push_limit {
+                    names_buf.push_str(&String::from_utf8_lossy(name));
+                    names_end.push(names_buf.len() as u32);
+                }
                 emitted += 1;
             }
             true
@@ -444,15 +472,36 @@ pub fn execute_with_catalogs(
     }
     stats.name_survivors = survivors_ids.len();
 
-    // Hydrate via SQLite. Required when any predicate beyond name-only
-    // matching applies (size / date / path / parent / attrib / ext /
-    // audio modifier) or when `match_path` widens the target to the
-    // full path.
-    // Match Case needs `FileRow.name`, which only hydration provides —
-    // the name buffer is lowercased.
-    let needs_full =
-        plan.needs_hydration || opts.match_mode.match_path || opts.match_mode.match_case;
-    let i64_ids: Vec<i64> = survivors_ids.iter().map(|&u| u as i64).collect();
+    // Hydrate via SQLite — every survivor, or under the pushdown only the
+    // page the name sort keeps. `select_nth_unstable_by` partitions
+    // instead of sorting, so picking that page costs O(n) comparisons
+    // rather than the O(n log n) the full sort spent on ten times as many
+    // rows, each of them an order of magnitude wider than an index.
+    let i64_ids: Vec<i64> = if push_limit && survivors_ids.len() > opts.limit {
+        // `names_end` holds one end offset per name, so a name starts
+        // where the previous one ended. The buffer is only ever appended
+        // to, so every slice is on a char boundary.
+        let name_at = |i: usize| -> &str {
+            let start = if i == 0 { 0 } else { names_end[i - 1] as usize };
+            &names_buf[start..names_end[i] as usize]
+        };
+        // The same `name_order` `sort_rows` uses, read off the lowercased
+        // names the name index already holds. One definition, so the page
+        // this picks is the page that sort would have kept.
+        let cmp = |&a: &usize, &b: &usize| {
+            name_order(
+                (name_at(a), survivors_ids[a] as i64),
+                (name_at(b), survivors_ids[b] as i64),
+                opts.sort,
+            )
+        };
+        let mut order: Vec<usize> = (0..survivors_ids.len()).collect();
+        order.select_nth_unstable_by(opts.limit - 1, cmp);
+        order.truncate(opts.limit);
+        order.iter().map(|&i| survivors_ids[i] as i64).collect()
+    } else {
+        survivors_ids.iter().map(|&u| u as i64).collect()
+    };
     let mut rows: Vec<FileRow> = idx.store().get_many(&i64_ids)?;
     let dirs = dir_stats_for(idx, q.root())?;
     if needs_full {
@@ -698,6 +747,42 @@ fn clamp_groups(groups: Vec<DupeGroup>, len: usize) -> Vec<DupeGroup> {
         .collect()
 }
 
+/// The `SortField::Name` ordering, over a lowercased name and the row id
+/// that breaks its ties.
+///
+/// Called from two places that **must** agree: `sort_rows`, which orders
+/// hydrated rows, and the limit pushdown in `execute_with_catalogs`,
+/// which picks the page to hydrate from the name index's own keys. If
+/// they disagree the pushdown keeps a different set of tied rows than the
+/// sort would have — a silently wrong result page, not an error.
+///
+/// The id is an `i64` because `FileRow::file_id` is: a file id is a
+/// 64-bit **hash**, so roughly half of them are negative, and comparing
+/// the `u64` the name index stores sends exactly those to the top.
+/// Writing this twice is how that got in the first time.
+///
+/// Direction is applied last, after the tie-break, because `sort_rows`
+/// reverses its whole comparator for `Desc` — including the tie-break.
+fn name_order(a: (&str, i64), b: (&str, i64), spec: SortSpec) -> Ordering {
+    let text = if spec.natural {
+        crate::natural::natural_cmp(a.0, b.0)
+    } else {
+        a.0.cmp(b.0)
+    };
+    let o = text.then_with(|| a.1.cmp(&b.1));
+    match spec.order {
+        SortOrder::Asc => o,
+        SortOrder::Desc => o.reverse(),
+    }
+}
+
+/// Whether [`name_order`] alone can decide this sort — i.e. whether the
+/// limit pushdown is possible at all. Kept next to it so "which fields
+/// the name buffer can serve" has one answer rather than two.
+fn name_order_serves(field: SortField) -> bool {
+    matches!(field, SortField::Name | SortField::Relevance)
+}
+
 fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
     // SRC-M24 — every string column goes through the same comparator, so
     // "sort by natural order" does not quietly mean "only the name
@@ -716,7 +801,21 @@ fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
             // generic Phase-5 path it degrades to Name — matches the
             // Phase 11 UI's "Sort by Relevance" fallback for non-
             // similarity queries.
-            SortField::Name | SortField::Relevance => text(&a.name_lower, &b.name_lower),
+            // Delegated so the pushdown and this cannot drift; the
+            // direction is re-applied by `name_order` and unwound here,
+            // because every other arm below gets its direction from the
+            // single reversal at the bottom of this function.
+            SortField::Name | SortField::Relevance => {
+                let o = name_order(
+                    (&a.name_lower, a.file_id),
+                    (&b.name_lower, b.file_id),
+                    spec,
+                );
+                return match spec.order {
+                    SortOrder::Asc => o,
+                    SortOrder::Desc => o.reverse(),
+                };
+            }
             // With natural sort off this stays `PathBuf::cmp`, which
             // orders by component rather than by byte — the ordering
             // this column has always had. Natural sort has to read the
@@ -742,6 +841,12 @@ fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
                 (x, y) => x.is_some().cmp(&y.is_some()),
             },
         }
+        // Ties used to fall back on whatever order `Store::get_many`
+        // returned, which is SQLite's business and not stable across a
+        // change of limit. `file_id` makes this a total order — which is
+        // what lets the limit pushdown above pick exactly the page this
+        // would have sorted to the front.
+        .then_with(|| a.file_id.cmp(&b.file_id))
     };
     // SRC-M24 — the path column is the one case that needs a string it
     // does not already have. Decorate-sort-undecorate so each row is
@@ -755,8 +860,8 @@ fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
             .cloned()
             .map(|r| (r.path.to_string_lossy().into_owned(), r))
             .collect();
-        keyed.sort_by(|(x, _), (y, _)| {
-            let o = crate::natural::natural_cmp(x, y);
+        keyed.sort_by(|(x, a), (y, b)| {
+            let o = crate::natural::natural_cmp(x, y).then_with(|| a.file_id.cmp(&b.file_id));
             if asc { o } else { o.reverse() }
         });
         for (slot, (_, row)) in rows.iter_mut().zip(keyed) {

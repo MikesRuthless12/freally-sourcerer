@@ -6,9 +6,11 @@
 //!   the Phase-3 spec.
 //! - `uninstall()` runs `systemctl --user disable --now` and deletes
 //!   the unit file.
+//! - `status()` reports whether the unit is installed and what systemd
+//!   thinks it is doing.
 //! - `run_as_service()` is the entry point systemd invokes via the
-//!   unit's `ExecStart`. Phase 3 ships an SCM-shape only — Phase 4
-//!   will spawn the per-root subscriber + index core inside this body.
+//!   unit's `ExecStart`. It runs the real daemon — see
+//!   `freally_indexd::installed` for why that is worth saying out loud.
 //!
 //! The unit lives at `~/.config/systemd/user/freally-indexd.service`
 //! and runs as the logged-in user, never root. The optional fanotify
@@ -120,21 +122,48 @@ pub fn uninstall() -> Result<()> {
     Ok(())
 }
 
-/// Body invoked by systemd via the unit's `ExecStart`. Phase 3 only
-/// ensures the indexd binary launches and stays alive long enough for
-/// `Restart=always` to be meaningful — no per-root subscribers spin up
-/// here yet (Phase 4 wires those).
-pub fn run_as_service() -> Result<()> {
-    tracing::info!(
-        unit = SERVICE_NAME,
-        "systemd user-unit body entered (Phase 3 keep-alive shell)"
-    );
-    // Restart=always means systemd will respawn us if we exit. Phase 4
-    // wires the actual indexer body; for Phase 3 we wait on a no-op
-    // sleep loop so the unit is observable via `systemctl --user status`.
-    loop {
-        std::thread::sleep(std::time::Duration::from_secs(60));
+/// Reports whether the unit is installed, and what systemd makes of it.
+///
+/// The unit file existing and the unit *running* are different facts and
+/// this prints both: a unit can be on disk and inactive, or enabled and
+/// failing its restart loop, and "installed" alone would not tell them
+/// apart.
+pub fn status() -> Result<()> {
+    let unit_path = unit_path()?;
+    if !unit_path.exists() {
+        println!(
+            "freally-indexd: not installed (no `{}`).",
+            unit_path.display()
+        );
+        return Ok(());
     }
+    println!("freally-indexd: installed at `{}`.", unit_path.display());
+    // `is-active` exits non-zero for every state that is not "active", so
+    // its exit status is not an error here — the word it prints is the
+    // answer. A failure to run `systemctl` at all is a different thing
+    // and does propagate.
+    let out = Command::new("systemctl")
+        .args(["--user", "is-active", SERVICE_NAME])
+        .output()
+        .context("running `systemctl --user is-active`")?;
+    let state = String::from_utf8_lossy(&out.stdout);
+    let state = state.trim();
+    println!(
+        "  systemd reports: {}",
+        if state.is_empty() { "unknown" } else { state }
+    );
+    Ok(())
+}
+
+/// Body invoked by systemd via the unit's `ExecStart`.
+///
+/// This used to be a keep-alive sleep loop, which satisfied
+/// `Restart=always` while serving nothing at all — see
+/// `freally_indexd::installed`. It now runs the real daemon, and stops
+/// on SIGTERM so `systemctl --user stop` commits what the watchers have
+/// pending instead of losing it.
+pub fn run_as_service() -> Result<()> {
+    freally_indexd::installed::run_unix_agent(SERVICE_NAME)
 }
 
 fn unit_path() -> Result<PathBuf> {

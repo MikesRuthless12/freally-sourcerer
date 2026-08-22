@@ -994,7 +994,12 @@ pub(crate) fn relative_day_range(rd: RelativeDate) -> (i64, i64) {
 
 /// Inverse of `civil_to_epoch_day`. Used only by relative-date math
 /// so we can keep the algorithm self-contained.
-fn epoch_day_to_civil(z: i64) -> (i32, u32, u32) {
+/// Days-since-epoch to (year, month, day), Howard Hinnant's
+/// civil-from-days. Public because `freally-ui`'s crash reporter needs
+/// the same conversion for its UTC timestamp, and two copies of the
+/// trickiest arithmetic in the tree is one too many — this one is
+/// exercised by the whole `datemodified:` suite.
+pub fn epoch_day_to_civil(z: i64) -> (i32, u32, u32) {
     let z = z + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
     let doe = z - era * 146097;

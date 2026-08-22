@@ -12,6 +12,8 @@
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as ipcQuery from "../ipc/query";
+import { t } from "../i18n/t";
+import { toastStore } from "./toast.svelte";
 import type {
   DidYouMean,
   HitGroup,
@@ -163,7 +165,12 @@ class ResultsStore {
         natural_sort: settingsStore.state.natural_sort
       }));
     } catch (e) {
+      // A search that throws leaves the previous batches in place or an
+      // empty list, both of which read as "no matches" — the one outcome
+      // the user cannot tell apart from a working search that found
+      // nothing. Say it failed.
       console.warn("[results] run failed:", e);
+      toastStore.error(t("toast-search-failed", { error: String(e) }));
       return;
     }
     if (my !== this.seq) {

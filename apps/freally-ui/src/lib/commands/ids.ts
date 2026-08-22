@@ -125,6 +125,7 @@ export const COMMAND_IDS = [
   "help.command_line_options",
   "help.website",
   "help.check_for_updates",
+  "help.report_bug",
   "help.sponsor",
   "help.about"
 ] as const;

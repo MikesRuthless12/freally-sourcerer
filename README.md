@@ -278,6 +278,8 @@ Compiled binaries include third-party libraries under their original permissive 
 | [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) | Third-party dependency attributions |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Keep-a-Changelog release notes |
 | [`docs/documentation.html`](https://mikesruthless12.github.io/freally-sourcerer/documentation.html) | Full user documentation |
+| [`docs/EVERYTHING_MIGRATION_GUIDE.md`](docs/EVERYTHING_MIGRATION_GUIDE.md) | Coming from voidtools' Everything — what transfers, what is new, what will surprise you |
+| [`docs/MENU_REFERENCE.md`](docs/MENU_REFERENCE.md) | Every menu item and its shortcut — generated from the menu spec |
 
 `docs/ARCHITECTURE.md`, `docs/SECURITY.md` and `docs/I18N_TODO.md` were
 listed here until v0.23.1. They were pulled out of git history in the

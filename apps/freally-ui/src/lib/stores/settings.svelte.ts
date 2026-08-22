@@ -5,6 +5,8 @@
 
 import * as ipc from "../ipc/settings";
 import { invoke } from "@tauri-apps/api/core";
+import { t } from "../i18n/t";
+import { toastStore } from "./toast.svelte";
 import type { SettingsState } from "../ipc/types";
 import type { PanelId } from "./settings_dialog.svelte";
 
@@ -376,7 +378,13 @@ class SettingsStore {
       // Fan out index-affecting fields to the daemon via settings.apply.
       await this.applyToDaemon();
     } catch (e) {
+      // For the whole of Build 3 no setting persisted at all: one schema
+      // key missing from the Rust allowlist made `settings_set` reject
+      // every write, and this catch swallowed the rejection into a
+      // console nobody was reading. The dialog went on showing the value
+      // the user had just chosen, so there was nothing to notice.
       console.warn("[settings] flush failed:", e);
+      toastStore.error(t("toast-settings-save-failed", { error: String(e) }));
     }
   }
 
@@ -384,7 +392,11 @@ class SettingsStore {
     try {
       await invoke("settings_apply_to_daemon", { state: this.state });
     } catch (e) {
+      // Reported by the same toast as `flush`, whose call this normally
+      // is — rethrowing here would double-toast the common path, and
+      // swallowing it silently is what the line above is about.
       console.warn("[settings] settings.apply daemon round-trip failed:", e);
+      toastStore.error(t("toast-settings-save-failed", { error: String(e) }));
     }
   }
 
@@ -392,7 +404,11 @@ class SettingsStore {
     try {
       this.state = { ...FALLBACK, ...(await ipc.reset()) };
     } catch (e) {
+      // Restore Defaults is a button the user pressed. Leaving the old
+      // values on screen with no message reads as "these *are* the
+      // defaults".
       console.warn("[settings] reset failed:", e);
+      toastStore.error(t("toast-settings-reset-failed", { error: String(e) }));
     }
   }
 

@@ -16,23 +16,26 @@ pub enum SocketPath {
     Pipe(String),
 }
 
+/// The per-OS directory both sockets live in, with `file` as the leaf.
+/// Two endpoints share it — the daemon a user runs themselves and the one
+/// the service manager runs — so the directory rule is written once.
 #[cfg(target_os = "macos")]
-pub fn default_socket_path() -> SocketPath {
+fn unix_socket(file: &str) -> SocketPath {
     let home = std::env::var_os("HOME").unwrap_or_default();
     let mut p = PathBuf::from(home);
     p.push("Library");
     p.push("Application Support");
     p.push("freally");
-    p.push("indexd.sock");
+    p.push(file);
     SocketPath::Path(p)
 }
 
 #[cfg(target_os = "linux")]
-pub fn default_socket_path() -> SocketPath {
+fn unix_socket(file: &str) -> SocketPath {
     if let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR") {
         let mut p = PathBuf::from(rt);
         p.push("freally");
-        p.push("indexd.sock");
+        p.push(file);
         return SocketPath::Path(p);
     }
     let home = std::env::var_os("HOME").unwrap_or_default();
@@ -40,8 +43,66 @@ pub fn default_socket_path() -> SocketPath {
     p.push(".local");
     p.push("share");
     p.push("freally");
-    p.push("indexd.sock");
+    p.push(file);
     SocketPath::Path(p)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn default_socket_path() -> SocketPath {
+    unix_socket("indexd.sock")
+}
+
+/// Well-known endpoint for the **installed** daemon — the Windows
+/// service, the launchd agent, or the systemd user unit — as opposed to
+/// the one a user or the app starts for itself.
+///
+/// The two are deliberately separate names. A user can have both at once:
+/// the app spawns its own child at [`default_socket_path`] whenever it
+/// cannot find an installed daemon, and if the installed one later starts
+/// they must not fight over one endpoint. Keeping them apart is also what
+/// lets the app *prefer* the installed daemon — it probes this path first
+/// and only falls back to spawning.
+///
+/// On Windows this is machine-wide, because the service runs as SYSTEM
+/// and serves every logged-in user (`service_sddl` governs access). On
+/// macOS and Linux the installed daemon is a **per-user** agent — a
+/// LaunchAgent and a `systemd --user` unit, both running as the logged-in
+/// user, never root — so its endpoint is per-user too.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn service_socket_path() -> SocketPath {
+    unix_socket("indexd-service.sock")
+}
+
+/// See the macOS / Linux twin above.
+#[cfg(windows)]
+pub fn service_socket_path() -> SocketPath {
+    SocketPath::Pipe(service_pipe_name())
+}
+
+/// The endpoint `FREALLY_RPC_SOCKET` pins, if it is set.
+///
+/// A smoke test or dev session that sets it is naming the daemon it
+/// means, and every consumer has to agree on that — including the
+/// app's installed-daemon probe, which must stand down rather than
+/// silently adopt the machine's own daemon and run against the wrong
+/// index. Parsing lives here because this is the crate that decides what
+/// an endpoint string looks like: a value starting with a pipe prefix is
+/// a named pipe, anything else a filesystem path.
+pub fn socket_override() -> Option<SocketPath> {
+    let raw = std::env::var("FREALLY_RPC_SOCKET").ok()?;
+    if raw.is_empty() {
+        return None;
+    }
+    Some(parse_socket(&raw))
+}
+
+/// Interpret an endpoint string the way [`socket_override`] does.
+pub fn parse_socket(s: &str) -> SocketPath {
+    if s.starts_with(r"\\.\pipe\") || s.starts_with(r"\\?\pipe\") {
+        SocketPath::Pipe(s.to_string())
+    } else {
+        SocketPath::Path(PathBuf::from(s))
+    }
 }
 
 #[cfg(windows)]
@@ -71,15 +132,46 @@ pub fn service_pipe_name() -> String {
     r"\\.\pipe\freally-indexd".to_string()
 }
 
-/// SDDL string for the service-mode pipe. Grants GENERIC_ALL to:
-///   * Authenticated Users (AU)  — any logged-in local user can connect
-///   * SYSTEM (SY)               — the service itself
+/// SDDL for the service-mode pipe.
 ///
-/// The pipe server already calls `reject_remote_clients(true)`, so the
-/// AU grant does not extend across the network.
+/// - `(A;;FRFW;;;AU)` — `FILE_GENERIC_READ | FILE_GENERIC_WRITE` for any
+///   logged-in local user. This used to be `GENERIC_ALL`, which also
+///   carried `WRITE_DAC` and `WRITE_OWNER` — a client that could rewrite
+///   the pipe's own ACL.
+/// - `(A;;GA;;;SY)` — the service itself.
+///
+/// The server also calls `reject_remote_clients(true)`, so none of this
+/// extends across the network.
+///
+/// # Two gaps this DACL does not close
+///
+/// **Instance squatting.** `FILE_CREATE_PIPE_INSTANCE` lets a caller add
+/// their own instances to an existing pipe name, and clients round-robin
+/// across instances — so another local user could intercept a share of
+/// connections and, because the app mints `Provenance::QueryHit` for every
+/// path in a `query:batch`, forge the attestation that `files_delete` /
+/// `files_rename` / `shell_verbs` gate on.
+///
+/// The obvious mitigation — a `(D;;CC;;;AU)` deny ACE — **does not work,
+/// and this was measured, not assumed.** `FILE_CREATE_PIPE_INSTANCE` is
+/// `0x0004`, which is the *same bit* as `FILE_APPEND_DATA`, and
+/// `FILE_GENERIC_WRITE` includes it. Tokio's client opens with
+/// `GENERIC_READ | GENERIC_WRITE`, so denying the create right denies
+/// every legitimate client: `phase_13_daemon_service` fails with
+/// `Access is denied. (os error 5)`. There is no access mask that admits
+/// a `GENERIC_WRITE` client and refuses instance creation. The fix has to
+/// be on the **client** side — `GetNamedPipeServerProcessId` and verify
+/// the peer is the registered service — not in this string.
+///
+/// **No peer check on accept.** Unlike the Unix listener, the Windows
+/// accept loop does not look at who connected.
+///
+/// Both are written up under TASK-102 in `docs/ROADMAP.md`. Until they
+/// are closed, the installed Windows service is not safe on a machine
+/// with more than one account.
 #[cfg(windows)]
 pub fn service_sddl() -> String {
-    "D:(A;;GA;;;AU)(A;;GA;;;SY)".to_string()
+    "D:(A;;FRFW;;;AU)(A;;GA;;;SY)".to_string()
 }
 
 #[cfg(windows)]

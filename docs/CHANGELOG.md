@@ -8,6 +8,37 @@ All notable changes documented here. Format: [Keep a Changelog](https://keepacha
 
 ### Added
 
+- **[all platforms]** **Report a bug** — `Help → Report a Bug…`, plus a prompt
+  that appears on the next launch after a crash. A panic hook writes a
+  **scrubbed** crash report locally (home path and username redacted before the
+  file touches disk), and the dialog shows you the **exact** text that would be
+  sent — app version and OS only — before offering to open a pre-filled GitHub
+  issue or mail draft. **Nothing sends automatically**; there is no telemetry
+  and no server we run. Two drills live in Settings → Logs & Debug.
+- **[all platforms]** **Check for updates** — Settings → Privacy & Updates now
+  asks the updater rather than opening a web page. It reports the version you
+  are running, shows the release notes with working links, and when an update
+  exists asks a **Yes/No box naming both versions** before installing anything.
+  On yes it stops the indexer daemon, installs, and closes; on Windows the
+  installer's finish page offers to launch the new version. A launch check
+  honours the cadence setting, stands down when a crash report is waiting, and
+  stays **silent** when the machine is offline.
+- **[Windows]** `freally-indexd status` reports whether the daemon is
+  registered as a service and what the service manager makes of it. Install and
+  uninstall existed with no way to ask what happened.
+- **[docs]** `docs/EVERYTHING_MIGRATION_GUIDE.md` — what transfers from
+  voidtools' Everything, what is new, and the three things that will surprise
+  you. `docs/MENU_REFERENCE.md` — all 112 menu items and their shortcuts,
+  generated from the menu spec so it cannot go stale.
+- **[packaging]** `packaging/` carries winget, Chocolatey, Homebrew Cask,
+  Flathub and Snap manifests, generated from a published release by
+  `scripts/gen-packaging.mjs` so the checksums are the ones GitHub serves.
+- **[release]** `scripts/verify-updater-chain.mjs` proves a published release
+  is actually updatable: it compares the key id inside every platform signature
+  against the public key compiled into the binaries. The updater fails closed
+  **and silent**, so nothing else catches a release signed with the wrong key.
+
+
 - **[all platforms]** Deleting a file can now be undone. `files_delete` sends
   rows to the OS trash, which is recoverable, but recorded nothing — so the
   app's own Undo never offered a delete back on any platform. It is journalled

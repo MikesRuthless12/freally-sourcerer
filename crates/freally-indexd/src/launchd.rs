@@ -3,9 +3,10 @@
 //! - `install()` writes the per-user launchd plist and `launchctl load -w`s
 //!   it. `RunAtLoad=true` + `KeepAlive=true` mirror the Build Guide spec.
 //! - `uninstall()` runs `launchctl unload -w` and deletes the plist.
+//! - `status()` reports whether the agent is installed and loaded.
 //! - `run_as_service()` is the entry point launchd invokes via the plist's
-//!   `ProgramArguments`. Phase 2 ships an SCM-shape only — Phase 4 will
-//!   spawn the per-root subscriber + index core inside this body.
+//!   `ProgramArguments`. It runs the real daemon — see
+//!   `freally_indexd::installed` for why that is worth saying out loud.
 //!
 //! The plist lives at
 //! `~/Library/LaunchAgents/io.mikeweaver.freally.indexd.plist` and the
@@ -103,21 +104,45 @@ pub fn uninstall() -> Result<()> {
     Ok(())
 }
 
-/// Body invoked by launchd via the plist's `ProgramArguments`. Phase 2
-/// only ensures the indexd binary launches and stays alive long enough
-/// for `KeepAlive=true` to be meaningful — no per-root subscribers spin
-/// up here yet.
-pub fn run_as_service() -> Result<()> {
-    tracing::info!(
-        label = SERVICE_LABEL,
-        "launchd agent body entered (Phase 2 keep-alive shell)"
-    );
-    // KeepAlive=true means launchd will restart us if we exit. Phase 4
-    // wires the actual indexer body; for Phase 2 we wait on a no-op
-    // signal-handler loop so the agent is observable.
-    loop {
-        std::thread::sleep(std::time::Duration::from_secs(60));
+/// Reports whether the agent is installed, and whether launchd has it
+/// loaded. The plist existing and the agent running are different facts,
+/// and an agent that crash-loops shows as loaded with a non-zero last
+/// exit status — so both are printed.
+pub fn status() -> Result<()> {
+    let plist_path = plist_path()?;
+    if !plist_path.exists() {
+        println!(
+            "freally-indexd: not installed (no `{}`).",
+            plist_path.display()
+        );
+        return Ok(());
     }
+    println!("freally-indexd: installed at `{}`.", plist_path.display());
+    // `launchctl list <label>` exits non-zero when the label is not
+    // loaded, which is an answer rather than an error. Failing to run
+    // `launchctl` at all does propagate.
+    let out = Command::new("/bin/launchctl")
+        .arg("list")
+        .arg(SERVICE_LABEL)
+        .output()
+        .context("running `launchctl list`")?;
+    if out.status.success() {
+        println!("  launchd reports: loaded");
+    } else {
+        println!("  launchd reports: not loaded");
+    }
+    Ok(())
+}
+
+/// Body invoked by launchd via the plist's `ProgramArguments`.
+///
+/// This used to be a keep-alive sleep loop, which satisfied
+/// `KeepAlive=true` while serving nothing at all — see
+/// `freally_indexd::installed`. It now runs the real daemon, and stops
+/// on SIGTERM so `launchctl bootout` commits what the watchers have
+/// pending instead of losing it.
+pub fn run_as_service() -> Result<()> {
+    freally_indexd::installed::run_unix_agent(SERVICE_LABEL)
 }
 
 fn plist_path() -> Result<PathBuf> {

@@ -12,7 +12,8 @@ export type ModalId =
   | "custom_extractor_manager"
   | "index_health"
   | "permission_health"
-  | "bulk_rename";
+  | "bulk_rename"
+  | "bug_report";
 
 class DialogsStore {
   active = $state<ModalId>(null);

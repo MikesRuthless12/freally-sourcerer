@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: MikeWeaver.FreallySourcerer
+PackageVersion: 0.23.2
+InstallerLocale: en-US
+MinimumOSVersion: 10.0.17763.0
+InstallModes:
+  - interactive
+  - silent
+UpgradeBehavior: install
+ReleaseDate: 2026-08-20
+Installers:
+  - Architecture: x64
+    InstallerType: nullsoft
+    InstallerUrl: https://github.com/MikesRuthless12/freally-sourcerer/releases/download/v0.23.2/Freally.Sourcerer_0.23.2_x64-setup.exe
+    InstallerSha256: DFEC5077934AE87F02C247399321F89B668016FC9404E0C9202D80E943E7D3E7
+ManifestType: installer
+ManifestVersion: 1.6.0

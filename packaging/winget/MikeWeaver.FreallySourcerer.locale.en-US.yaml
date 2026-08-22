@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: MikeWeaver.FreallySourcerer
+PackageVersion: 0.23.2
+PackageLocale: en-US
+Publisher: Mike Weaver
+PublisherUrl: https://github.com/MikesRuthless12/freally-sourcerer
+PublisherSupportUrl: https://github.com/MikesRuthless12/freally-sourcerer/issues
+PackageName: Freally Sourcerer
+PackageUrl: https://github.com/MikesRuthless12/freally-sourcerer
+License: Proprietary
+LicenseUrl: https://github.com/MikesRuthless12/freally-sourcerer/blob/main/LICENSE.md
+Copyright: Copyright (c) 2026 Mike Weaver. All rights reserved.
+ShortDescription: One search. Every source. Every OS.
+Description: Freally is a cross-platform realtime filesystem search engine — filename, content, audio, and similarity lenses on one journal-fed index.
+Moniker: freally
+Tags:
+  - search
+  - file-search
+  - everything
+  - productivity
+  - indexer
+ReleaseNotesUrl: https://github.com/MikesRuthless12/freally-sourcerer/releases/tag/v0.23.2
+Documentation:
+  - DocumentLabel: User guide
+    DocumentUrl: https://mikesruthless12.github.io/freally-sourcerer/documentation.html
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

@@ -61,7 +61,13 @@ pub use ops::{
     NotUndoable, OperationEntry, OperationItem, OperationJournal, OperationKind,
     trash_restore_supported,
 };
-pub use path::{SocketPath, default_socket_path};
+pub use path::{SocketPath, default_socket_path, parse_socket, socket_override};
+// Defined for the three target families that have an installed-daemon
+// story; `path.rs` keeps a `default_socket_path` fallback for the rest,
+// so an ungated re-export here would turn "no service" into a build
+// failure.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub use path::service_socket_path;
 #[cfg(windows)]
 pub use path::{service_pipe_name, service_sddl};
 pub use rename::{
