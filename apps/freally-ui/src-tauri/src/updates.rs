@@ -218,25 +218,26 @@ async fn shutdown_daemon() {
         // *different* copy's daemon for no reason.
         return;
     };
-    let mut answered = false;
-    {
-        let asked = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            daemon.client.call::<serde_json::Value, serde_json::Value>(
-                "daemon.shutdown",
-                serde_json::json!({}),
-            ),
-        )
-        .await;
-        match asked {
-            Ok(_) => answered = true,
-            Err(_elapsed) => {
-                tracing::warn!("update: daemon did not answer `daemon.shutdown` in 5s")
-            }
-        }
+    let asked = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        daemon
+            .client
+            .call::<serde_json::Value, serde_json::Value>("daemon.shutdown", serde_json::json!({})),
+    )
+    .await;
+    let answered = asked.is_ok();
+    if !answered {
+        tracing::warn!("update: daemon did not answer `daemon.shutdown` in 5s");
     }
-    // Whether or not it answered, give it a moment to actually leave the
-    // process table and release the Tantivy writer lock and the pipe.
+    // Logged on every platform, not just the one that acts on it: without
+    // this, `answered` is only *read* inside the `cfg(windows)` block
+    // below, so every Unix build warns that it is assigned and never used
+    // — and this crate builds under `-D warnings`. It is also the line
+    // that explains a stuck update after the fact.
+    tracing::info!(answered, "update: daemon asked to stop");
+
+    // Give it a moment to leave the process table and release the Tantivy
+    // writer lock and the pipe.
     tokio::time::sleep(std::time::Duration::from_millis(750)).await;
     // Only when it would not go quietly. `taskkill /IM` matches **every**
     // process with that image name the caller may terminate — a portable
