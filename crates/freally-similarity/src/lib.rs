@@ -248,13 +248,25 @@ impl SimilarityIndex {
         if bytes.len() > u32::MAX as usize {
             return Err(SimilarityError::Format("filename exceeds 4 GiB".into()));
         }
-        let name_off = inner.heap.len() as u32;
+        // The heap is append-only and tombstones do not reclaim, so it grows
+        // for the lifetime of the index — a replaced name appends a second
+        // copy. `as u32` here truncated silently once past 4 GiB, pointing
+        // every subsequent row at a wrong slice of the heap rather than
+        // failing. The per-name length was already checked; the offset was
+        // not, and the offset is the one that accumulates.
+        let name_off = u32::try_from(inner.heap.len()).map_err(|_| {
+            SimilarityError::Format("name heap exceeds 4 GiB; rebuild the index".into())
+        })?;
         let name_len = bytes.len() as u32;
         inner.heap.extend_from_slice(bytes);
-        let row_id = inner.rows.len() as u32;
-        if row_id == u32::MAX {
+        // Checked for the same reason as `name_off`: `as u32` past 4 G rows
+        // wraps to a live row id and this would overwrite an unrelated row.
+        // `>=` rather than `>`, because u32::MAX is the tombstone sentinel
+        // and so is not an available row id either.
+        if inner.rows.len() >= u32::MAX as usize {
             return Err(SimilarityError::Format("row table exhausted".into()));
         }
+        let row_id = inner.rows.len() as u32;
         inner.rows.push(RowState {
             file_id,
             name_off,

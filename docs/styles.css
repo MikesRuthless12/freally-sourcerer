@@ -305,3 +305,16 @@ footer a:hover {
 
 /* Enlarged hero logo so the app icon is visible and readable (>= 284px). */
 .hero .logo { width: 288px; max-width: 72vw; height: auto; }
+
+/* Shown only when the release notes on this page describe a version whose
+   assets are not published yet, so the version badge and the download links
+   deliberately disagree. `downloads.js` unhides it. */
+.dl-note {
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 0.92rem;
+}

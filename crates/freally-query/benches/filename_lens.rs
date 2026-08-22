@@ -125,8 +125,13 @@ fn main() {
             "FAIL"
         };
         println!(
-            "  {label:<14} P50 {:>8.2?} [{p50_str}]  P99 {:>8.2?} [{p99_str}]  hits {}",
-            summary.p50, summary.p99, summary.hits
+            "  {label:<14} P50 {:>8.2?} [{p50_str}]  P99 {:>8.2?} [{p99_str}]  hits {:>6}  cand {:>8}  surv {:>7}  seed {}",
+            summary.p50,
+            summary.p99,
+            summary.hits,
+            summary.candidates,
+            summary.survivors,
+            if summary.used_seed { "yes" } else { "NO" }
         );
     }
 
@@ -150,11 +155,20 @@ struct Summary {
     p50: Duration,
     p99: Duration,
     hits: usize,
+    /// Rows the name index handed the filter. A FAIL is unactionable
+    /// without this: it separates "the seed did not narrow anything" from
+    /// "the seed narrowed fine and the work after it is slow".
+    candidates: usize,
+    survivors: usize,
+    used_seed: bool,
 }
 
 fn bench_query(idx: &Arc<Index>, q: &str, samples: usize) -> Summary {
     let parsed = parse(q).expect("bench query parses");
     let mut hits = 0usize;
+    let mut candidates = 0usize;
+    let mut survivors = 0usize;
+    let mut used_seed = false;
     let mut samples_v: Vec<Duration> = Vec::with_capacity(samples);
     for _ in 0..samples {
         let opts = ExecOpts::default();
@@ -162,12 +176,22 @@ fn bench_query(idx: &Arc<Index>, q: &str, samples: usize) -> Summary {
         let rs = execute(idx, &parsed, opts).expect("bench execute");
         let elapsed = t0.elapsed();
         hits = rs.rows().len();
+        candidates = rs.stats.candidates;
+        survivors = rs.stats.name_survivors;
+        used_seed = rs.stats.used_seed;
         samples_v.push(elapsed);
     }
     samples_v.sort();
     let p50 = samples_v[samples / 2];
     let p99 = samples_v[(samples * 99 / 100).min(samples_v.len() - 1)];
-    Summary { p50, p99, hits }
+    Summary {
+        p50,
+        p99,
+        hits,
+        candidates,
+        survivors,
+        used_seed,
+    }
 }
 
 fn build_fixture(root: &std::path::Path, count: usize, seed: u64) -> Arc<Index> {

@@ -85,7 +85,6 @@ pub struct DaemonState {
 pub struct VolumesConfig {
     pub auto_include_fixed: bool,
     pub auto_include_removable: bool,
-    pub auto_remove_offline: bool,
     /// Per-volume overrides keyed by the cross-OS canonical id
     /// (`<fs-kind>-<mount-point>` after normalization).
     pub overrides: std::collections::BTreeMap<String, VolumeOverride>,
@@ -153,7 +152,6 @@ impl Default for VolumesConfig {
         Self {
             auto_include_fixed: true,
             auto_include_removable: false,
-            auto_remove_offline: true,
             overrides: Default::default(),
         }
     }

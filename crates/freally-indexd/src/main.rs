@@ -9,9 +9,9 @@
 //! - `run` opens the index at the standard per-OS path and starts the
 //!   RPC server at `default_socket_path()`. The Tauri app launches this
 //!   as a sidecar process at boot.
-//! - `install` / `uninstall` register / deregister the OS-native
-//!   service entry (Windows SCM / launchd / systemd-user). Unchanged
-//!   from Phase 1–3.
+//! - `install` / `uninstall` / `status` register, deregister and
+//!   report on the OS-native service entry (Windows SCM / launchd /
+//!   systemd-user).
 //! - `service` is the entry point invoked by the OS service manager.
 //!   Same body as `run`, but wrapped in the platform's service
 //!   reporting conventions.
@@ -60,6 +60,9 @@ enum Command {
     },
     /// Uninstall the indexer service. Reverses `install`.
     Uninstall,
+    /// Report whether the indexer is installed as a service, and what
+    /// the OS service manager currently makes of it.
+    Status,
     /// Internal: the OS service manager invokes this.
     Service,
 }
@@ -114,6 +117,16 @@ fn main() -> Result<()> {
             anyhow::bail!("`uninstall` is only supported on Windows, macOS, and Linux.")
         }
         #[cfg(windows)]
+        Command::Status => windows_service::status(),
+        #[cfg(target_os = "macos")]
+        Command::Status => launchd::status(),
+        #[cfg(target_os = "linux")]
+        Command::Status => systemd::status(),
+        #[cfg(all(not(windows), not(target_os = "macos"), not(target_os = "linux")))]
+        Command::Status => {
+            anyhow::bail!("`status` is only supported on Windows, macOS, and Linux.")
+        }
+        #[cfg(windows)]
         Command::Service => windows_service::run_as_service(),
         #[cfg(target_os = "macos")]
         Command::Service => launchd::run_as_service(),
@@ -166,17 +179,24 @@ fn run_foreground(index_root: Option<String>, socket: Option<String>) -> Result<
         };
         let state: Arc<DaemonState> = DaemonState::open(opts)?;
         let socket_path = match socket {
-            Some(s) => parse_socket_arg(&s),
+            Some(s) => freally_rpc::parse_socket(&s),
             None => freally_rpc::portable::socket_path()
                 .unwrap_or_else(freally_rpc::default_socket_path),
         };
         tracing::info!("freally-indexd starting; socket={socket_path:?}");
-        let handle = freally_indexd::spawn_at(state.clone(), socket_path).await?;
+        let mut handle = freally_indexd::spawn_at(state.clone(), socket_path).await?;
         // Block until either the accept loop exits (terminal) or the
-        // process is signaled. SIGINT/SIGTERM handling on Unix uses
-        // tokio::signal; on Windows we let Ctrl-C bubble through the
-        // service control plane.
-        let _ = handle.await;
+        // process is asked to stop. The stop half is not decoration: the
+        // two lines after this commit whatever the watchers have pending,
+        // and the default disposition of SIGTERM (or a console Ctrl-C)
+        // is to kill the process before they run.
+        tokio::select! {
+            _ = &mut handle => {}
+            () = stop_signal() => {
+                tracing::info!("freally-indexd: stop signal received");
+                handle.abort();
+            }
+        }
         // Stop live journaling before persisting: the consumer commits
         // whatever it has pending on the way out, so dropping the
         // process without this abandons applied-but-uncommitted events.
@@ -187,10 +207,16 @@ fn run_foreground(index_root: Option<String>, socket: Option<String>) -> Result<
     Ok(())
 }
 
-fn parse_socket_arg(s: &str) -> freally_rpc::SocketPath {
-    if s.starts_with(r"\\.\pipe\") || s.starts_with(r"\\?\pipe\") {
-        freally_rpc::SocketPath::Pipe(s.to_string())
-    } else {
-        freally_rpc::SocketPath::Path(std::path::PathBuf::from(s))
-    }
+/// Resolves when the OS asks this process to stop.
+#[cfg(unix)]
+async fn stop_signal() {
+    freally_indexd::installed::unix_stop_signal().await
+}
+
+/// Windows has no SIGTERM. A foreground run is a console app, so Ctrl-C
+/// is the signal; the installed service takes an entirely different path
+/// through `windows_service`, which the SCM drives.
+#[cfg(not(unix))]
+async fn stop_signal() {
+    let _ = tokio::signal::ctrl_c().await;
 }

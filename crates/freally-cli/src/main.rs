@@ -30,7 +30,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use freally_query::{ParseOpts, parse_to_report};
-use freally_rpc::{Client, SocketPath, default_socket_path};
+use freally_rpc::{Client, ClientHandle, SocketPath, default_socket_path};
 
 use output::{EXIT_ERROR, EXIT_HITS, Field, Format, Writer};
 
@@ -333,6 +333,28 @@ async fn cmd_search(
     Ok(writer.exit_code())
 }
 
+/// Turn live change-monitoring on or off across every detected volume.
+///
+/// There is no single daemon-side pause switch; `volumes.update` per volume
+/// is the mechanism, so this enumerates and applies. Returns how many
+/// volumes were updated, because "pause: ok" against zero volumes is the
+/// same output as against ten and only one of those is worth acting on.
+async fn set_monitor_changes(client: &ClientHandle, on: bool) -> Result<usize> {
+    let volumes: Vec<freally_rpc::VolumeInfo> =
+        client.call("volumes.list", serde_json::Value::Null).await?;
+    let mut n = 0usize;
+    for v in &volumes {
+        let _: serde_json::Value = client
+            .call(
+                "volumes.update",
+                serde_json::json!({ "id": v.id, "monitor_changes": on }),
+            )
+            .await?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 async fn cmd_index(socket: &SocketPath, sub: IndexCommand) -> Result<()> {
     let client = Client::connect(socket.clone())
         .await
@@ -360,25 +382,19 @@ async fn cmd_index(socket: &SocketPath, sub: IndexCommand) -> Result<()> {
                 .await?;
             println!("rebuild: ok");
         }
+        // Pause and resume are `monitor_changes` on every detected volume,
+        // which is what the placeholder here always claimed to do in a
+        // comment while actually sending one unrelated settings key —
+        // `auto_remove_offline` for pause, `auto_include_fixed` for resume.
+        // Neither did anything: the first was a no-op field, and the second
+        // is not the opposite of the first. Both then printed success.
         IndexCommand::Pause => {
-            // Pause is modeled as `monitor_changes=false` on every detected
-            // volume — defer to the dedicated daemon API once it lands.
-            let _: serde_json::Value = client
-                .call(
-                    "settings.apply",
-                    serde_json::json!({ "auto_remove_offline": true }),
-                )
-                .await?;
-            println!("pause: requested");
+            let n = set_monitor_changes(&client, false).await?;
+            println!("pause: monitoring stopped on {n} volume(s)");
         }
         IndexCommand::Resume => {
-            let _: serde_json::Value = client
-                .call(
-                    "settings.apply",
-                    serde_json::json!({ "auto_include_fixed": true }),
-                )
-                .await?;
-            println!("resume: requested");
+            let n = set_monitor_changes(&client, true).await?;
+            println!("resume: monitoring started on {n} volume(s)");
         }
         IndexCommand::AddRoot { path } => {
             let id = format!("cli-folder-{}", random_id());

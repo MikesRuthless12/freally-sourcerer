@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.mikeweaver.freally</id>
+  <name>Freally Sourcerer</name>
+  <summary>One search. Every source. Every OS.</summary>
+  <developer id="io.mikeweaver">
+    <name>Mike Weaver</name>
+  </developer>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description>
+    <p>Freally is a cross-platform realtime filesystem search engine — filename, content, audio, and similarity lenses on one journal-fed index.</p>
+  </description>
+  <launchable type="desktop-id">io.mikeweaver.freally.desktop</launchable>
+  <url type="homepage">https://github.com/MikesRuthless12/freally-sourcerer</url>
+  <url type="bugtracker">https://github.com/MikesRuthless12/freally-sourcerer/issues</url>
+  <url type="help">https://mikesruthless12.github.io/freally-sourcerer/documentation.html</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.23.2" date="2026-08-20">
+      <url type="details">https://github.com/MikesRuthless12/freally-sourcerer/releases/tag/v0.23.2</url>
+    </release>
+  </releases>
+</component>

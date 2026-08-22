@@ -20,6 +20,7 @@ pub mod bookmarks;
 pub mod catalogs;
 pub mod health;
 pub mod history;
+pub mod installed;
 pub mod permissions;
 pub mod scanner;
 pub mod service;
@@ -50,6 +51,19 @@ pub async fn spawn_default(state: Arc<DaemonState>) -> Result<JoinHandle<()>> {
 /// Spawn the RPC server at a caller-chosen socket / pipe. Used by smoke
 /// tests to bind to a temp path.
 pub async fn spawn_at(state: Arc<DaemonState>, socket: SocketPath) -> Result<JoinHandle<()>> {
+    spawn_with(state, ServerConfig::new(socket)).await
+}
+
+/// [`spawn_at`] with the whole server config, for callers that need more
+/// than a socket path — the Windows service's pipe carries an SDDL so
+/// unelevated user processes can reach a SYSTEM-owned endpoint.
+///
+/// This is the one place the reconcile order is written. The Windows
+/// service used to have its own copy and had already drifted: without the
+/// two calls below it bootstrapped a full-volume scan against an empty
+/// volume map, stamping every row with no volume, permanently, and never
+/// started live journaling at all.
+pub async fn spawn_with(state: Arc<DaemonState>, cfg: ServerConfig) -> Result<JoinHandle<()>> {
     // SRC-M14: catalogs first, so the index has a mount-point table
     // before any scan the watchers kick off starts stamping rows.
     state.reconcile_catalogs().await;
@@ -58,6 +72,5 @@ pub async fn spawn_at(state: Arc<DaemonState>, socket: SocketPath) -> Result<Joi
     // when something explicitly triggered a scan.
     state.reconcile_watchers().await;
     let service = Arc::new(IndexdService::new(state));
-    let server = Server::new(ServerConfig::new(socket));
-    Ok(server.spawn(service))
+    Ok(Server::new(cfg).spawn(service))
 }

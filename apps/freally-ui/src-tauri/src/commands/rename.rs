@@ -158,7 +158,7 @@ pub fn files_rename_apply(
     } else {
         freally_rpc::OperationKind::BulkRename
     };
-    let operation_id = record_operation(kind, items);
+    let operation_id = record_operation(kind, items, None);
 
     Ok(RenameOutcome {
         renamed,
@@ -170,9 +170,15 @@ pub fn files_rename_apply(
 /// swallowed: the files really were renamed, and refusing to report that
 /// because the history could not be written would be worse than losing
 /// one undo entry.
-fn record_operation(
+/// `not_undoable_reason` carries both facts: an entry is undoable exactly
+/// when there is no reason it is not. Passing the flag separately let a
+/// caller hand over a contradiction — `undoable: true` with a reason
+/// attached — and made the one caller that has a real choice spell the
+/// same truth twice.
+pub fn record_operation(
     kind: freally_rpc::OperationKind,
     items: Vec<freally_rpc::OperationItem>,
+    not_undoable_reason: Option<freally_rpc::NotUndoable>,
 ) -> Option<String> {
     let id = format!(
         "op-{}",
@@ -187,10 +193,10 @@ fn record_operation(
         at_ms: super::bookmarks::now_ms(),
         items,
         undone: false,
-        // Renames are always invertible. A delete would not be, but
-        // deletes are not journaled - see the module docs on M16.
-        undoable: true,
-        not_undoable_reason: None,
+        // Renames are always invertible. A delete is only invertible where
+        // the platform can restore from the trash, so its caller says.
+        undoable: not_undoable_reason.is_none(),
+        not_undoable_reason,
     };
     let daemon = daemon::get()?;
     match serde_json::to_value(&entry) {
@@ -221,13 +227,47 @@ fn apply_journal_entry(
     if !entry.undoable {
         return Err("this operation cannot be undone".into());
     }
-    if !matches!(
-        entry.kind,
-        freally_rpc::OperationKind::Rename | freally_rpc::OperationKind::BulkRename
-    ) {
-        return Err("only renames can be undone".into());
+    // Exhaustive on purpose: a delete is a sibling of a rename here, not an
+    // exception to one. A fourth `OperationKind` should be a compile error at
+    // the single place that has to decide what undoing it means — the
+    // `matches!` guard this replaced would have let one through to a runtime
+    // message that named only the two kinds it knew about.
+    match entry.kind {
+        freally_rpc::OperationKind::Rename | freally_rpc::OperationKind::BulkRename => {
+            undo_move(entry, redo, known)
+        }
+        freally_rpc::OperationKind::Delete => undo_trash(entry, redo, known),
     }
+}
 
+/// Undo or redo a delete by asking the OS trash for the files back.
+///
+/// A delete is not a move: `to` is empty by construction and there is no
+/// destination to re-derive, so none of the rename machinery applies.
+/// Redoing one is deliberately not offered — it would be a second
+/// destructive act off a single click.
+fn undo_trash(
+    entry: &freally_rpc::OperationEntry,
+    redo: bool,
+    known: &KnownPaths,
+) -> Result<usize, String> {
+    if redo {
+        return Err("a delete cannot be redone; delete it again if you meant to".into());
+    }
+    let paths: Vec<PathBuf> = entry.items.iter().map(|i| PathBuf::from(&i.from)).collect();
+    let restored = super::trash_undo::restore_from_trash(&paths)?;
+    for p in &paths {
+        known.add(&p.to_string_lossy());
+    }
+    Ok(restored)
+}
+
+/// Undo or redo a rename by replaying its moves in reverse.
+fn undo_move(
+    entry: &freally_rpc::OperationEntry,
+    redo: bool,
+    known: &KnownPaths,
+) -> Result<usize, String> {
     let pairs: Vec<freally_rpc::OperationItem> = if redo {
         entry.items.clone()
     } else {

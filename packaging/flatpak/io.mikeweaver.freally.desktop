@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Freally Sourcerer
+Comment=One search. Every source. Every OS.
+Exec=freally-ui %U
+Icon=io.mikeweaver.freally
+Terminal=false
+Categories=Utility;FileTools;
+Keywords=search;find;file;index;everything;
+MimeType=x-scheme-handler/freally;

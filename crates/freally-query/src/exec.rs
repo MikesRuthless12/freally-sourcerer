@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use std::borrow::Cow;
+use std::cell::OnceCell;
 
 use freally_audio::{AudioAttributes, AudioAttributesProvider};
 use freally_index::{DirStats, FileRow, Index};
@@ -370,8 +371,30 @@ pub fn execute_with_catalogs(
     // see `NameIndex::for_each_seed_candidate_named`.
     let seedable = !plan.seed.is_empty() && !opts.match_mode.match_path;
     let use_stripped_seed = seedable && opts.match_mode.rewrites_text();
+    // Hydration is needed when any predicate beyond name-only matching
+    // applies (size / date / path / parent / attrib / ext / audio
+    // modifier) or when `match_path` widens the target to the full path.
+    // Match Case needs `FileRow.name`, which only hydration provides —
+    // the name buffer is lowercased.
+    let needs_full =
+        plan.needs_hydration || opts.match_mode.match_path || opts.match_mode.match_case;
+    // Limit pushdown. When nothing after the name pass can drop a row and
+    // the sort reads the one column the name buffer already carries, the
+    // page that survives the sort can be picked *before* hydrating — a
+    // thousand rows instead of every survivor. Which fields qualify is
+    // `name_order_serves`'s answer, not a second list here.
+    let push_limit =
+        !needs_full && dupe_keys.is_empty() && opts.limit > 0 && name_order_serves(opts.sort.field);
     let mut survivors_ids: Vec<u64> = Vec::new();
-    let mut survivors_names: Vec<String> = Vec::new();
+    // Survivor names, for the pushdown only — nothing else pays for them.
+    //
+    // One flat buffer with an end offset per name, not a `String` each.
+    // On the default (pushdown-eligible) path survivors are bounded only
+    // by `candidate_cap`, so a short query would otherwise allocate up to
+    // 100 000 separate strings to choose 1 000 of them. This also makes
+    // the names contiguous, which is what the partition below walks.
+    let mut names_buf = String::new();
+    let mut names_end: Vec<u32> = Vec::new();
     let mut stats = ExecStats {
         used_seed: seedable,
         ..ExecStats::default()
@@ -414,7 +437,10 @@ pub fn execute_with_catalogs(
             let (name, phonetic) = split_phonetic(key);
             if skip_name_filter || evaluator.matches(name, phonetic) {
                 survivors_ids.push(fid);
-                survivors_names.push(String::from_utf8_lossy(name).into_owned());
+                if push_limit {
+                    names_buf.push_str(&String::from_utf8_lossy(name));
+                    names_end.push(names_buf.len() as u32);
+                }
             }
         };
         if use_stripped_seed {
@@ -435,7 +461,10 @@ pub fn execute_with_catalogs(
             let (name, phonetic) = split_phonetic(key);
             if skip_name_filter || evaluator.matches(name, phonetic) {
                 survivors_ids.push(fid);
-                survivors_names.push(String::from_utf8_lossy(name).into_owned());
+                if push_limit {
+                    names_buf.push_str(&String::from_utf8_lossy(name));
+                    names_end.push(names_buf.len() as u32);
+                }
                 emitted += 1;
             }
             true
@@ -443,15 +472,36 @@ pub fn execute_with_catalogs(
     }
     stats.name_survivors = survivors_ids.len();
 
-    // Hydrate via SQLite. Required when any predicate beyond name-only
-    // matching applies (size / date / path / parent / attrib / ext /
-    // audio modifier) or when `match_path` widens the target to the
-    // full path.
-    // Match Case needs `FileRow.name`, which only hydration provides —
-    // the name buffer is lowercased.
-    let needs_full =
-        plan.needs_hydration || opts.match_mode.match_path || opts.match_mode.match_case;
-    let i64_ids: Vec<i64> = survivors_ids.iter().map(|&u| u as i64).collect();
+    // Hydrate via SQLite — every survivor, or under the pushdown only the
+    // page the name sort keeps. `select_nth_unstable_by` partitions
+    // instead of sorting, so picking that page costs O(n) comparisons
+    // rather than the O(n log n) the full sort spent on ten times as many
+    // rows, each of them an order of magnitude wider than an index.
+    let i64_ids: Vec<i64> = if push_limit && survivors_ids.len() > opts.limit {
+        // `names_end` holds one end offset per name, so a name starts
+        // where the previous one ended. The buffer is only ever appended
+        // to, so every slice is on a char boundary.
+        let name_at = |i: usize| -> &str {
+            let start = if i == 0 { 0 } else { names_end[i - 1] as usize };
+            &names_buf[start..names_end[i] as usize]
+        };
+        // The same `name_order` `sort_rows` uses, read off the lowercased
+        // names the name index already holds. One definition, so the page
+        // this picks is the page that sort would have kept.
+        let cmp = |&a: &usize, &b: &usize| {
+            name_order(
+                (name_at(a), survivors_ids[a] as i64),
+                (name_at(b), survivors_ids[b] as i64),
+                opts.sort,
+            )
+        };
+        let mut order: Vec<usize> = (0..survivors_ids.len()).collect();
+        order.select_nth_unstable_by(opts.limit - 1, cmp);
+        order.truncate(opts.limit);
+        order.iter().map(|&i| survivors_ids[i] as i64).collect()
+    } else {
+        survivors_ids.iter().map(|&u| u as i64).collect()
+    };
     let mut rows: Vec<FileRow> = idx.store().get_many(&i64_ids)?;
     let dirs = dir_stats_for(idx, q.root())?;
     if needs_full {
@@ -697,6 +747,42 @@ fn clamp_groups(groups: Vec<DupeGroup>, len: usize) -> Vec<DupeGroup> {
         .collect()
 }
 
+/// The `SortField::Name` ordering, over a lowercased name and the row id
+/// that breaks its ties.
+///
+/// Called from two places that **must** agree: `sort_rows`, which orders
+/// hydrated rows, and the limit pushdown in `execute_with_catalogs`,
+/// which picks the page to hydrate from the name index's own keys. If
+/// they disagree the pushdown keeps a different set of tied rows than the
+/// sort would have — a silently wrong result page, not an error.
+///
+/// The id is an `i64` because `FileRow::file_id` is: a file id is a
+/// 64-bit **hash**, so roughly half of them are negative, and comparing
+/// the `u64` the name index stores sends exactly those to the top.
+/// Writing this twice is how that got in the first time.
+///
+/// Direction is applied last, after the tie-break, because `sort_rows`
+/// reverses its whole comparator for `Desc` — including the tie-break.
+fn name_order(a: (&str, i64), b: (&str, i64), spec: SortSpec) -> Ordering {
+    let text = if spec.natural {
+        crate::natural::natural_cmp(a.0, b.0)
+    } else {
+        a.0.cmp(b.0)
+    };
+    let o = text.then_with(|| a.1.cmp(&b.1));
+    match spec.order {
+        SortOrder::Asc => o,
+        SortOrder::Desc => o.reverse(),
+    }
+}
+
+/// Whether [`name_order`] alone can decide this sort — i.e. whether the
+/// limit pushdown is possible at all. Kept next to it so "which fields
+/// the name buffer can serve" has one answer rather than two.
+fn name_order_serves(field: SortField) -> bool {
+    matches!(field, SortField::Name | SortField::Relevance)
+}
+
 fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
     // SRC-M24 — every string column goes through the same comparator, so
     // "sort by natural order" does not quietly mean "only the name
@@ -715,7 +801,21 @@ fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
             // generic Phase-5 path it degrades to Name — matches the
             // Phase 11 UI's "Sort by Relevance" fallback for non-
             // similarity queries.
-            SortField::Name | SortField::Relevance => text(&a.name_lower, &b.name_lower),
+            // Delegated so the pushdown and this cannot drift; the
+            // direction is re-applied by `name_order` and unwound here,
+            // because every other arm below gets its direction from the
+            // single reversal at the bottom of this function.
+            SortField::Name | SortField::Relevance => {
+                let o = name_order(
+                    (&a.name_lower, a.file_id),
+                    (&b.name_lower, b.file_id),
+                    spec,
+                );
+                return match spec.order {
+                    SortOrder::Asc => o,
+                    SortOrder::Desc => o.reverse(),
+                };
+            }
             // With natural sort off this stays `PathBuf::cmp`, which
             // orders by component rather than by byte — the ordering
             // this column has always had. Natural sort has to read the
@@ -741,6 +841,12 @@ fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
                 (x, y) => x.is_some().cmp(&y.is_some()),
             },
         }
+        // Ties used to fall back on whatever order `Store::get_many`
+        // returned, which is SQLite's business and not stable across a
+        // change of limit. `file_id` makes this a total order — which is
+        // what lets the limit pushdown above pick exactly the page this
+        // would have sorted to the front.
+        .then_with(|| a.file_id.cmp(&b.file_id))
     };
     // SRC-M24 — the path column is the one case that needs a string it
     // does not already have. Decorate-sort-undecorate so each row is
@@ -754,8 +860,8 @@ fn sort_rows(rows: &mut [FileRow], spec: SortSpec) {
             .cloned()
             .map(|r| (r.path.to_string_lossy().into_owned(), r))
             .collect();
-        keyed.sort_by(|(x, _), (y, _)| {
-            let o = crate::natural::natural_cmp(x, y);
+        keyed.sort_by(|(x, a), (y, b)| {
+            let o = crate::natural::natural_cmp(x, y).then_with(|| a.file_id.cmp(&b.file_id));
             if asc { o } else { o.reverse() }
         });
         for (slot, (_, row)) in rows.iter_mut().zip(keyed) {
@@ -898,6 +1004,7 @@ fn filter_with_audio(
         let ctx = EvalCtx {
             mm,
             path_lower: path_lower.as_deref(),
+            parent_lower: OnceCell::new(),
             audio: attrs.as_ref(),
             dirs,
             volumes,
@@ -919,6 +1026,15 @@ struct EvalCtx<'a> {
     /// The row's lowercased full path, when `match_path` widened the
     /// text target. `None` means "match against the name".
     path_lower: Option<&'a str>,
+    /// The row's lowercased parent *component*, computed on first use.
+    ///
+    /// `path_lower` cannot stand in: `parent:` matches the last component
+    /// only, so `parent:docs` must not be satisfied by `/docs/a/b.txt`.
+    /// Lazy rather than computed alongside `path_lower` because it is worth
+    /// nothing to the queries that carry no `parent:` — which is nearly all
+    /// of them — and a second walk of the tree to find out is more code than
+    /// this. Once per row either way, however many `parent:` terms there are.
+    parent_lower: OnceCell<Option<String>>,
     audio: Option<&'a AudioAttributes>,
     dirs: &'a DirStats,
     /// SRC-M12 readings for the row's name, when the toggle is on and
@@ -987,6 +1103,8 @@ fn normalize_node(node: &QueryNode, mm: &MatchMode) -> QueryNode {
     // Match Case routes them at the hydrated row they fold on the same
     // terms a bare term does, which makes the two rules one rule.
     let fold = |s: &String| normalized(s, mm).into_owned();
+    let pathish = pathish_mode(mm);
+    let fold_pathish = |s: &String| normalized(s, &pathish).into_owned();
     match node {
         QueryNode::Text(TextPattern::Literal(l)) => QueryNode::Text(TextPattern::Literal(fold(l))),
         QueryNode::Modifier(m) => {
@@ -994,8 +1112,10 @@ fn normalize_node(node: &QueryNode, mm: &MatchMode) -> QueryNode {
                 ModifierKind::Child(c) => ModifierKind::Child(fold(c)),
                 ModifierKind::NamePrefix(c) => ModifierKind::NamePrefix(fold(c)),
                 ModifierKind::NameSuffix(c) => ModifierKind::NameSuffix(fold(c)),
-                ModifierKind::Path(p) => ModifierKind::Path(p.to_lowercase()),
-                ModifierKind::Parent(p) => ModifierKind::Parent(p.to_lowercase()),
+                // See `pathish_mode`. Their targets below run the same mode,
+                // so needle and target still agree.
+                ModifierKind::Path(p) => ModifierKind::Path(fold_pathish(p)),
+                ModifierKind::Parent(p) => ModifierKind::Parent(fold_pathish(p)),
                 other => other.clone(),
             };
             QueryNode::Modifier(crate::ast::ModifierPredicate { kind })
@@ -1080,6 +1200,22 @@ fn eval_name(node: &QueryNode, name_lower: &[u8], phonetic: Option<&[u8]>, mm: &
         },
         QueryNode::QuickFilter(qf) => name_has_any_ext(name_lower, qf.extensions()),
         QueryNode::Lens { inner, .. } => eval_name(inner, name_lower, phonetic, mm),
+    }
+}
+
+impl EvalCtx<'_> {
+    /// The row's parent component, folded the way `pathish_mode` folds
+    /// the needle. `None` when the path has no parent, or a non-UTF-8 one.
+    fn parent_lower(&self, row: &FileRow) -> Option<&str> {
+        self.parent_lower
+            .get_or_init(|| {
+                row.path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|s| s.to_str())
+                    .map(|s| normalized(s, &pathish_mode(self.mm)).into_owned())
+            })
+            .as_deref()
     }
 }
 
@@ -1196,13 +1332,12 @@ fn eval_modifier(kind: &ModifierKind, row: &FileRow, ctx: &EvalCtx<'_>) -> bool 
                 None => false,
             }
         }
-        ModifierKind::Parent(needle) => row
-            .path
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_lowercase().contains(needle))
-            .unwrap_or(false),
+        // Needle folded once by `normalize_needles`; the target is folded
+        // once per row by `EvalCtx::parent_lower` rather than once per
+        // evaluation, which is what `path_lower` already does for `path:`.
+        ModifierKind::Parent(needle) => ctx
+            .parent_lower(row)
+            .is_some_and(|parent| parent.contains(needle)),
         // These three run the same normalization ladder as their
         // `eval_name` counterparts, and must keep doing so. Both passes
         // execute on every query: the name pass filters candidates, this
@@ -1441,6 +1576,36 @@ fn folded<'a>(c: Cow<'a, str>, mm: &MatchMode) -> Cow<'a, str> {
         c
     } else {
         Cow::Owned(strip_diacritics(&c))
+    }
+}
+
+/// The match mode `path:` and `parent:` are compared under.
+///
+/// Those two have always been case-insensitive whatever the match mode says,
+/// and have never folded diacritics or dropped ignore-classes. That was a
+/// hardcoded `to_lowercase()` sitting *inside* the ladder — the one function
+/// whose job is that there is only one ladder. Expressing it as a mode
+/// instead keeps that promise: there is still one `normalized`, still one
+/// knob, and the shorter ladder is now a value rather than a branch.
+///
+/// It is a `MatchMode` rather than a rung mask because the difference is not
+/// a subset — `match_case` is *inverted*, not skipped. Saying so in the type
+/// is the honest version.
+///
+/// Widening these two to the full ladder is a real behaviour change, to make
+/// deliberately rather than as a side effect of tidying this up.
+fn pathish_mode(mm: &MatchMode) -> MatchMode {
+    MatchMode {
+        // Both sides of a `path:` comparison are folded, so opting out under
+        // Match Case would compare a cased needle against a folded target and
+        // match nothing at all.
+        match_case: false,
+        // `true` means "leave diacritics alone" — the ladder folds them only
+        // when this is off.
+        match_diacritics: true,
+        ignore_punctuation: false,
+        ignore_whitespace: false,
+        ..*mm
     }
 }
 
@@ -1745,6 +1910,7 @@ fn execute_similar(
         let ctx = EvalCtx {
             mm: &opts.match_mode,
             path_lower: path_lower.as_deref(),
+            parent_lower: OnceCell::new(),
             audio: attrs.as_ref(),
             dirs: &dirs,
             phonetic: phonetic.as_deref(),
@@ -1942,6 +2108,94 @@ mod tests {
                 assert_eq!(normalized(&once, &m), once, "{s:?} under {m:?}");
             }
         }
+    }
+
+    #[test]
+    fn the_pathish_mode_stops_at_the_case_fold() {
+        // `path:` and `parent:` have never folded diacritics or ignore
+        // classes. That was a hardcoded `to_lowercase()` inside the ladder;
+        // it is a named mode now, and this is the behaviour it has to keep.
+        let m = mode(|m| {
+            m.ignore_punctuation = true;
+            m.ignore_whitespace = true;
+        });
+        assert_eq!(normalized("My Café-Notes.TXT", &m), "mycafenotestxt");
+        assert_eq!(
+            normalized("My Café-Notes.TXT", &pathish_mode(&m)),
+            "my café-notes.txt"
+        );
+    }
+
+    #[test]
+    fn the_pathish_mode_folds_even_under_match_case() {
+        // Both sides of a `path:` comparison are folded, so the needle must
+        // fold too — opting out here would compare `Reports` against a
+        // lowercased path and match nothing at all.
+        let m = mode(|m| m.match_case = true);
+        assert_eq!(normalized("Reports", &pathish_mode(&m)), "reports");
+        // Whereas the full ladder honours the flag, which is the whole point
+        // of Match Case.
+        assert_eq!(normalized("Reports", &m), "Reports");
+    }
+
+    #[test]
+    fn path_and_parent_needles_take_the_pathish_mode() {
+        // Read through `normalize_needles`, so the mode is pinned where the
+        // query actually picks it rather than only at the ladder.
+        let m = mode(|m| m.ignore_punctuation = true);
+        let q = crate::parse("path:My-Café parent:My-Café").expect("parses");
+        let mut seen = Vec::new();
+        fn walk(n: &QueryNode, out: &mut Vec<String>) {
+            match n {
+                QueryNode::Modifier(m) => match &m.kind {
+                    ModifierKind::Path(p) | ModifierKind::Parent(p) => out.push(p.clone()),
+                    _ => {}
+                },
+                QueryNode::And(parts) | QueryNode::Or(parts) => {
+                    parts.iter().for_each(|p| walk(p, out))
+                }
+                QueryNode::Not(i) => walk(i, out),
+                QueryNode::Lens { inner, .. } => walk(inner, out),
+                _ => {}
+            }
+        }
+        walk(&normalize_needles(q.root(), &m), &mut seen);
+        // Lowercased, but the diacritic and the hyphen both survive.
+        assert_eq!(seen, vec!["my-café".to_string(), "my-café".to_string()]);
+    }
+
+    #[test]
+    fn parent_matches_the_last_component_only() {
+        // The cached target is the parent *component*, not the whole path —
+        // reusing `path_lower` here would make `parent:docs` true for any
+        // row anywhere under a `docs` directory.
+        let ctx_mm = MatchMode::default();
+        let dirs = DirStats::default();
+        let volumes = VolumeNeedles::default();
+        let row = FileRow {
+            file_id: 1,
+            path: std::path::PathBuf::from("/docs/archive/notes.txt"),
+            name: "notes.txt".into(),
+            name_lower: "notes.txt".into(),
+            ext: Some("txt".into()),
+            size: 0,
+            mtime_ns: 0,
+            ctime_ns: 0,
+            attrs: 0,
+            volume: String::new(),
+        };
+        let ctx = EvalCtx {
+            mm: &ctx_mm,
+            path_lower: None,
+            parent_lower: OnceCell::new(),
+            audio: None,
+            dirs: &dirs,
+            phonetic: None,
+            volumes: &volumes,
+        };
+        assert_eq!(ctx.parent_lower(&row), Some("archive"));
+        // And the cache answers the same on the second read.
+        assert_eq!(ctx.parent_lower(&row), Some("archive"));
     }
 
     #[test]

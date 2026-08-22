@@ -7,8 +7,11 @@
 //!
 //! Bigram extraction works on Unicode `char` pairs after lowercasing; we
 //! sentinel the start and end of the name (`'^'` / `'$'`) so 1-char names
-//! still produce two distinct bigrams and the empty-name edge is the
-//! all-MAX signature (matches no LSH band).
+//! still produce two distinct bigrams. An empty name is bracketed to `^$`
+//! and so gets one real bigram and a real signature — every empty name
+//! therefore hashes alike. Harmless, since an indexed file has a name, but
+//! it is not the all-MAX signature this module used to claim: bracketing
+//! makes that unreachable.
 //!
 //! ## Why a *linear* hash family?
 //!
@@ -74,9 +77,10 @@ impl MinHashFamily {
             .chain(name_lower.chars())
             .chain(std::iter::once('$'))
             .collect();
-        if chars.len() < 2 {
-            return sig;
-        }
+        debug_assert!(
+            chars.len() >= 2,
+            "bracketing guarantees at least '^' and '$'"
+        );
         for w in chars.windows(2) {
             let h = bigram_hash(w[0], w[1]);
             for (i, &(a, b)) in self.pairs.iter().enumerate() {

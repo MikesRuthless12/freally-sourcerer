@@ -5,6 +5,7 @@
   import { foldersStore } from "../../lib/stores/folders.svelte";
   import { LOCALES } from "../../lib/i18n/bundle";
   import { t } from "../../lib/i18n/t";
+  import { toastStore } from "../../lib/stores/toast.svelte";
 
   // Wizard steps: 0=folders, 1=language, 2=theme. Hotkey configuration
   // intentionally lives only in the Settings → Keyboard panel, not here.
@@ -62,7 +63,12 @@
           rescan_schedule: { kind: "never" }
         });
       } catch (e) {
+        // The wizard is the one moment a user is told the app is being
+        // set up. A root that silently fails to register means they
+        // finish the wizard, search, find nothing, and have no way to
+        // learn that the folder they picked was never added.
         console.warn("[wizard] failed to register root:", path, e);
+        toastStore.error(t("toast-index-root-failed", { path, error: String(e) }));
       }
     }
   }
@@ -78,7 +84,7 @@
   label={t("wizard-aria-label")}
   dismissOnBackdrop={false}
   dismissOnEscape={false}
-  style="width: 540px; display: flex; flex-direction: column; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);"
+  style="width: 540px; display: flex; flex-direction: column;"
 >
   <header>
     <h2>{t("wizard-title")}</h2>

@@ -163,6 +163,21 @@ jobs:
           cargo fmt -- --check
           cargo clippy --all-targets --locked -- -D warnings
 
+      # And its tests, for the same reason the step above exists: the
+      # crate is excluded from the workspace, so `--workspace` never
+      # reaches it. Without this the menu-bar and status-bar parity
+      # suites, and the Phase-13 packaging + updater gates, compile under
+      # clippy and are never executed — a test that cannot fail is
+      # indistinguishable from one that passes.
+      #
+      # `cargo test`, not nextest: `.config/nextest.toml` lives at the
+      # workspace root and does not apply here, and none of these build a
+      # Tantivy index, which is the whole reason the workspace suite wants
+      # a process per test.
+      - name: cargo test (src-tauri)
+        working-directory: apps/freally-ui/src-tauri
+        run: cargo test --locked
+
       # nextest, not `cargo test`: one process per test instead of one
       # thread, which this suite benefits from unusually much — most of
       # the 760 tests build their own Tantivy index, and the

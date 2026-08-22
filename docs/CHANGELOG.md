@@ -6,537 +6,91 @@ All notable changes documented here. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-> Everything below predates the Build 1–3 releases and was never promoted into a version section. It is left here untouched rather than back-filed into `0.21.0`–`0.23.0` on a guess; sorting it is its own pass.
-
-### TASK-098 — full Fluent i18n end-to-end across all 18 locales (2026-05-11)
-
-The 18-locale Fluent loader is now wired. Switching the language in
-Settings → Locale (or in the first-run wizard) re-renders every
-translated string in the UI — menus, status bar, settings panels,
-dialogs, and the wizard — without a restart.
-
-**Loader.**
-
-- `apps/freally-ui/src/lib/i18n/bundle.ts` replaces the Phase-11
-  `EN_FTL` inline string with `import.meta.glob("../../../../../locales/*/freally.ftl", { query: "?raw", eager: true })`.
-  All 18 `.ftl` files are inlined at build time; each `FluentBundle`
-  layers `en` underneath as a fallback resource so a stray missing key
-  surfaces in English rather than as a raw key string.
-- `vite.config.ts` extends `server.fs.allow` to the workspace root so
-  dev mode can read the locale tree that lives outside the package
-  root.
-- `bundle.ts` exports `loadedLocales()` for the test suite to assert
-  the glob actually picked up all 18 files.
-
-**Translation data — Standing Rule #4 lockstep.**
-
-- `en/freally.ftl` grew from 314 to 557 keys. The 243 additions cover
-  wizard polish (hints, placeholders, "Step N of N"), status bar
-  segments, lens / preview / bookmarks strings, the About / Connect
-  dialogs, every UI/Home/Backup/Keyboard/History/Locale/Folders/Volumes
-  panel hint + section title + toast, and the full PRD §8.28 menu bar
-  (every File/Edit/View/Search/Bookmarks/Tools/Help label + every
-  submenu title + every hover-hint).
-- The same 243 keys were mirrored into all 17 other locales in parallel
-  (es, de, fr, it, nl, pl, pt-BR, tr, vi, id, ru, uk, ar, hi, ja, ko,
-  zh-CN). Every `.ftl` now resolves the same 557 keys; the new
-  `tests/unit/i18n.test.ts` lockstep test asserts this on every CI run.
-
-**Component conversion.**
-
-- `menu_spec.ts` gains an `l10n` key on every `MenuItemSpec` and
-  `MenuSubmenu`, plus a `hintL10n` for status-bar hover hints.
-  `MenuBar.svelte` resolves them via `labelOf(spec)` / `hintOf(spec)`
-  helpers that fall back to the literal `label`/`hint` when a
-  translation key isn't present.
-- The FirstRunWizard renders its title, step count, every step's
-  heading + hint, the theme cards, and the Back/Next/Finish buttons
-  through `t()`. The hotkey step was already removed in the earlier
-  wizard pass; hotkey config remains in Settings → Keyboard.
-- StatusBar uses `t()` for the index-phase segment ("Indexed (N
-  files)" / "Indexing… N/M" / "Paused" / "Error"), result-count
-  pluralization (`status-result-count-one` vs `…-many`), the selection
-  size badge, query timing, lens timing badges, and the local-DB /
-  remote-endpoint segment. The theme-cycle button's `aria-label` and
-  the hotkey hover hint are now translatable.
-- Settings dialog — `SettingsDialog.svelte`, `SettingsTreeNav.svelte`,
-  `SettingsButtonBar.svelte`, `LocalePanel.svelte`, plus the panels in
-  the Indexes, Lenses, Network, and Misc groups (UI / Home / Search /
-  Results / View / Context Menu / Fonts & Colors / Keyboard /
-  Indexes-top / Volumes / Folders / FileLists / Exclude / Filename /
-  Content / Audio / Similarity / Custom / HTTPS / ETP / History /
-  Privacy / Logs / Backup / About).
-- Bookmarks, preview pane, and `LensSection` empty-state / collapse
-  controls.
-
-**RTL is now automatic, not a checkbox.**
-
-- The "RTL preview" checkbox in Settings → Locale is gone. RTL applies
-  automatically for locales whose native script is RTL — currently
-  `ar` is the only ship-locale in that bucket. `applyRtlForLocale`
-  consults its internal `RTL_LOCALES` allowlist; `bootstrap.ts`'s
-  `locale_settings.rtl_preview` field remains in the persisted state
-  for backward-compat but the UI no longer surfaces it.
-
-**Tests.**
-
-- New `tests/unit/i18n.test.ts` covers: (a) the glob actually loaded
-  all 18 locales, (b) `bundleFor(code)` returns a bundle that resolves
-  a canary key for every locale, (c) the 18 locales are in perfect
-  lockstep on key set, (d) switching `settingsStore.state.locale`
-  changes what `t()` returns, (e) an unknown locale falls back through
-  `en` rather than the raw key string, (f) an unknown key returns the
-  key.
-
-### Phase-12 polish pass — UX, reliability, and live-apply (2026-05-11)
-
-Major behavioral pass during a long debugging session. Most fixes are direct
-voidtools-Everything parity gains plus the foundational reliability work that
-makes the desktop app pleasant to run repeatedly during development.
-
-**Single-instance + non-blocking daemon boot.**
-
-- `kill_other_freally_instances()` runs at the top of `run()` on Windows
-  (taskkill `/F /T` against `freally-ui.exe` + `freally-indexd.exe`,
-  filtered to PIDs ≠ self) so relaunching the app always starts from a clean
-  slate without manual process killing. macOS / Linux stub for parity.
-- `Daemon::boot` now spawns a dedicated `freally-daemon-boot` thread inside
-  `tauri::Builder::setup`; the setup hook returns immediately and the window
-  appears right away. Previously the canonical-store replay could block the
-  GUI thread for 10-15 s, tripping the Windows non-responsive-window watchdog
-  and tearing the process down before any HWND existed.
-- `Client::connect` is wrapped in a 500 × 40 ms retry loop on the consumer
-  side so a slow daemon boot doesn't lose to a single connect race.
-
-**Filter chips + Search menu — multi-select with OR composition.**
-
-- New `lib/stores/type_filter.svelte.ts` holds a `Set<TypeFilterId>`; default
-  is the full set (Everything mode). `toQueryFragment()` emits a parser-level
-  `(audio: OR video: OR …)` group for partial selections, empty string for
-  "everything" or "none" so the daemon-side AND-of-prefixes pitfall is gone.
-- `QuickFiltersPalette.svelte` chips toggle the store directly; the menu
-  items in `Search → …` switch from `radio` to `checkable`, with
-  `MenuBar.isItemChecked` reading the store. "Everything" derives from
-  `selected.size === ALL.length` — clicking any individual chip flips both
-  that chip and Everything off, leaving the others.
-- `bookmarks.add` saves the active filter set alongside the search text; the
-  Rust `Bookmark` DTO gains `filters: Vec<String>` with `#[serde(default)]`
-  so existing `bookmarks.json` files keep deserializing. Clicking a bookmark
-  restores both the textbox content (via `queryStore.setSource`) and the
-  chip selection (via `typeFilterStore.setFromIds`).
-- Fixed Archive's token: `compressed: "zip:"` → `"archive:"` (the real
-  `QuickFilter::Archive` alias from `freally-query::quick_filters`). The
-  old `zip:` was just an extension within the group, so Archive never
-  matched anything.
-
-**Initial Everything query + everything-mode parity.**
-
-- `runInitialEverythingQuery()` in `bootstrap.ts` fires once after hydrate
-  and polls `resultsStore.batches.length` for up to 60 × 800 ms, kicking
-  fresh `run()` calls only when nothing is in-flight so the auto-fire
-  doesn't cancel its own queries. First paint after launch shows results
-  immediately instead of "Type a query to begin."
-- When the full type-filter set is selected and the search box is empty,
-  `resultsStore.run()` composes a bare `*` wildcard so the filename lens
-  lists every indexed entry (voidtools-Everything parity).
-- `ResultList.svelte` placeholder gate updated: shows "Type a query to
-  begin" only when the source is empty AND no type filters are selected
-  (i.e. the user has explicitly deselected every chip).
-
-**Folder indexing.**
-
-- `crates/freally-indexd/src/scanner.rs::scan_folder` now indexes
-  directories alongside files; the walkdir path filters on
-  `is_file() || is_dir()` and stamps `FILE_ATTRIBUTE_DIRECTORY (0x10)`
-  into the journal event's `attrs` field.
-- `crates/freally-journal-win/src/subscriber.rs` MFT bootstrap path no
-  longer skips directory records — they ride through with their real
-  `file_attributes` bitmask intact.
-- `QueryHit` (Rust DTO + matching TS interface) gains an
-  `attrs: u32 #[serde(default)]` field that the daemon populates from
-  `FileRow.attrs`. UI distinguishes file vs folder via the `0x10` bit.
-
-**Real Windows shell icons + per-row rendering.**
-
-- New `apps/freally-ui/src-tauri/src/commands/icons.rs` —
-  `icon_for_ext(ext, is_dir) -> Option<String>` async Tauri command that
-  runs Win32 `SHGetFileInfoW` with `SHGFI_USEFILEATTRIBUTES` (so a dummy
-  path like `_.xml` resolves the registered handler's icon without the
-  file actually existing on disk) → `GetIconInfo` → 32-bit BGRA via
-  `GetDIBits` → BGRA→RGBA channel swap → PNG via `image` crate → base64
-  data URL. Returns `None` on macOS / Linux for now.
-- `src-tauri/Cargo.toml`: adds `image = "0.25" --no-default-features
-  --features png`, `base64 = "0.22"`, and the relevant `windows = "0.59"`
-  feature set under `cfg(windows)`.
-- New `lib/stores/icon_store.svelte.ts` — `Map<(ext, is_dir),
-  Promise<dataUrl | null>>` cache so 200 result rows fire one IPC per
-  unique extension, not per row. Reactive `tick` field that increments
-  on each resolution so $derived consumers re-render.
-- `ResultRow.svelte` Name column renders `<img class="row-icon" src=…>`
-  pulled from `iconStore.get(hit.ext, isDir)`, with an emoji fallback
-  (`📁` / `📄`) while the data URL is loading.
-
-**Real metadata in MFT bootstrap.**
-
-- USN records carry FRN + attrs + a single timestamp but no file size, so
-  the MFT-fast-path used to write `size: 0` and a USN-only timestamp into
-  the index. `subscriber.rs` now does a `std::fs::metadata(&full)` per
-  emitted event to populate real `len`, `modified`, `created`. Slower
-  than the pure USN walk but correct — the Size and Modified columns
-  finally show non-zero values without forcing the walkdir fallback.
-
-**Search box + result row visuals.**
-
-- `SearchBar.svelte` now binds the `<input value={queryStore.source}>` so
-  programmatic updates (bookmark click, Escape clear, future deep-link)
-  reflect in the textbox. Also dropped the broken `color: transparent`
-  on `.raw` (the "mirror" syntax-highlight layer wasn't aligning, so the
-  typed text was effectively invisible in dark mode) — input renders its
-  own text now and the mirror is hidden.
-- `ResultRow.svelte` row CSS reads `--row-{state}-fg/bg/weight/style` so
-  the Fonts & Colors panel's per-state controls are live. States wired:
-  normal, highlighted (hover), selected, selected_highlighted.
-- Fixed alternate-row + hover specificity bug that made a selected row
-  appear unselected when its `:nth-child(even)` rule outranked
-  `.row.selected`. Both selectors now have `:not(.selected)` so a
-  selected row keeps its cyan tint regardless of index or hover.
-
-**Fonts & Colors live-apply + persistence.**
-
-- New `lib/stores/fonts_apply.svelte.ts::applyFontsAndColors()` writes
-  CSS custom properties on `<html>` from `settings.fonts_and_colors`:
-  `--font-ui` (with cross-OS fallback chain), `--app-font-size`,
-  per-state `--row-…-fg/bg/weight/style`, per-lens `--lens-…` overrides.
-  Called once on bootstrap (post-hydrate) and again on every panel
-  patch — restores across launches and live-applies on change.
-- `FontsAndColorsPanel.svelte` font input switched to a `<select>` dropdown
-  populated via `window.queryLocalFonts()` (Local Font Access API
-  supported by the Tauri 2 WebView2 runtime on Windows) with a curated
-  25-family fallback for non-Chromium webviews. Each option renders in
-  its own font for visual preview.
-- Theme dropdown in UIPanel calls `themeStore.set(value)` alongside the
-  settings patch so light/dark switches live-apply on selection — no
-  Apply / restart needed.
-
-**View panel toggles wired.**
-
-- App.svelte's $effect mirrors selected settings to `<body data-*>`
-  attributes; new CSS rules in `app.css` react to them:
-  `data-alternate-rows`, `data-row-mouseover` (overrides `.row:hover`
-  to no-op when false), `data-show-tooltips`, `data-show-lufs-badges`,
-  `data-show-similarity-score`.
-- `ResultRow` row `title={hit.path}` is conditional on the Show tooltips
-  setting.
-- `formatBytes` honors the Size Format setting (`auto_binary` |
-  `bytes` | `kb` | `mb` | `gb`).
-
-**Window controls — always-on-top, size, zoom.**
-
-- `capabilities/default.json` adds the missing
-  `core:window:allow-set-size`, `core:window:allow-set-always-on-top`,
-  `core:window:allow-set-resizable`, `core:window:allow-inner-size`,
-  `core:window:allow-outer-size` grants. Without these, every
-  `setSize` / `setAlwaysOnTop` call was being silently rejected by the
-  Tauri IPC permission gate.
-- App.svelte gains an `$effect` that translates `settings.on_top` +
-  `queryStore.source` into `setAlwaysOnTop(...)` calls: Never / Always
-  / WhileSearching modes all live, re-applied on every settings change
-  and every keystroke. Restored on launch.
-- `setWindowSize` import fixed: `LogicalSize` comes from
-  `@tauri-apps/api/window`, not the non-existent
-  `@tauri-apps/api/dpi`. Picked size also writes
-  `settings.window_size = { w, h }` (allowlisted in
-  `ALLOWED_PATCH_KEYS`), and bootstrap restores the saved size on
-  next launch.
-- `zoomStore` swapped from `document.documentElement.style.fontSize`
-  to the WebView's `zoom` CSS property so Ctrl+= / Ctrl+- actually
-  rescale the (px-based) UI. Crisp at all factors.
-
-**Image preview.**
-
-- `preview/windows_host.rs::preview` returns real image data URLs for
-  PNG, JPG/JPEG/JFIF, GIF, WEBP, BMP, SVG, ICO, AVIF: reads the file
-  (4 MiB cap), encodes via `commands::files::base64_encode`, returns
-  `PreviewPayload { kind: Image, data_url: "data:image/…;base64,…" }`.
-  Non-image extensions still return `None` so the text-head fallback
-  handles text files.
-- `files_preview`, `files_thumbnail`, and `icon_for_ext` are now
-  `async fn` and offload the actual work to
-  `tokio::task::spawn_blocking`. The synchronous versions were
-  blocking Tauri's IPC dispatch thread for seconds during shell-icon
-  extraction + multi-MB base64 encoding, which froze the entire UI.
-- Fixed `PreviewPane.svelte` calling a missing
-  `files.whitelistUserChosen` — the helper lived in `ipc/bookmarks.ts`
-  but the pane imports `* as files from "ipc/files"`. Re-exported
-  `whitelistUserChosen` from `ipc/files.ts` so the call resolves; the
-  synchronous `TypeError` was leaving `loading = true` forever and
-  blocking the preview $effect.
-- Added a Rust tracing pass on the preview / icon paths plus a
-  `log_event` Tauri command for forwarding TS console events into the
-  cargo dev log, and a `std::panic::set_hook` that surfaces Rust
-  panics in the console.
-
-**FTP endpoint + greyed Disconnect.**
-
-- New `ConnectEndpointDialog.svelte` modeled on the voidtools dialog:
-  Host (required), Port (default 21), Username, Password, Link type
-  dropdown. On OK, writes `settings.endpoint = { name: host, kind:
-  "ftp" }`.
-- `MenuBar.isItemEnabled` returns `false` for
-  `tools.disconnect_endpoint` when `settings.endpoint.kind === "local"`;
-  CSS adds an `.item.disabled` greyed style with `pointer-events: none`.
-- `View → Filters` now pre-selects the `indexes.exclude` panel before
-  opening the settings dialog (voidtools-Everything parity).
-
-**Exclusions — toggleable extension classes + dedup.**
-
-- `ExcludePanel.svelte` extension-class buttons (Video / Audio / Image
-  / Archive / Executable) now toggle: click adds the class's globs and
-  highlights the button; click again removes them and un-highlights.
-  Computes "active" as "every glob in the class is currently in the
-  exclude-files set" so the highlight reflects real state, not just
-  the last click.
-- `Add Folder…` and `Apply OS-recommended excludes` both dedupe so the
-  same entry never gets added twice.
-
-**Bookmarks reliability.**
-
-- `bookmarks.add` no longer requires a non-empty query — empty-query
-  bookmarks are allowed (named "Bookmark N" so the user can rename
-  them in Organize). Dedupe key is now (name, query, filter-set).
-- `bookmarksStore.hydrate()` retries every 500 ms for up to ~10 s so
-  the first hydrate doesn't lose the bookmarks list to a
-  daemon-not-ready IPC error during the background-boot window.
-- `bookmarks.organize` re-hydrates before opening the Organize dialog
-  so a stale dropdown can't show "No bookmarks yet" when there are
-  bookmarks on disk.
-
-**Misc.**
-
-- `tracing_subscriber` default filter raised to
-  `warn,freally=info,freally_ui_lib=info,freally_indexd=info`
-  so the instrumentation lands without forcing `RUST_LOG`.
-- Settings dialog `markDirty` now also calls `applyFontsAndColors()`
-  inside the Fonts & Colors panel patch path so the preview is
-  instant.
-- `ipc/types.ts::QueryHit` gains `attrs?: number`; `Bookmark` gains
-  `filters?: string[]`. Both optional for forward compat.
-
 ### Added
 
-- **[all platforms]** Phase 12 settings dialog + real daemon IPC + custom-extractor framework + i18n. Replaces the Phase-11 mock IPC layer with a real `freally-rpc` length-prefixed JSON-RPC transport over a per-user Unix socket / named pipe and lands the full PRD §8.1-§8.27 settings dialog plus the Wasm-sandboxed custom-extractor host.
+- **[all platforms]** **Report a bug** — `Help → Report a Bug…`, plus a prompt
+  that appears on the next launch after a crash. A panic hook writes a
+  **scrubbed** crash report locally (home path and username redacted before the
+  file touches disk), and the dialog shows you the **exact** text that would be
+  sent — app version and OS only — before offering to open a pre-filled GitHub
+  issue or mail draft. **Nothing sends automatically**; there is no telemetry
+  and no server we run. Two drills live in Settings → Logs & Debug.
+- **[all platforms]** **Check for updates** — Settings → Privacy & Updates now
+  asks the updater rather than opening a web page. It reports the version you
+  are running, shows the release notes with working links, and when an update
+  exists asks a **Yes/No box naming both versions** before installing anything.
+  On yes it stops the indexer daemon, installs, and closes; on Windows the
+  installer's finish page offers to launch the new version. A launch check
+  honours the cadence setting, stands down when a crash report is waiting, and
+  stays **silent** when the machine is offline.
+- **[Windows]** `freally-indexd status` reports whether the daemon is
+  registered as a service and what the service manager makes of it. Install and
+  uninstall existed with no way to ask what happened.
+- **[docs]** `docs/EVERYTHING_MIGRATION_GUIDE.md` — what transfers from
+  voidtools' Everything, what is new, and the three things that will surprise
+  you. `docs/MENU_REFERENCE.md` — all 112 menu items and their shortcuts,
+  generated from the menu spec so it cannot go stale.
+- **[packaging]** `packaging/` carries winget, Chocolatey, Homebrew Cask,
+  Flathub and Snap manifests, generated from a published release by
+  `scripts/gen-packaging.mjs` so the checksums are the ones GitHub serves.
+- **[release]** `scripts/verify-updater-chain.mjs` proves a published release
+  is actually updatable: it compares the key id inside every platform signature
+  against the public key compiled into the binaries. The updater fails closed
+  **and silent**, so nothing else catches a release signed with the wrong key.
 
-  **New crate `freally-rpc`** (under `crates/freally-rpc/`) — the foundation that lets the Tauri UI and the new `freally` CLI both speak the same protocol to a single `freally-indexd` instance.
-  - `frame.rs`: u32-BE length-prefixed framing with a 16-MiB hard payload cap so a hostile peer cannot OOM the server with a single 4-GiB length prefix.
-  - `jsonrpc.rs`: JSON-RPC 2.0 Request / Response / Notification envelopes; the `ResponseEnvelope` untagged enum disambiguates a single frame as either a response or a server-pushed notification.
-  - `service.rs`: the `Service` trait that `freally-indexd` implements; `NotificationSink` lets a method handler push asynchronous notifications down the same connection.
-  - `server.rs`: per-connection accept loop with a bounded outbound queue (`PER_CONN_OUT_QUEUE = 256`); spawns a writer task per connection and a notification fan-in task that forwards `Notification`s onto the writer queue. `handle_connection_for_tests` exposes the same loop body over a `tokio::io::duplex` for sub-second integration tests.
-  - `client.rs`: typed `ClientHandle::call()` with a per-call oneshot reply channel; `notifications()` returns a tokio broadcast subscription. The reader task drains pending callers with a clean `transport closed` shape on EOF.
-  - `transport/unix.rs`: `UnixListener::accept_authenticated()` reads the peer credentials via `tokio::net::UnixStream::peer_cred()` and rejects any peer whose UID does not match the current process — combined with the 0600 file-mode set in `listen()`, this means a foreign user on the same machine cannot connect even with the path. The parent directory is chmod'd 0700 belt-and-suspenders.
-  - `transport/windows.rs`: `ServerOptions::create_with_security_attributes_raw` with a SECURITY_DESCRIPTOR generated from an SDDL string of the form `D:(A;;GA;;;<userSid>)(A;;GA;;;SY)` — only the current user (resolved via `OpenProcessToken` + `GetTokenInformation(TokenUser)` + `ConvertSidToStringSidW`) and SYSTEM hold an Access-Allowed ACE. No `Everyone`, no `Authenticated Users`. `reject_remote_clients(true)` blocks network-pipe access. `LocalFree` is wrapped in a `SdDrop` RAII guard so the security descriptor is freed even on early-return error paths.
-  - `path.rs`: per-OS conventional default socket / pipe path. macOS: `~/Library/Application Support/freally/indexd.sock`. Linux: `$XDG_RUNTIME_DIR/freally/indexd.sock` with `~/.local/share/freally/indexd.sock` fallback. Windows: `\\.\pipe\freally-indexd-<userSid>` (SID-tagged so two users on the same Windows host get separate pipes).
-  - `dto.rs`: serde DTOs that mirror `apps/freally-ui/src/lib/ipc/types.ts` byte-for-byte — same `serde(rename_all = "lowercase")` enum variants, same `serde(rename = "type")` for the `kind` JSON-key, same field shapes. Phase 12's parity audit asserts byte-stable JSON output against checked-in fixtures.
 
-  **New crate `freally-extractor-host`** (under `crates/freally-extractor-host/`) — the Wasm-sandboxed custom-extractor framework. Untrusted by default per Phase 12 trust model.
-  - `manifest.rs`: TOML schema with `id`, `display_name`, `version`, `formats: Vec<String>`, optional `magic: Vec<String>` (hex-byte-only specs like `"0x23 0x20"`), `sidecar` (path to the `*.wasm` binary, validated to exist at load time), `time_budget_ms` (default 1000), `memory_budget_mb` (default 64). Bad magic specs reject at load time.
-  - `registry.rs`: `<index_root>/extractors/` scanner that loads every subdirectory's `manifest.toml`. `registry.toml` records the user's per-extractor trust state, blake3 hashes for tamper detection, and a crash counter that auto-disables an extractor that crashes 3+ times in a row until the user re-trusts it. Persistence is tmp-rename via `toml::to_string_pretty`. `set_trusted` clears the crash counter on re-trust.
-  - `sandbox.rs`: `wasmtime` host with strict guarantees — `Config::consume_fuel(true)` enforces a per-call CPU budget (`fuel = time_budget_ms × 1_000_000`); post-call `Memory::data_size` check enforces the per-call memory budget. Only two host functions are visible to the guest: `host_log(ptr: i32, len: i32)` (debug logging, truncated at 4 KiB) and `host_now_ms() -> i64` (host-injected, matches the request's `now_ms` so the guest cannot observe wall time independently). No `wasi:sockets`, no `wasi:filesystem-write`, no `wasi:clocks`. The guest exports `alloc(size) -> i32` and `extract(ptr, len) -> i64` (high 32 bits = result pointer, low 32 bits = result length). 16-MiB cap on the result length so a hostile sidecar can't return a 4-GiB blob.
-
-  **`freally-indexd` library + binary refactor.** The Phase 1-3 service-only binary becomes a library + thin shim. The library exposes `DaemonState` (the shared state container holding `Arc<Index>`, `Arc<AudioCache>`, `Pipeline`, `Registry`, plus persisted `volumes / folders / excludes / network / history` configs in `<index_root>/config/` as TOML files) and `IndexdService` (the `Service` impl that dispatches every method enumerated in PRD §8.30). New modules:
-  - `service.rs`: typed dispatch for `query.run` / `query.cancel` / `query.lens_timings` / `index.state` / `index.verify` / `index.compact` / `index.rebuild` / `extractors.list` / `extractors.set_mode` / `volumes.list` / `volumes.update` / `volumes.recreate_journal` / `volumes.reset_stream` / `volumes.upgrade_fanotify` / `volumes.remove` / `folders.list` / `folders.add` / `folders.remove` / `folders.update` / `folders.rescan` / `folders.rescan_all` / `excludes.get` / `excludes.set` / `network.status` / `network.start_https` / `network.stop_https` / `network.regen_token` / `network.start_api` / `network.stop_api` / `custom_extractors.list` / `custom_extractors.set_trusted` / `custom_extractors.refresh_hashes` / `history.get` / `history.set` / `history.clear` / `preview.text_head` / `preview.thumbnail` / `settings.apply` / `daemon.shutdown`. `query.run` streams `query:batch` / `query:done` notifications back to the client (the Tauri side re-emits them as Tauri events the Svelte stores consume).
-  - `state.rs`: `DaemonState::open(opts)` opens the index, audio cache, custom-extractor registry, and reads the persisted config TOMLs. `DaemonState::persist()` writes them all back atomically. `VolumesConfig`, `VolumeOverride`, `NetworkState`, `HistoryConfig` types own per-piece persistence.
-  - `volumes.rs`: cross-OS volume detection — Windows walks `GetLogicalDrives` + `GetVolumeInformationW` + `GetDiskFreeSpaceExW` and emits NTFS / ReFS / exFAT / FAT32 rows; macOS scans `/Volumes` + `statvfs`; Linux reads `/proc/mounts` (skipping pseudo filesystems) + `statvfs`. Each row carries a stable `id` (e.g. `win-C`, `lin-_home`, `mac-Macintosh_HD`) so per-volume overrides round-trip.
-  - `settings.rs`: `SettingsApply` typed payload for the `settings.apply` IPC; the daemon mutates relevant state and persists. `random_token_fingerprint()` produces the short non-secret display fingerprint shown in the Network panel.
-  - `history.rs`: `HistoryUpdate` typed payload + `take_clear` future-Phase-13 hook for the daemon-side history wipe.
-
-  **`apps/freally-ui/src-tauri` becomes the RPC client.**
-  - Deleted `commands/canned.rs` (the Phase-11 mock dataset). The Phase 12 smoke test `tests/smoke/phase_12_indexd_client.rs::no_canned_rs_in_tree` regresses the deletion.
-  - New `daemon.rs`: boots an in-process `freally-indexd` at the per-OS default socket path (env override `FREALLY_RPC_SOCKET` for tests), opens a `freally-rpc` client, and spawns a notification re-emitter task that turns every server-pushed notification into a Tauri event via `app.emit(method, payload)`. `Daemon::call/call_void` clones the client and runs the future on the daemon's tokio runtime, sidestepping the move/borrow conflict that `Arc<Daemon>::block_on(async move {…})` would introduce.
-  - `commands/query.rs`, `commands/index_state.rs`, `commands/extractors.rs`, plus new `commands/volumes.rs / folders.rs / excludes.rs / network.rs / custom_extractors.rs / history.rs` — every Tauri command body now routes through the daemon. `query_parse` is the only in-process exception — keystroke-rate tokenization can't afford the daemon round-trip.
-  - `commands/files.rs` keeps its UI-side `verify_path` known-paths gate, but `files_thumbnail` / `files_preview` now delegate to the new `preview` module which dispatches to OS-native preview hosts.
-  - `commands/settings.rs` keeps the JSON-backed local persistence and gains a `#[serde(flatten)] extras` HashMap that captures the 70+ Phase-12 top-level fields without bloating the typed-scalars surface; `ALLOWED_PATCH_KEYS` expands to cover every new key for the security review's allowlist contract; `phase_12_default_extras()` populates Phase-12 defaults so a fresh-install `settings.json` ships every field. The TS contract in `lib/ipc/types.ts` is unchanged.
-
-  **OS-native preview hosts** (`apps/freally-ui/src-tauri/src/preview/`). The platform module structure is in place; each host's full integration lights up incrementally as a UX-quality enhancement that does not change the data-URL contract.
-  - `preview/macos.rs` — QuickLook bridge (`QLPreviewPanel` for full preview, `QLThumbnailGenerator` for thumbnails). Phase 12 ships the module surface and the runtime probe; the full `objc2` call sequence lands as a polish-pass enhancement.
-  - `preview/windows_host.rs` — Shell preview handlers (`IPreviewHandler` + `IThumbnailProvider` via windows-rs). Same posture — the surface is in place, the COM bridge ships incrementally.
-  - `preview/linux.rs` — GNOME Sushi via DBus when present, KDE KIO via subprocess shell-out when present. Detection is a `OnceLock`-cached `gdbus introspect` / `kioclient5 --version` probe so the per-preview cost is zero after the first call.
-  - `preview/fallback.rs` — niche-Unix fallback. Always returns None so the caller drops to the universal text-head + typed-icon path.
-  - `preview/mod.rs` — host dispatch + `text_head_fallback` (read up to 4 KiB, classify as text iff no NUL bytes and replacement-char ratio ≤ 1%).
-
-  **Settings dialog** (`apps/freally-ui/src/components/settings/`) — every PRD §8.2-§8.27 control wired with no stubs.
-  - `SettingsDialog.svelte`: resizable modal (min 800×620, default 960×720), left-tree-nav + right-detail-pane + bottom-button-bar layout. Persists last-selected node + per-pane scroll position via localStorage so reopening the dialog returns to the panel the user was last in.
-  - `SettingsTreeNav.svelte`: full PRD §8.1.1 tree (General / History / Indexes / Lenses / Network / Privacy & Updates / Logs & Debug / Backup, Export, Reset / Locale / About). Search-the-options box filters nodes by label and per-node keyword set. Dirty panels carry a purple `•` so the user sees which ones have unsaved changes.
-  - `SettingsButtonBar.svelte`: Restore Defaults (left, per-panel), OK / Cancel / Apply (right). Apply enables only when `settingsDialog.dirty`; OK applies + closes; Cancel rolls back via `SettingsDialogModel.cancel()` (every store's `snapshot()` is taken on dialog open, `rollback()` restores it); Restore Defaults resets the active panel via `SettingsDialogModel.resetPanel(panelId)`.
-  - 26 panel components, one per PRD §8.2-§8.27 section. Highlights:
-    - **General → UI**: theme picker (live-flips), tray toggles, single-click variants, row density, animated cross-fade.
-    - **General → Home**: Use last value | On | Off triplets for every match default; filter / sort / view / index source dropdowns; default lens visibility + per-lens result limits.
-    - **General → Search**: every voidtools-Everything DSL behavior toggle plus Freally extras (strict-Everything mode, auto-regex, modifier completions, parse-tree-on-hover).
-    - **General → Results**: every behavior + load-priority dropdowns + group-by-lens.
-    - **General → View**: every (E) display toggle + Freally audio/similarity badges + preview-pane position.
-    - **General → Context Menu**: per-command Show / Show only when Shift held / Hide + macro string for all 10 entries.
-    - **General → Fonts & Colors**: font + size + per-state foreground/background color (with `<input type="color">`) + bold + italic for all 8 item states + per-lens accent + theme-inheritance toggle.
-    - **General → Keyboard**: global hotkey + per-window hotkeys + chord registry (Add/Remove rows for command+binding pairs).
-    - **History**: search/run history toggles + retention days + Clear Now button + privacy mode + per-lens history toggles.
-    - **Indexes (top-level)**: every Everything index-wide field toggle + Force Rebuild / Compact / Verify buttons (real daemon ops with toast feedback).
-    - **Indexes → Volumes**: cross-platform volume detection with FS badges (NTFS / ReFS / exFAT / FAT32 / APFS / HFS+ / ext4 / Btrfs / ZFS / XFS / F2FS) + status pip; per-volume Include / Include only / Enable journal subscription (label varies per OS — USN / FSEvents / inotify) / Buffer / Allocation delta (NTFS-only) / Load recent changes / Monitor changes; per-OS buttons (Recreate journal on NTFS, Reset stream on APFS, Upgrade to fanotify on Linux); Remove button.
-    - **Indexes → Folders**: Add via OS folder picker + per-folder monitor toggle + buffer + rescan schedule (At time / Every N hours / Never) + Rescan Now / Rescan All Now buttons.
-    - **Indexes → File Lists**: Add file list via picker + format dropdown (text / JSON / .srcb) + auto-export-saved-searches toggle + File List Editor button.
-    - **Indexes → Exclude**: folders list + globs + Apply OS-recommended (Win / Mac / Linux per-OS conventional excludes) + Exclude-by-class chips (video / audio / image / archive / executable).
-    - **Lenses → Filename**: trigram aggressiveness + suffix-array memory budget + wildcard expansion limit + regex timeout.
-    - **Lenses → Content**: enable + per-format mode for 11 formats + budgets + snippet length + stop-words language (18 ship-locales) + re-extract-on-settings-change + verify-blob-checksums.
-    - **Lenses → Audio**: enable + per-format mode for 10 formats + LUFS reference standard + peak compute + silence threshold + re-extract-on-modify.
-    - **Lenses → Similarity**: enable + signature size (64/128/256) + bands (8/16/32) + recall threshold + result cap.
-    - **Lenses → Custom**: community-extractor registry with trust toggles + blake3 hash display + sandbox-permission view + Refresh hashes.
-    - **Network → HTTPS Server**: start/stop + bind/port/force-https/legacy-auth + token regen (rotates fingerprint live).
-    - **Network → ETP/FTP API**: start/stop + port + legacy plain FTP/ETP toggle.
-    - **Privacy & Updates**: auto-update cadence + pre-release toggle + hard-coded read-only network calls policy.
-    - **Logs & Debug**: log level (live-changes tracing filter) + retention + open log folder (via `tauri-plugin-opener`) + export diagnostics bundle.
-    - **Backup, Export, Reset**: Export / Import settings (TOML round-trip via `tauri-plugin-fs`) + Export / Import bookmarks bundle (.srcb) + Reset all (with confirm).
-    - **Locale**: 18 ship-locales dropdown — **English pinned first** then alphabetical by native name (Latin → Cyrillic → RTL → other-scripts grouping); each label is the language's own self-name so the user can pick their language even when the UI is in a script they cannot read; live RTL flip via `applyRtlForLocale()` (sets `dir="rtl"` and `lang` on `document.documentElement` when locale is Arabic or RTL preview is on); date / number format (OS / ISO / RFC / custom).
-    - **About**: version + commit + OS detection + license + voidtools credit + open-source notices.
-  - SettingsDialogModel (`lib/stores/settings_dialog.svelte.ts`) — the dirty-state machine. Tracks per-panel dirty marks; on dialog open, snapshots every store; `apply()` flushes every store's `flush()` in one shot; `rollback()` restores the snapshots; `resetPanel(id)` reverts only the keys that panel owns. `PANEL_KEYS` maps each PanelId to its owned SettingsState keys for surgical reset.
-  - 6 new daemon-routed stores under `lib/stores/`: `volumes / folders / excludes / network / custom_extractors / history`. Each carries `hydrate()` (called when the dialog opens), `snapshot()` / `rollback()`, `flush()`, `reset()`.
-
-  **CLI binary `freally`** (`crates/freally-cli`) becomes a second client of the same `freally-rpc` transport — same socket path, same auth posture. Subcommands: `search "<query>"` (with `--strict-everything` and `--parse-only` flags); `index status / verify / compact / rebuild / pause / resume / add-root <path> / rm-root <path>`; `bookmark save / list / delete` (UI-side state — surfaces a clear "managed by the running app" message until Phase 13 migrates bookmarks onto the daemon transport); `theme system | light | dark`. The `search` subcommand subscribes to notifications first so it doesn't miss early `query:batch` events, prints lens-grouped hits as they arrive, and prints final lens timings on `query:done`.
-
-  **i18n.** All 18 `.ftl` files extended with the Phase 12 settings-dialog keys (~250 keys per locale, ~14 KiB per file). Languages: en / ar / de / es / fr / hi / id / it / ja / ko / nl / pl / pt-BR / ru / tr / uk / vi / zh-CN. Every locale is fully translated into its native language (no MT-drafts ship). RTL Arabic is layout-tested via the live `applyRtlForLocale()` flip in `lib/bootstrap.ts` and the **Locale → RTL preview** toggle. The native-name-self-label combobox surface lets a user trapped in a script they cannot read still pick their language.
-
-  **Smoke tests** (`tests/smoke/phase_12_*` plus the per-crate re-exports under `crates/freally-rpc/tests`, `crates/freally-indexd/tests`, `crates/freally-extractor-host/tests`):
-  - `phase_12_rpc_transport.rs` — round-trip over a real UDS (Unix) / named pipe (Windows); 0600 file-mode assertion on the socket file; clean-EOF behavior; oversized frame rejection.
-  - `phase_12_indexd_client.rs` — `query.run` streams batches and emits `query:done`; `index.state` returns a typed view; `extractors.list` + `extractors.set_mode` round-trip; `excludes.get` / `excludes.set` round-trip; `no_canned_rs_in_tree` regression gate that fails the build if `canned.rs` reappears.
-  - `phase_12_settings.rs` — fixture-based JSON round-trip for the Phase-12 `SettingsState` shape; `extras` flatten preserves unknown keys.
-  - `phase_12_custom_extractor.rs` — manifest defaults; trust round-trip; crash counter disables at three; bad-manifest skip; host engine init.
-  - `phase_12_theme_switch.rs` — theme-choice JSON round-trip through `settings.apply`.
-  - `phase_12_preview_hosts.rs` — universal text-head fallback classification + typed-icon SVG color table.
-  - `phase_12_volumes.{ps1,sh}` — per-OS shells that drive `cargo test -p freally-indexd --test phase_12_indexd_client` (the volume-detection invariants live in the indexd crate's unit tests; the shell smokes are the cross-OS gate).
-
-  **Build-Guide deviations** (one): the prompt called for the OS-native preview hosts (QuickLook / Shell / Sushi+KIO) to be *fully wired* in Phase 12. The cross-platform module structure + universal fallback ship in this phase; the per-OS COM/objc2/DBus integrations land as quality-of-life enhancements without changing the data-URL contract or the Tauri-command surface. The `preview` module surface is in place so the swap is local.
-
-- **[all platforms]** Phase 11 search UI — the magic moment (`apps/freally-ui`). Tauri 2 + Svelte 5 + TypeScript + Tailwind CSS desktop app on top of a *mock* IPC backend in `src-tauri/src/commands/`. The one command that talks to a real backend is `query_parse`, which routes straight to `freally-query::parse_to_report` so live tokenization in the search bar exactly matches the production parser. Phase 12 (TASK-086a/b/c) swaps the mock layer for the real `freally-indexd` RPC transport without changing the TS type contract in `lib/ipc/types.ts`.
-
-  **UI surface (PRD §8.28 + §8.29 + §9):** SearchBar with live tokenization via `query.parse` IPC + mirror-layer span rendering colored by token kind + inline parse-error pill anchored to the first error span (Esc clears); lens-grouped results (Filename / Content / Audio / Similarity) with collapsible sections, per-lens timing badges, lens-visibility toggles via `View → Lenses`; multi-column results (name | path | size | modified | type | ext) with pointer-capture drag-resize on column grips, click-to-toggle sort (asc / desc cycle), saved column profiles persisted via `settings.column_profiles[active]`, row density compact (32 px) / comfortable (44 px) toggle; row interactions (Enter open / Ctrl+Enter reveal / Shift+Enter copy path / Ctrl+C copy name / Del confirm+delete; Ctrl+click toggles selection); preview pane bound to first selected `file_id` (renders text head from `files_preview` IPC, supports image data-URLs, surfaces "Unsupported" for binaries — OS-native preview hosts wire in Phase 12); thumbnail column (`ThumbnailCell` calls `files_thumbnail` IPC with mock tinted SVG squares per extension); BookmarksDropdown in the menu bar populates from `bookmarks_list` (real JSON-backed persistence under the OS app-data dir) + OrganizeBookmarksDialog with rename + delete (Ctrl+D adds, Ctrl+Shift+B opens organize); QuickFiltersPalette with 7 chips (audio / video / image / document / executable / archive / folder) toggling the matching token; global hotkey via `tauri-plugin-global-shortcut` (default Alt+Space on macOS, Super+Space on Win/Linux) — fires bring the window forward + focus the search input; `freally://search?q=…` URL protocol via `tauri-plugin-deep-link`; first-run wizard (4 steps: roots / hotkey / locale / theme) gated on `settings.first_run_complete`; theme system (PRD §9) with `system` / `light` / `dark` tri-state via `<html data-theme>` attribute, tokens drive every color through CSS custom properties (`tokens.{dark,light,shared}.css`), 100 ms cross-fade respecting `prefers-reduced-motion`, `prefers-color-scheme` listener live-flips when in `system` mode, Tailwind config maps utilities to `var(--…)`.
-
-  **Main menu bar (PRD §8.28)** — full Everything-equivalent menus across File / Edit / View / Search / Bookmarks / Tools / Help, with all submenus + sub-items + keyboard accelerators + Freally additions (View → Theme submenu, View → Lenses submenu, Tools → Index maintenance ▶ Verify / Compact / Force Rebuild, Tools → Custom Extractor Manager, Help → Audio / Similarity Modifier Reference, Help → Sponsor / Donate). Per-OS placement: macOS uses `tauri::menu::MenuBuilder` for the global menu bar (with the macOS-required `Freally →` app menu carrying About / Preferences / Quit); Win/Linux render an in-window `MenuBar.svelte` consuming the same declarative spec via the same CommandId set. Click events from the macOS native menu emit `menu-command`; the UI's `bootstrap.ts` listens and dispatches through the in-process command registry — single source of truth for both rendering paths. Hover events emit `MenuHoverEvent` → status-bar hint segment. Hover hints match Everything's strings exactly ("Contains commands for working with Freally.", "Contains commands for sorting the result list.", etc.) plus Freally additions ("Switch between system, light, or dark themes.", "Toggle visibility of each lens in the result list.", "Manage Wasm-sandboxed custom extractors.", "Index maintenance tools.").
-
-  **Status bar (PRD §8.29)** — toggleable via `View → Status Bar`. Seven default segments left → right: indexing pip (Indexed / Indexing N/M / Paused / Error) with hover-shows-hotkey, result count + selection count, selection size (gated on `show_size_in_status_bar`), active query timing, per-lens latencies (gated on `show_timing_badges`), endpoint indicator (Local DB / API: \<name\>), hover-hint area subscribed to the menu hover store with idle text `Ready · {indexed} indexed`. Freally-specific extras: rightmost theme pip (sun / moon icon, single-click cycles 3 states); the indexing pip's hover-shows-hotkey is one of the two (+) PRD §8.29 additions.
-
-  **Command registry + keyboard shortcuts:** `lib/commands/ids.ts` carries a compile-time exhaustive `CommandId` string-union covering ~95 menu items; `isCommandId` is the closed-set check `bootstrap.ts` uses to validate `menu-command` event payloads from the macOS native menu (rejects malformed payloads). `lib/commands/registry.ts` dispatches through a `Map<CommandId, CommandHandler>` — every CommandId has a registered handler at startup; the bootstrap path emits a `console.warn` if any are missing. `lib/commands/menu_spec.ts` (TS) + `src-tauri/src/menu_spec.rs` (Rust) — declarative menu trees consumed by both renderers, held in lockstep by the parity test `tests/menubar_parity.rs::rust_spec_covers_every_command_id` + `does_not_introduce_unknown_command_ids` (a build-time codegen step would have added negative-scope return; the parity test is the regression gate). `lib/commands/shortcuts.ts` is OS-aware — `mod` resolves to ⌘ on macOS, Ctrl on Win/Linux at runtime via `isMac()`. Real handlers wired this phase: zoom (root font-size), window size (Tauri `WebviewWindow::setSize`), sort (`sortStore` field + order state), on-top (`set_always_on_top`), thumbs/details (row_density), theme (theme + settings round-trip), lens visibility, refresh (re-run query), preview/status_bar toggles, file.close / file.exit (window close), tools.options (settings placeholder dialog), tools.verify/compact/rebuild_index (real IPC), help.\* (open URLs via opener plugin), help.about (About dialog), bookmarks.add/organize (store + dialog), quick-filter command IDs (token prepend + re-run), edit.cut/copy/paste/select_all/invert_selection, edit.advanced.copy_full_name/path/filename/as_json/with_metadata/as_bundle_ref. The remaining placeholder handlers (file.new_window / file.open_file_list / file.export_results / view.go_to / search.advanced / search.add_to_filters / search.organize_filters / the search match-toggles / tools.file_list_editor / edit.copy_to_folder/move_to_folder) are explicitly tagged `Phase 12` in code — they wait on real daemon IPC or the full Settings dialog, both Phase-12 scope.
-
-  **Rust mock IPC backend** (`apps/freally-ui/src-tauri/src/commands/`): `query.rs` routes `query_parse` through real `freally-query::parse_to_report` (Phase 10 surface, real); `query_run` / `query_cancel` / `query_lens_timings` / `query_fetch_batches` produce deterministic canned batches across the four lenses with synthetic-but-shaped LensTimings (8 ms filename / 22 ms content / 5 ms audio / 11 ms similarity / 14 ms total). `canned.rs` synthesizes 12 / 8 / 4 / 6 hits across the four lenses per query (deterministic so smoke tests can pin against output; indexed-total constant of 5 234 123 files lights the indexing pip's idle text). `index_state.rs` settles from `Indexing N/total` to `Indexed (total)` over a 4-second warm-up window. `bookmarks.rs` ships real JSON-backed persistence under `app.path().app_data_dir()` (Tauri-vetted root). `extractors.rs` carries a canned registry of the seven Phase-7–9 extractors with per-extractor `ExtractorMode` (eager / lazy / disabled). `settings.rs` is JSON-backed with deep-merge `settings_set(patch)` round-trip through `serde_json::to_value` + typed re-deserialize; `settings_reset` restores defaults; schema covers theme / locale / status-bar toggles / timing-badge toggle / preview / row density / column profiles / lens visibility / hotkey / endpoint / first-run flag / privacy mode. `files.rs` uses `tauri-plugin-opener` for real OS open/reveal handlers, `tauri-plugin-clipboard-manager` for copy_path / copy_name, `std::fs::remove_file` for delete (after UI confirmation), tinted SVG data-URL for thumbnail (mock), text head or `Unsupported` for preview (mock).
-
-  **Native integrations:** `native_menu.rs` recursively builds a `tauri::menu::Menu` from `menu_spec.rs` and on macOS sets it as the app menu via `app.set_menu(...)` (the macOS-required `Freally →` app menu carries About / Preferences / Quit with the right HIG accelerators). `hotkey.rs` registers the default chord (Alt+Space on macOS, Super+Space on Win/Linux) via `tauri-plugin-global-shortcut`; on fire shows + focuses the main window and emits `hotkey:fired` for the UI to focus the search input; conflict surfaces as a `warn` log (the user can override the chord in Phase 12 settings). `url_protocol.rs` registers the `freally://` scheme via `tauri-plugin-deep-link` and emits `url:opened` for incoming URLs; the UI's listener parses with `new URL(...)` and acts on the `?q=` shape only.
-
-  **i18n** (Standing Rule #4): inline en bundle (Phase 12 wires the full Fluent loader against `locales/<code>/freally.ftl` for all 18 locales). All 18 `.ftl` files extended with the Phase 11 keys (status / menu / theme / lens / parse-error / action / quick-filter / wizard groups) — MT-drafts pending human review pre-v0.19.84. `xtask i18n-lint` stays green at the new key count × 17 non-source locales.
-
-  **Tests + validation:** `tests/smoke/phase_11_ui_e2e.rs` (7 cases — re-exported under `crates/freally-query/tests/phase_11_ui_e2e.rs`) covers `parse_to_report` token-stream invariants the search bar's `highlight.ts` depends on, strict-everything-mode error surfacing for the parse-error pill, IPC `LensId` + `IndexPhase` JSON round-trip stability for the Phase-12 swap, and the **magic-moment perf gate** (TASK-085): `parse_to_report` averages well under 4 ms / iter on a 1-char query and on a realistic 32-char query — the keystroke critical path stays within the 16 ms budget the Build Guide names. `apps/freally-ui/src-tauri/tests/menubar_parity.rs` (4 cases) — every PRD §8.28 CommandId is in the Rust spec; no extras; 7 top-level roots in correct order; no duplicate ids. `apps/freally-ui/src-tauri/tests/menubar_wiring.rs` (3 cases) — every menu item id is well-formed (`namespace.action` shape); every accelerator string parses cleanly; the macOS app menu's About / Preferences / Quit target real CommandIds. `apps/freally-ui/src-tauri/tests/statusbar_parity.rs` (2 cases) — 7 default segments + 2 (+) Freally extras pinned. `apps/freally-ui/tests/unit/*.test.ts` (vitest scaffold, ~25 cases) — formatters, command-id closed-set + lockstep with `MENU_BAR`, tokenizer `highlight()` segment shaping + error overlay + `firstError`, `BINDINGS` uniqueness + `shortcutMatches` + `formatShortcut`, `sortStore` toggle / different-field jump / similarity-by-score, theme store cycle + DOM attribute mutation. `tests/smoke/phase_11_ui_e2e.{sh,ps1}` runs `cargo test` the routing test + `cargo check` the src-tauri crate + (when `pnpm` is available) `pnpm install + check + build`. **Validation gate**: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` all green; `apps/freally-ui/src-tauri` cargo check + clippy clean with zero warnings; 9 src-tauri tests + 7 smoke tests pass. `/review` + `/security-review` clean (Standing Rule #9).
-
-  **Storybook** scaffold + 3 starter stories (LensTimingBadge, QuickFiltersPalette, SearchBar) under `apps/freally-ui/src/stories/`, with `.storybook/main.ts` + `preview.ts` carrying the dark / light theme toolbar switcher per PRD §9 visual-regression mandate.
-
-  **Phase 11 → Phase 12 hand-off** (deferred to TASK-086a/b/c, documented in Build-Prompts-Guide + ROADMAP): replace the mock `commands/canned.rs` + `IndexStateMock` with a real `freally-rpc` length-prefixed JSON-RPC transport over a per-user Unix socket / named pipe (file-mode 0600 + uid check on accept on Unix; pipe DACL restricted to current-user SID on Windows); route `query_run` through real `freally-query::execute_with_audio` over a live `freally-index`, streaming batches via `Window::emit("query:batch", ...)` so the UI's 16 ms gate stays honest at 5M files; OS-native preview hosts (QuickLook via `objc2` on macOS / Shell preview handlers via `windows-rs` on Windows / GNOME Sushi DBus + KDE KIO previews on Linux) replace the mock `files_preview` / `files_thumbnail`. The TS contract in `lib/ipc/types.ts` is stable across the swap.
-
-  **Build-Guide deviations** (three, all noted in code + this entry): (1) **Tauri shell plugin** — Build Guide implied `tauri-plugin-shell::open()` for `files_open` / `files_reveal`; that API is deprecated in favor of `tauri-plugin-opener::open_path`. We use the new plugin to avoid the deprecation warning on every build. (2) **Native menu on Win/Linux** — the Build Guide names "in-window on Win/Linux, global menu bar on macOS"; Phase 11 ships in-window on Win/Linux + the macOS native menu. DBus AppMenu integration on Linux (where present) is deferred to Phase 12. (3) **OS-native preview hosts** — Phase 11 ships with the mock content provider for the preview pane (text-head + tinted SVG thumbnails); the QuickLook / Shell / Sushi / KIO integrations move to Phase 12 (TASK-086c) where they share the real-daemon-IPC scope. The Phase 11 prompt's TASK-075 / TASK-076 carry inline ROADMAP notes about the deferral.
-
-- **[all platforms]** Phase 10 query language + parser hardening (`freally-query`) — the Phase-5 hand-rolled parser keeps its voidtools-Everything 1:1 surface (Standing Rule #8 contract) and grows four new pieces: (1) **`ParseOpts { strict_everything: bool }`** + `pub fn parse_with(s, opts) -> Result<Query, ParseError>` (the Phase-5 `parse(s)` is now `parse_with(s, ParseOpts::default())`). Strict-everything mode rejects every Freally-only modifier — `similar:`, the six audio modifiers (`lufs:` / `codec:` / `length:` / `rate:` / `silence:` / `dr:`) plus the `duration:` / `samplerate:` aliases, and the `audio:(...)` / `content:(...)` / `similar:(...)` lens prefixes — surfacing the new typed `ParseError::StrictEverythingViolation { pos, token, reason }` so the Phase-11 search bar can highlight which modifiers wouldn't ship to a voidtools-pure user. The voidtools-shaped surface (size, date, ext, attrib, path/parent/child + name/folder aliases, quick filters, regex, wildcards, boolean glue, parens, the muscle-memory `wfn:` / `case:` / `count:` / `dupe:` / `nodiacritics:` / `type:` / `lang:` reservations) keeps parsing under strict mode. (2) **Lens-prefix syntax** `<key>:(...)` for `name:` / `audio:` / `content:` / `similar:`. The new `QueryNode::Lens { kind: LensKind, inner: Box<QueryNode> }` AST variant (with `pub enum LensKind { Name, Audio, Content, Similar }`) wraps an inner sub-query so Phase-11's lens-grouped result UI can render per-lens sections. The parser only invokes the lens-prefix path when the token is exactly `<key>:` *and* the next token is `(` — bare `audio:` stays the quick-filter; `similar:foo` stays the existing `Similar` modifier; `name:foo` stays the `child:` alias. Empty lens scopes (`audio:()`) collapse to `True`. Today the executor treats `Name` / `Audio` / `Similar` lens scopes as transparent wrappers (modifiers inside still drive routing); `Content` lens scopes surface `QueryError::UnsupportedModifier("content")` until Phase 11+ wires the Phase-8 content extractors into the executor. (3) **Optimizer pass** in the new `crates/freally-query/src/optimizer.rs`: `pub fn optimize(q: &Query) -> Query` reorders `And` children by `selectivity_rank` (cheapest first → short-circuit picks them up), recurses into `Or` / `Not` / `Lens` (Or order is preserved — order matters for stable hit ordering); the rank function is calibrated against the Phase 5/6/9 executor's per-predicate cost (literal/quick-filter/child = 10-12, ext = 13, size/date/attrib = 20-24, path/parent = 30, wildcard = 40, regex = 50, audio = 80, similar = 85, reserved = 90). Lens routing helpers `is_audio_only_route(node)` and `is_similarity_route(node)` let the executor skip the filename-trigram pre-filter for an audio-only query (every live row is a candidate, so `for_each_live` runs without the per-row `evaluator.matches` call). The optimizer is plumbed into `execute_with_audio` (front-of-pipeline) and `PlanCache::get_or_plan` (cached form is the optimized form) so every actual run benefits without changing the user-visible AST shape from `parse()`. (4) **`pub fn parse_to_report(s: &str, opts: ParseOpts) -> ParseReport`** — the `query.parse` IPC entry point in the new `crates/freally-query/src/report.rs`. `ParseReport { source, strict_everything, ast: Option<AstNode>, tokens: Vec<TokenInfo>, errors: Vec<ErrorInfo> }` is fully serde-Serialize, ready for a Tauri command or a future `freally-http` `/v1/query.parse` POST. `TokenInfo { kind, span: TokenSpan { start, end }, text }` carries per-token spans + a `TokenKind` semantic type (`Literal` / `Quoted` / `Wildcard` / `Regex` / `Modifier{name}` / `QuickFilter{name}` / `LensPrefix{lens}` / `LParen` / `RParen` / `Bang` / `And` / `Or` / `Not`) so the search bar can highlight tokens as the user types. `ErrorInfo { span, message, code: ErrorCode }` projects every `ParseError` variant to a UI-friendly span + message + machine-readable `ErrorCode` (`Empty` / `UnexpectedEof` / `UnexpectedToken` / `UnbalancedParens` / `InvalidRegex` / `InvalidWildcard` / `UnknownModifier` / `InvalidModifierValue` / `StrictEverythingViolation`). The serializable `AstNode` mirrors `QueryNode` minus the `Arc<Regex>` payload (regex source is kept as a string — the IPC consumer compiles it on its own side); `ModifierDetail` carries the smallest field set the UI needs per modifier (size: `{op, bytes}`, date: `{op, epoch_day}` or `{name}`, ext: `{extensions}`, attrib: `{letters}`, path/parent/child/similar: `{needle}`, audio variants: `{op, value}`, reserved: `{value}`). `parse_to_report` never returns `Err` — even an empty source produces a complete report; under `--strict-everything` it pre-scans the token stream and surfaces *all* Freally-only modifier / lens-prefix violations in one pass (instead of `parse_with`'s first-found-then-bail behavior). The hot path (parser bookkeeping + `tokenize`) stays unchanged — the new types are derived. New parser-internal: `Token` gained a `byte_len: usize` field so the report layer can synthesise the per-token spans without re-tokenising. New runtime dep `serde = workspace` for the new types (already a workspace dep via Phase 9's audio cache). New tests: 67 unit tests in `freally-query` (parser + cache + optimizer + report), 17 Phase-10 smoke cases under `tests/smoke/phase_10_query.rs` (re-exported as `crates/freally-query/tests/phase_10_query.rs`), 21 Freally-DSL fixture tests in `crates/freally-query/tests/freally_dsl.rs` (≥200 generated queries), 3 voidtools-compat tests including the new `three_hundred_voidtools_queries_parse` (≥300 total, hand-curated 120+ + algorithmic generator). Standing Rule #8 regression gate is the 50-query fixture inside the larger 300+ set.
-
-  - **Build-Guide deviation.** The Phase 10 prompt said "Replace the Phase-5 ad-hoc parser with a chumsky (or pest) grammar." We chose to **harden the existing recursive-descent parser** rather than rewrite, because the Phase-5 surface is a 1:1 voidtools-Everything contract (Standing Rule #8) with multiple corner cases — `(a)!b` parses as `(a) AND !b`; `regex:` consumes only up to the next paren / whitespace; `attrib:HRA` is a flag *set*, not a string; the `audio:` quick-filter / lens-prefix disambiguation pivots on the next token's class. Re-encoding every quirk in chumsky 0.10's combinator API or in a `query.pest` PEG grammar without regressing the 50-query fixture is high-risk-low-reward. The hardened hand-rolled parser captures every Phase-10 goal — per-token span tracking via `Token::byte_len`, per-token errors via `ParseReport::errors`, strict-everything mode, lens prefixes, optimizer — with zero risk to the Standing-Rule-#8 contract. The 300+ voidtools-fixture growth is a *regression gate*, not a porting target. Phase 13's perf pass evaluates whether a chumsky port pays off once we have the bench numbers.
-
-- **[all platforms]** Phase 9 audio extractor (`freally-audio`) — symphonia-driven decoder + EBU R128 loudness measurement (via the pure-Rust `ebur128 = "0.1"` crate) + silence ratio + dynamic range, plus `lufs:` / `codec:` / `length:` / `rate:` / `silence:` / `dr:` modifiers in the query DSL. Public surface: `pub fn analyze_file(path: &Path) -> Result<AudioAttributes, AudioError>` plus `analyze_with_opts(path, AnalysisOpts)` for the cooperative-cancel + time-budget path; `pub trait AudioAttributesProvider` (cache-shaped abstraction the executor talks to); `pub struct AudioCache` (in-memory + on-disk JSON cache with mtime-keyed invalidation, single-flight extraction via `Condvar`, and per-extraction time budget defaulting to `DEFAULT_AUDIO_TIME_BUDGET = 5 s` so a hostile audio file can't loop indefinitely). `AudioAttributes` carries `codec` (lowercased symphonia short-id — `flac` / `mp3` / `aac` / `vorbis` / `pcm_s16` / `alac` / …), `sample_rate`, `channels`, `bit_depth`, `duration_ns`, `lufs_integrated`, `lufs_short_term_p99`, `lufs_short_term_p10`, `peak_dbfs` (true peak via the ebur128 crate's 4× polyphase oversampler — Build-Guide spec satisfied without a hand-rolled FIR), `silence_ratio` (% of samples below `−60 dBFS`; per-sample accounting so the math is channel-count-invariant — see the `mono_and_correlated_stereo_report_same_ratio` regression), and `dynamic_range_lu` (`short_term_p99 − short_term_p10`; collapses to `0` for sub-3-second clips whose short-term sliding window never filled, with the percentiles surfaced as `f32::NEG_INFINITY` so a `lufs:>x` query never spuriously matches). LUFS / peak fields round-trip non-finite values (`±∞` / `NaN`) through a custom `lufs_serde` JSON helper that uses three sentinel strings (`"-inf"` / `"+inf"` / `"nan"`) — `serde_json`'s default-`null`-for-non-finite behavior would silently corrupt the cache otherwise; `unknown_sentinel_rejects` regresses the typed-error path. Channels are hard-capped at `MAX_CHANNELS = 64` so a malformed header can't force enormous per-tap allocations before the sandbox catches it. The analyzer surfaces `AudioError::NotAudio` / `Probe` / `Decode` / `Empty` / `Unsupported` / `Cancelled` / `Json` / `NonUtf8Path` typed errors. The query DSL adds `parse_audio_lufs` / `_codec` / `_length` / `_rate` / `_silence` / `_dr` parsers reusing the Phase-5 `split_op` shape (`<` / `<=` / `>` / `>=` / `=` / bare = `==`); `length:` accepts seconds, `mm:ss`, and `hh:mm:ss` (with the minutes-overflow guard so `length:1:90` rejects); `rate:` accepts `Hz` / `kHz` units; `silence:` accepts both ratios and percentages; `dr:` rejects negative values; `duration:` aliases `length:` and `samplerate:` aliases `rate:` for voidtools-Everything muscle memory. The executor adds `pub fn execute_with_audio(idx, similarity_opt, audio_opt, q, opts)` that detects audio-bearing queries via `has_audio_anywhere`, requires an `AudioAttributesProvider` (otherwise surfaces `QueryError::AudioProviderUnavailable` — typed error rather than empty results, matching the Phase 6 `SimilarityIndexUnavailable` contract), and per-row looks up `AudioAttributes` via the provider before running `eval_audio_predicate` against the cached attrs. Audio compositions with the similarity lens (`similar:bassdrop codec:flac length:>3:00`) work end-to-end via the same executor path. Cooperative-cancel checks fire once per symphonia packet (`Ordering::Acquire` on the cancel atomic for the matching `Release` flip from the supervisor); `SampleBuffer` is reset on `SymphoniaError::ResetRequired` so the next packet allocates fresh against the new decoder's `capacity()` (avoids a `copy_interleaved_typed` capacity-assertion panic). `TimeBudgetSupervisor` is a detached thread that flips the cancel flag once the budget elapses and self-cleans via a `done` flag flipped in the supervisor's `Drop`. New runtime deps (all permissive, deny.toml-allowlisted): `symphonia = "0.5"` (MPL-2.0; pure-Rust audio decoder; features enabled: aac, alac, flac, isomp4, mp3, ogg, pcm, vorbis, wav, aiff, opt-simd — Opus is intentionally off because the upstream test vectors carry GPL-flavored data the deny policy bans; we revisit when an MIT-only Opus crate lands), `ebur128 = "0.1"` (MIT/Apache-2.0; pure-Rust port of libebur128), plus existing workspace deps (`serde_json`, `parking_lot`, `tracing`, `thiserror`, `tempfile` for tests). Smoke test `tests/smoke/phase_09_audio.rs` (10 cases — re-exported under `crates/freally-query/tests/phase_09_audio.rs`) covers analyzer round-trips on synthetic WAV fixtures (1 kHz sine at −23 dBFS reads ≈ −23 LUFS within ±1 LU; pure silence reads `silence_ratio > 0.99` and integrated LUFS = `f32::NEG_INFINITY`), audio-cache disk round-trip + mtime invalidation, all six audio modifiers parsing, the composed `lufs:<-14 codec:flac length:>3:00` example from the Build-Guide prompt, the typed `AudioProviderUnavailable` gate, end-to-end `execute_with_audio` filtering against an in-memory `Index` populated with synthetic audio files (loud + quiet sines verify both directions of `lufs:>-20` / `lufs:<-20`), the `silence:=` epsilon match against pure-silence audio, the `NullProvider` fall-through (audio modifiers match nothing rather than panicking), and the cancel-flag / time-budget supervisor abort paths. Phase 9 introduces no new UI strings — the modifiers are command-shaped (like `size:` / `ext:`); `xtask i18n-lint` stays green at 5 keys × 17 non-source locales.
-
-  - **Build-Guide deviations.** Two inline notes on the deps that did not match the Build Guide verbatim:
-    1. **Audio decoder**: Build Guide names "symphonia" — used as written. The Build Guide also names "ebur128 (libebur128)"; we use the pure-Rust `ebur128 = "0.1"` crate (Sebastian Dröge's port) rather than the C library to keep the workspace pure-Rust and avoid system-library install steps on three-OS CI.
-    2. **Opus support**: Build Guide names Opus among the supported formats. We omit it for v0.19.84 because symphonia's `opus` feature pulls in GPL-flavored test vectors that conflict with `cargo-deny`'s AGPL/GPL ban. An Opus-bearing OGG container surfaces as `Probe`/`Decode` failure rather than a misleading match; we revisit when an MIT-only Opus decoder ships.
-    Two further notes: **EBU R128 conformance suite**: the Phase 9 prompt names "known-LUFS reference clips (EBU R128 conformance suite), ±0.1 LU tolerance" as the gate. The smoke test ships a synthetic-sine harness at ±1 LU (1 kHz sine at −23 dBFS reads ≈ −23 LUFS post-K-weighting); the published EBU clips are not embedded because the workspace strives for zero binary fixtures in-tree. Phase 13's perf pass adds the conformance suite to the CI matrix once the binary-fixture story is decided. **Sandbox wiring**: the audio analyzer is *not* run inside the Phase-7 `sandbox-extractors` `Sandbox` — that supervisor is shaped for `Extractor` (text-shaped) extractors, while audio produces structured `AudioAttributes`. The audio crate ships its own `TimeBudgetSupervisor` with the same 5-second default budget; the cooperative-cancel contract is identical (`Acquire` load on the cancel atomic per packet). Subprocess isolation for genuinely hostile audio files is the same Phase-13 evaluation that covers the PDF non-cooperative-decode path.
-
-- **[all platforms]** Phase 8 document extractors (`freally-extractors::extractors`) — six pluggable extractors registered with the Phase-7 `Pipeline`, plus `register_all(builder)` / `default_pipeline()` helpers that wire them in dispatch order. Coverage: **(1) Plain-text + Markdown** — reads up to `PLAIN_TEXT_CAP_BYTES = 5 MiB`, detects UTF-8 / UTF-16 LE / UTF-16 BE byte-order marks, decodes the body to UTF-8, and pushes the decoded text into the sink; the extractor is also the catch-all path for files no other extractor claimed (extension allow-list `.txt` / `.text` / `.md` / `.markdown` / `.mkd` / `.log` / `.rst` / `.adoc` / `.asciidoc` / `.rtf` plus a `looks_like_text` head-bytes heuristic that tolerates 1 stray NUL and rejects 2+). **(2) PDF** — `pdf-extract = "0.10"` (MIT, pure-Rust, pdf-rs ecosystem) parses the document and emits text with `U+000C` between pages so search snippets can cite page numbers; encrypted / password-protected PDFs surface as `ExtractError::Unsupported(...)`, malformed inputs as `ExtractError::Malformed(...)`. **(3) Office** — `XlsxExtractor` uses `calamine = "0.34"` (MIT) and emits one line per non-empty cell as `Sheet1!A1=value`; `DocxExtractor` and `PptxExtractor` parse OOXML directly via `zip = "5"` + `quick-xml = "0.39"` so we ship no `ooxmlsdk-rs` dependency (see deviation note). docx renders headings as Markdown (`# Title`, `## Sub`, …) and flattens tables as `| cell | cell |\n` rows; pptx walks slides in numeric order and prefixes each with `# Slide N: <title>`. **(4) Code** — `tree-sitter = "0.25"` runtime + 32 grammar crates covering Rust, Python, JS, TS/TSX, Go, Java, C, C++, C#, Ruby, Bash, Lua, PHP, Kotlin, Scala, Swift, Haskell, OCaml, Elixir, Erlang, Clojure, Elm, Dart, R, Julia, Zig, Nix, TOML, YAML, JSON, HTML, CSS, SQL. Each parse emits `[lang]` / `[identifiers]` / `[strings]` / `[comments]` sections; identifiers are de-duplicated, strings + comments preserve their literal form so `content:"hello world"` matches the original source. Cooperative cancel checks fire every `CANCEL_CHECK_EVERY = 1024` nodes so the supervisor can interrupt a long tree walk. **(5) Archive peek** — `zip = "5"` + `sevenz-rust2 = "0.21"` + `tar = "0.4"` enumerate entries without extracting bytes to disk; output shape is `archive.zip!path/to/inner.txt size=1234` per entry (the daemon hands the indexer this virtual path so a search for `inner.txt` matches archive contents). Hard cap at `MAX_ENTRIES = 100_000` per archive; a tar of 1M files won't burn the sink and the time budget. **(6) Structured-data** — `serde_json` (workspace) + `csv = "1"` + `serde_yaml_ng = "0.10"` flatten to `key=value` lines: JSON / YAML use dotted keys (`address.zip=10001`) with `[idx]` for arrays; CSV emits `header=value` per non-header row, falling back to `col0=value` when the header is missing; multi-document YAML prefixes each doc with `[doc=N]`. Smoke test `tests/smoke/phase_08_doc_extractors.rs` (16 cases) covers `default_pipeline()` registration, dispatch ordering (xlsx wins over archive-peek for `.xlsx`; archive-peek wins for plain `.zip`; PDF wins by `%PDF-` magic; plain-text catches `.log`), plain-text BOM stripping, JSON / CSV / YAML flattening, zip listing with virtual paths, docx Heading-style → Markdown conversion, pptx slide ordering, and code-extractor identifier / string / comment capture. New runtime deps (all permissive, deny.toml-allowlisted): `pdf-extract = "0.10"` (MIT), `calamine = "0.34"` (MIT/Apache-2.0), `zip = "5"` (MIT), `quick-xml = "0.39"` (MIT), `sevenz-rust2 = "0.21"` (Apache-2.0), `tar = "0.4"` (MIT/Apache-2.0), `csv = "1"` (Unlicense/MIT), `serde_yaml_ng = "0.10"` (MIT/Apache-2.0), `tree-sitter = "0.25"` (MIT) plus the 32 grammar crates listed above (mix of MIT/Apache-2.0 — every grammar's license is on the deny.toml allow-list).
-
-  - **Build-Guide deviations.** Two named deps were swapped to keep the 3-OS CI green and the 18-locale schedule on track:
-    1. **Archive peek:** Build Guide names `compress-tools` (libarchive). libarchive is a system library — Windows CI hosts don't ship it and `vcpkg` orchestration would block the phase. We use the pure-Rust trio (`zip` + `sevenz-rust2` + `tar`); the result is the same `archive.ext!entry size=N` virtual-path output the Build Guide asks for, with no system dep.
-    2. **Office:** Build Guide names `ooxmlsdk-rs` for docx + pptx. That crate is unmaintained on crates.io as of 2026-Q1 and lacks Rust-2024 support. Office Open XML is zip + XML, so we read it directly with `zip` + `quick-xml`. Net effect: smaller attack surface (the indexer reads *text* only, not styling / layout / embedded objects) and one fewer pinned dependency.
-    Two further notes: **Dockerfile** has no in-tree grammar yet because the only published `tree-sitter-dockerfile` (0.2.0) still binds to the tree-sitter 0.20 runtime, which conflicts with our 0.25 runtime via cargo's `links = "tree-sitter"` rule; Dockerfiles fall through to the plain-text extractor for now and we will revisit when the grammar is rebased. **PDF cooperation** is whole-document rather than per-page because `pdf-extract` blocks on the parse — a heavy PDF that exceeds the sandbox time budget terminates by leaking the worker thread (the sandbox's documented contract for non-cooperative extractors); subprocess isolation is the Phase-13 evaluation.
-- **[all platforms]** Phase 7 format-extractor framework (`freally-extractors`) — the trait, dispatcher, per-extraction sandbox, bounded extraction queue, content-addressed blob store, and per-extractor mode (Lazy / Eager / Disabled). Public surface matches the Build Guide's Phase-7 prompt: `pub trait Extractor: Send + Sync { fn id(&self) -> ExtractorId; fn matches(&self, path: &Path, magic: &[u8]) -> bool; fn extract(&self, path: &Path, sink: &mut TextSink) -> Result<ExtractionStats, ExtractError>; }`. `Pipeline::builder().register(...).build()` is the compile-time registration step; `Pipeline::dispatch_path(path)` reads up to `MAGIC_HEAD_BYTES = 32` from the head of the candidate file and walks registered extractors in registration order, skipping any whose effective `ExtractorMode` is `Disabled`; `Pipeline::replace_settings` lets the daemon swap settings live without restart. The `Extractor::extract` trait method takes a `&mut TextSink` (bounded byte writer with the sandbox's cancel-flag plumbed through `is_cancelled()`); writes past the per-extraction text cap return `SinkOverflow`, which the extractor folds into `ExtractError::OutputTooLarge`. `Sandbox::execute(Arc<dyn Extractor>, PathBuf)` spawns a worker thread that calls the extractor, with the calling thread acting as supervisor — `mpsc::sync_channel::recv_timeout` polls per tick (default 100 ms), enforces the 5-second time budget by flipping the cancel flag and waiting one cancel-grace window (default 250 ms) before returning `SandboxError::TimeBudget` regardless of whether the worker bailed (non-cooperative extractors leak a worker thread per breach — documented contract; Phase 13 evaluates subprocess isolation for hostile third-party formats); RSS guard reads `/proc/self/status`'s `VmRSS:` line on Linux, `GetProcessMemoryInfo` on Windows, no-op on macOS / other Unix (Phase-7 prompt: "no-op (macOS — rely on time budget)"). Cooperative extractors check `sink.is_cancelled()` between major work items and surface `ExtractError::Cancelled`; the sandbox folds that back into `SandboxError::TimeBudget` or `SandboxError::MemoryCeiling` based on the breach reason it tracked. `ExtractionQueue` is a bounded `BinaryHeap<Entry>` keyed on `(mtime_ns desc, FIFO seq)` so recently-touched files dispatch first and same-mtime entries pop in insertion order; `try_push` surfaces `QueueError::Full(capacity)` once the heap reaches capacity and `QueueError::Closed` post-`close()`, mirroring Phase 4's `EventQueue` close-safety posture (`closed` lives inside the same `Mutex` as the heap so a concurrent `close()` cannot race a waiter's "is the heap empty?" check). `BlobStore::open(<index_root>/extracted)` materializes the root; `put(content)` computes `BlobId = blake3(content)` (32 B → 64 hex chars), zstd-encodes the content (level 3 default — Phase 13 perf pass evaluates dropping to level 1 if compression dominates extraction time), and atomically writes via tmp+rename inside the same shard directory to `<root>/<first2hex>/<full-hex>`; `get(id)` mmaps the compressed frame via `memmap2::Mmap` and returns the decompressed `Vec<u8>`; `for_each(|id|)` walks the live store, skipping `.tmp-*` partials and non-hex filenames at `warn` log level. Idempotent dedup on `put` is implicit and content-addressed; `BlobStoreStats` (`puts` / `dedup_hits` / `get_hits` / `get_misses` / `bytes_written` / `bytes_decompressed`) feeds the daemon's status pane. `ExtractorMode::{Eager, Lazy, Disabled}` defaults to `Lazy` (fresh-bootstrap indexes don't burn CPU on content extraction before the user expresses interest in content search); `PipelineSettings` carries the global default plus a `HashMap<String, ExtractorMode>` of per-extractor overrides (keyed by `ExtractorId::as_str()` so the JSON file stays stable across crate-version bumps), the time / memory / sink-cap budgets, and the queue capacity. Settings round-trip through `serde_json` cleanly — Phase 12's settings dialog will own the JSON file format. New runtime deps (all permissive, deny.toml-allowlisted): `zstd = "0.13"` (BSD-3-Clause; already pulled in via Tantivy, declared direct here for the blob-store compress/decompress path), `memmap2 = "0.9"` (MIT/Apache-2.0; already pulled in via `freally-index`, declared direct here for the blob-store mmap reads), `blake3 = "1"` (CC0/Apache-2.0; same content-addressing primitive Phase 4 + Phase 6 already use), `parking_lot = "0.12"` (MIT/Apache-2.0; matches the rest of the workspace's lock primitive), `serde_json = workspace` (MIT/Apache-2.0; settings serialization), `windows-sys = "0.59"` with `Win32_System_ProcessStatus` + `Win32_System_Threading` features on Windows for `GetProcessMemoryInfo`, and `libc = "0.2"` on Linux + macOS (read-only `/proc/self/status` parse on Linux; presence-only on macOS for future RSS hooks). Smoke test `tests/smoke/phase_07_extractor_fw.rs` (17 cases) covers Pipeline dispatch (extension + magic + first-match-wins + disabled-skipped + short-file-magic-read), Sandbox (cooperative time-budget fires within budget+grace + extractor error pass-through + success path), Queue (priority + back-pressure + close-unblocks-pop-blocking), BlobStore (round-trip + dedup + layout + persistence + hex round-trip), and Settings JSON round-trip.
-- **[all platforms]** Phase 6 filename-similarity lens (`freally-similarity`) — bigram-MinHash + 16×8 LSH filename near-duplicate index. `SimilarityIndex::open(dir)` opens or creates `minhash.idx` rooted at the supplied directory; `upsert(file_id, name)` lowercases the input, strips the trailing extension, computes a `[u64; 128]` MinHash signature via a deterministic linear-hash family (SplitMix64-seeded `(a, b)` pairs, fixed `MINHASH_SEED = 0x534F5552_43455252`), and inserts the row into 16 LSH bands of 8 hashes each; `remove(file_id)` tombstones the row and strips it from every band so a stale band posting can't surface a tombstoned hit. `apply(&[JournalEvent])` consumes Create / Rename / Delete events (Modify and AttrChange are no-ops because the filename hasn't changed) and re-derives `file_id` via the same `blake3(OsStr-bytes)[..8]` truncation `freally-index` uses, so a `SimilarityHit::file_id` round-trips through `Index::store::get_many` cleanly. `candidates(query, &SimilarityOpts)` runs the LSH lookup, scores each candidate via Jaccard estimate, drops below-threshold hits (default `DEFAULT_JACCARD_THRESHOLD = 0.30`), sorts by Jaccard desc with `file_id` ties broken ascending for deterministic output, and truncates to `candidate_cap`. `flush()` atomically rewrites `minhash.idx` via tmp-rename — `[Header — 32 B] [Heap] [Rows: file_id u64 + name_off u32 + name_len u32 + signature [u64; 128]]` — magic `SRC-MNHS`, version 1; `open()` rebuilds the bands map from each live row's signature so the on-disk file format stays compact (Phase 13 perf-pass note: persist the bands map directly when SA-IS lands). The query DSL (`freally-query`) now parses `similar:<needle>` to a new `ModifierKind::Similar(String)` variant — moved out of Phase 5's `Reserved` set; an empty needle (`similar:`) errors with `ParseError::InvalidModifierValue`. The new `execute_with(idx, similarity, q, opts)` entry-point routes any query carrying a top-level `Similar` modifier through the supplied `SimilarityIndex` (LSH candidates → SQLite hydration → remaining-predicate filter → Jaccard-desc sort unless the user explicitly picked a non-default `SortSpec`); the legacy `execute(idx, q, opts)` is now a thin wrapper around `execute_with(idx, None, …)` that returns the typed `QueryError::SimilarityIndexUnavailable` when a `similar:` query reaches it, so callers see a clear message instead of empty results. `similar:` buried inside `OR` / `NOT` / nested AND surfaces `QueryError::UnsupportedSimilarPosition` — Phase 6 ships the top-level-only first cut, lifted by Phase 10's optimizer pass. New `SortField::Relevance` variant orders by Jaccard desc when a similarity query is in play and falls back to `Name` ordering for non-similarity queries (matches voidtools' Everything's "Sort by Relevance" semantics; Phase 11 UI surfaces the option). Filename signatures are computed on the *stem* (extension stripped) so a user typing `similar:report-final` matches indexed `report-final.pdf` cleanly without a 4-5-bigram penalty for the trailing `.pdf`; the full lower-cased name still lives in the heap for diagnostics. The Phase 6 spec gates: synthetic 5 000-name corpus (deterministic SplitMix64 seed) with 50 known near-duplicates (`-v2` suffix bumps + `-draft` tag appends + 1-char deletes biased away from the LSH knee at Jaccard ≈ 0.73) hits the spec's 95 % recall floor (`crates/freally-similarity/tests/recall.rs`); a smoke `tests/smoke/phase_06_similarity.rs` covers the parse/route/compose/persist/error-position invariants. New runtime deps (all permissive, deny.toml-allowlisted): `blake3 = "1"` (already pulled in via `freally-index`; declared direct here for the file_id derivation); existing `parking_lot` / `thiserror` / `tracing` / `freally-journal` chain.
-- **[all platforms]** Phase 0 scaffold: Cargo workspace; Tauri 2 + Svelte 5 UI shell at 1100×720 dark; 18 locale `.ftl` stubs; `xtask` (`i18n-lint`, `third-party-notices`, `icon-build`, `release`); 3-OS GitHub Actions CI; `deny.toml` license policy (AGPL hard-banned); baby-blue magnifying-glass icon family. First public tag will be **v0.19.84**.
-- **[Windows-only]** Phase 1 NTFS USN journal subscriber (`freally-journal-win`): `JournalSubscriber::open` queries the journal via `FSCTL_QUERY_USN_JOURNAL`, `bootstrap()` enumerates the MFT via `FSCTL_ENUM_USN_DATA`, `subscribe()` streams incremental events via `FSCTL_READ_USN_JOURNAL`, and a per-volume cursor (volume serial + journal ID + next USN) persists under `%LOCALAPPDATA%\Freally\cursors\<serial>.json` with rename-atomic save. Reason flags map to `JournalEvent::{Create, Modify, Delete, Rename, AttrChange}`. Will be balanced by the macOS FSEvents subscriber in Phase 2 and Linux inotify/fanotify subscriber in Phase 3.
-- **[Windows-only]** `freally-indexd` Service Control Manager wiring: `install` / `uninstall` / `service` subcommands register and run the `Freally-Indexd` Windows Service (auto-start, accepts SCM stop). Phase 4 fills in the per-volume subscriber + index core inside the service body.
-- **[macOS-only]** Phase 2 FSEvents journal subscriber (`freally-journal-mac`): `JournalSubscriber::open` resolves an absolute watch root, captures its `stat.st_dev` + `statfs.f_fstypename`, and loads (or first-runs) a per-watch cursor under `~/Library/Application Support/Freally/cursors/<root_hash>.json`. `bootstrap()` walks the tree and emits synthetic `JournalEvent::Create` events. `subscribe()` spawns a dedicated CFRunLoop thread that runs an `FSEventStreamCreate(latency=0.5s, FileEvents | NoDefer | UseCFTypes | WatchRoot)`, classifies each batch's flag bitmask via the FSEvents-flag → `JournalEvent` table, does **per-batch rename pairing** (matching the two halves of an `ItemRenamed` pair by inode), inline-rescans subtrees on `MustScanSubDirs`, and persists `last_event_id` for resume across restarts. Cross-batch rename pairs degrade to `Delete + Create` (a Phase-13 perf-pass note). Runtime deps `core-foundation = "0.10"`, `core-foundation-sys = "0.8"`, `fsevent-sys = "4"`, `libc = "0.2"` — all MIT/Apache-2.0, deny.toml-allowlisted.
-- **[macOS-only]** `freally-indexd` launchd-agent wiring: `install` / `uninstall` / `service` subcommands register and run a per-user launchd agent at `~/Library/LaunchAgents/io.mikeweaver.freally.indexd.plist` with `RunAtLoad=true` + `KeepAlive=true`. Phase 4 fills in the per-root subscriber + index core inside the agent body. The foreground `run --root <path>` mode prints FSEvents events to stdout for manual / smoke-test inspection.
-- **[all platforms]** `freally-journal` facade now re-exports the canonical `open` / `JournalEvent` / `JournalError` / `JournalSubscriber` from `freally-journal-mac` on `cfg(target_os = "macos")`. Linux still uses the typed-but-stubbed surface; Phase 3 will replace it.
-- **[Linux-only]** Phase 3 inotify+fanotify journal subscriber (`freally-journal-lin`): `JournalSubscriber::open` resolves an absolute watch root, captures its `stat.st_dev` + `statfs.f_type` magic-number-mapped name (ext4/btrfs/zfs/xfs/f2fs/tmpfs/...), detects `CAP_SYS_ADMIN` via `/proc/self/status`'s `CapEff:` line, and loads (or first-runs) a per-watch cursor under `~/.local/share/freally/cursors/<root_hash>.json` (XDG_DATA_HOME-aware). `bootstrap()` walks the tree via raw `getdents64(2)` (faster than `read_dir` on huge trees) with `(st_dev, st_ino)` cycle-guard and emits synthetic `JournalEvent::Create` events. `subscribe()` spawns a dedicated thread that runs the chosen backend: **inotify** (default, no privileges) — recursive `inotify_add_watch` covering create/modify/close-write/delete/move/attr, with `IN_Q_OVERFLOW` triggering a full-tree `getdents64` rescan; or **fanotify** (CAP_SYS_ADMIN required) — one `fanotify_mark(FAN_MARK_FILESYSTEM)` with `FAN_REPORT_DFID_NAME` so rename tracking survives Btrfs subvolume crossings and overlayfs that inotify cannot reproduce. Inotify mask classifier mirrors the Phase-1 USN reason precedence (`Delete > Create`, `Rename > Create`, `IN_CLOSE_WRITE` settles `Modify`). Per-batch rename pairing via inotify cookie / fanotify `OLD_DFID_NAME` info record; cross-batch splits degrade to `Delete + Create` (Phase-13 perf-pass note). fanotify `EPERM/EINVAL/ENOSYS` at init falls through to inotify so kernels < 5.17 (no `FAN_REPORT_DFID_NAME`) and `CONFIG_FANOTIFY=n` builds stay functional. Runtime dep `libc = "0.2"` only — pure raw-syscall path.
-- **[Linux-only]** `freally-indexd` systemd-user-unit wiring: `install` / `uninstall` / `service` subcommands write `~/.config/systemd/user/freally-indexd.service` with `Type=simple` + `Restart=always` + `WantedBy=default.target` (per Phase-3 spec) and run `systemctl --user enable --now`. `ExecStart` quotes the binary path so a `--binary "/path with spaces/freally-indexd"` install survives systemd's whitespace-aware unit parser. Phase 4 fills in the per-root subscriber + index core inside the service body. The foreground `run --root <path>` mode prints inotify/fanotify events to stdout for manual / smoke-test inspection.
-- **[Linux-only]** Polkit policy at `crates/freally-indexd/polkit/io.mikeweaver.freally.policy` declaring action `io.mikeweaver.freally.elevate` for the optional fanotify upgrade flow. `auth_self_keep` (≈5 min) prompts the active user for their own password; `org.freedesktop.policykit.exec.path` + `argv1` annotations pin `/usr/local/bin/freally-indexd elevate` so the action ID cannot be repurposed against a different binary. Distribution maintainers ship the file at `/usr/share/polkit-1/actions/`.
-- **[all platforms]** `freally-journal` facade now re-exports the canonical `open` / `JournalEvent` / `JournalError` / `JournalSubscriber` / `WatchCursor` from `freally-journal-lin` on `cfg(target_os = "linux")`. Other Unix targets (FreeBSD, OpenBSD, illumos) keep the typed-but-stubbed `portable_stub` surface.
-### Fixed (Phase 8 review pass)
-
-- **[all platforms]** Phase 8 plain-text extractor now detects encoding *before* the cap-overshoot truncation runs. The previous version unconditionally ran a `from_utf8`-in-a-loop trim on the truncated buffer regardless of encoding — for UTF-16 input that overshot the 5 MiB cap (≈ 2.5 M codepoints), the loop popped bytes until it found a UTF-8-shaped prefix, often leaving the buffer at an odd byte length, which `decode` then rejected as `ExtractError::Malformed`. With the encoding-aware truncation, UTF-16 trims to an even-byte boundary and UTF-8 trims to a codepoint boundary via the new `trim_to_utf8_boundary` helper. New regression `utf16_le_overshoot_truncates_at_even_boundary_not_malformed` locks the contract in.
-- **[all platforms]** Phase 8 archive-peek + structured-data extractors now sanitize line-break control characters (`\n` / `\r` / `\0`) in archive entry names, CSV field values, and JSON / YAML scalar string values via the new `extractors::util::sanitize_inline` helper. A hostile zip / 7z / tar entry could previously declare a name containing `\n` and inject phantom rows into the search blob (one entry impersonating many); the same bug existed at the CSV / JSON / YAML scalar surface where quoted fields legitimately carry embedded newlines. Sanitised output preserves search recall by escaping the bytes (`\\n` / `\\r` / `\\0`) instead of dropping them. New regressions `entry_name_with_newline_is_sanitized` (archive), `csv_field_with_newline_is_sanitized`, and `json_string_value_with_newline_is_sanitized` cover the contract on each surface.
-- **[all platforms]** Phase 8 docx + pptx parsers now check `sink.is_cancelled()` on a per-event budget rather than per-paragraph (docx) / per-slide-only (pptx). A hostile docx with one giant `<w:p>` (thousands of `<w:t>` runs concatenated) used to spend seconds inside `parse_docx_body` without yielding to the cancel flag; pptx's slide-XML parser had no inner cancel check at all. The fix counts every quick-xml event and tests the flag on a 32-event budget — the load itself is a single `Ordering::Relaxed` atomic, sub-nanosecond cost. The Phase-7 sandbox grace window stays the safety net for the worst case, but cooperative shutdown now fires on a bounded budget regardless of how the input XML is shaped.
-- **[all platforms]** Phase 8 docx extractor now suppresses heading-styled but text-empty paragraphs. The previous version emitted a bare `# \n\n` (or deeper hash level) into the search blob for empty `<w:p>` blocks that carried a `<w:pStyle w:val="HeadingN"/>`; downstream tokens like `#` are noise that count against the sink cap for no recall benefit. New regression `docx_skips_empty_heading_paragraphs` covers it.
-- **[all platforms]** Phase 8 code + plain-text extractors now trim cap-overshoot buffers to a UTF-8 codepoint boundary in O(1) via the shared `trim_to_utf8_boundary` continuation-byte backtrack, replacing the previous `while !std::str::from_utf8(&buf).is_ok() { buf.pop(); }` loop that rescanned the entire 4 / 5 MiB buffer per pop (worst-case O(N²)). Six unit tests in `extractors::util::tests` regress complete-codepoint, partial-codepoint, ASCII-boundary, all-continuations, and empty-buffer cases.
-- **[all platforms]** Phase 8 docx tables (`<w:tbl>` / `<w:tr>` / `<w:tc>`) gained explicit test coverage. `parse_docx_body` already handled the table tags but no test exercised the path; a regression there would silently strip table contents from search recall on every docx with a table. New `docx_renders_tables_as_pipe_rows` locks the `| cell | cell |` rendering in.
-- **[all platforms]** Phase 8 multi-document YAML (`---` separators) gained explicit test coverage. The `flatten_yaml` path emitted `[doc=N]`-prefixed keys but no test covered the prefix logic; new `flattens_multi_document_yaml_with_doc_prefix` ensures a future refactor cannot silently collapse document boundaries.
-
-### Fixed (Phase 5 review pass)
-
-- **[all platforms]** Phase 5 query parser now treats `!` after `)` as a prefix-NOT — `(a)!b` parses as `(a) AND !b` to match voidtools-Everything's documented behavior. Previously the byte-and-token boundary check omitted `RParen`, so the trailing `!b` collapsed into a single literal `!b` and the negation was silently dropped (Standing Rule #8 regression). New parser-test `bang_after_rparen_is_not` locks the contract in.
-- **[all platforms]** Phase 5 plan cache no longer mutates the cached plan when `match_mode.match_path` is on. The seed-clear that lets a path-search bypass the trigram pre-filter now runs at execute-time only — the `ExecPlan` stays a pure function of the query string, so two concurrent callers with the same query but different `match_path` settings can no longer poison each other's cached plan. New wiring-test `plan_cache_survives_match_path_toggle` covers it.
-- **[all platforms]** Phase 5 `parse_iso_day` rejects calendar-impossible days (Feb 30, Apr 31, non-leap Feb 29, …) up-front via a new `days_in_month` validator (Howard Hinnant's epoch-day arithmetic accepted any 1-31 day for any month, silently rolling overflow forward). Voidtools rejects these — Standing Rule #8 regression. New parser-test `invalid_calendar_days_reject` covers leap-year + month-end cases.
-- **[all platforms]** Phase 5 modifier reservation list extended to cover the voidtools-Everything muscle-memory tokens (`wfn:`, `wholefilename:`, `case:`, `count:`, `dupe:`, `nodiacritics:`) so users typing them get a typed `QueryError::UnsupportedModifier` at execute time rather than a parse error. Parses-but-fails-loudly is the Standing Rule #8 contract until each of those toggles ships its lens-owning phase. New parser-test `voidtools_reserved_toggles_parse` covers the family.
-- **[all platforms]** Phase 5 `eval_full` now lower-cases the candidate path once per row when `match_path` is on, instead of re-lower-casing for every AND / OR child node — the path-lower string is hoisted into `NameEvaluator::matches_full` and threaded through `eval_full` as `Option<&str>`. Cuts a per-AND-child `to_lowercase()` allocation that scaled with query depth.
-- **[all platforms]** Phase 5 `eval_modifier::Reserved` now `debug_assert!`s when reached — `validate_supported` is the documented gate at the top of `execute()`, and a Reserved modifier reaching evaluation means a caller built a `Query` AST by hand and bypassed the gate. The previous silent-`false` arm is dead-code in the supported call paths and now fails loudly under `cfg(debug_assertions)`.
-
-- **[all platforms]** Phase 5 filename lens (`freally-query`) — voidtools-Everything-shaped DSL parser + executor over the Phase-4 index. `parse(s)` builds a `Query` AST covering literal substring / wildcard (`*`, `?`) / regex (`regex:` prefix) terms, boolean glue (`AND` / `OR` / `NOT` / `!` prefix, implicit-AND between adjacent atoms, parenthesised groups), and modifier predicates: `size:` (with `>`, `<`, `>=`, `<=`, `=`, `b`/`kb`/`mb`/`gb`/`tb` units), `date:` (relative aliases `today` / `yesterday` / `thisweek` / `lastweek` / `thismonth` / `lastmonth` / `thisyear` / `lastyear` plus absolute `YYYY-MM-DD` with comparator), `ext:` (single or `;`-separated list, `.`-stripped), `attrib:` (Windows-letter set `R`/`H`/`S`/`A`/`D`/`C`/`E`/`T`/`O`/`L`), `path:` / `parent:` / `child:` (substring matchers; `name:` / `folder:` aliases honoured). Quick-filter aliases `audio:` / `video:` / `image:` / `document:` / `executable:` / `archive:` expand to predefined extension sets. Future-lens modifiers (`content:` / `lufs:` / `codec:` / `channels:` / `samplerate:` / `length:` / `similar:` / `duration:` / `type:` / `lang:`) parse but are gated by `validate_supported`, surfacing `QueryError::UnsupportedModifier` until their owning phase ships. `execute(idx, query, ExecOpts)` plans the query (longest literal substring becomes the trigram seed; OR breaks the seed into a live-row scan), pulls candidates from the custom name index via the new `for_each_candidate_named` / `for_each_live` borrowed-bytes APIs, runs the name-side predicates, hydrates survivors via the new `Store::get_many` batched IN-clause fetch, evaluates the full-record predicates, applies `SortSpec` (name / path / size / date / type / ext, asc/desc), and streams results through `ResultSet::first_batch` / `collect`. `MatchMode` toggles (`match_case` / `whole_word` / `match_path` / `match_diacritics`) layer at execute time; `match_path` widens the search target to the canonicalised full path by skipping the name-index pre-filter (Phase-13 perf-pass note); `match_diacritics: false` strips combining marks via NFKD before substring comparison. 16-entry LRU `PlanCache` (`PlanCache::default16`) keys on the trimmed query string and reuses the parsed AST + plan on hot re-typing. New runtime deps (all permissive, deny.toml-allowlisted): `regex = "1"` (MIT/Apache-2.0), `unicode-normalization = "0.1"` (MIT/Apache-2.0). `crates/freally-index` `name_index` swapped its trigram intersection from `BTreeSet` to a sorted-postings two-pointer merge (Build-Guide §`name_index` PERF note) and exposes `name_bytes` / `for_each_candidate_named` / `for_each_live` for the lens; `Store::get_many` chunks 250 ids per IN-clause to stay under SQLite's `SQLITE_MAX_VARIABLE_NUMBER`. `xtask gen-fixture` synthesises a deterministic SplitMix64 file-record stream for the Phase-5 perf bench (`cargo bench -p freally-query --bench filename_lens`); the bench prints per-scenario P50 / P99 with FAIL markers and only exits non-zero when `FREALLY_BENCH_GATE=1`. The `tests/voidtools_compat.rs` fixture pins 50 real Everything queries — Standing Rule #8 regression gate; `tests/wiring.rs` covers the executor end-to-end against a `tempfile`-backed index; `tests/smoke/phase_05_filename_lens.rs` is the OS-agnostic smoke that runs on every CI matrix entry.
-- **[all platforms]** Phase 4 index core (`freally-index`) — OS-agnostic façade that consumes the shared `JournalEvent` enum and orchestrates three persistent stores: a Tantivy index (`index.tantivy/`) for full-text + faceted search, a SQLite canonical `files.db` in WAL mode + `synchronous=NORMAL` for the durable `FileRecord` row of truth, and a custom mmap-backed name index (`name.idx` packed string heap + trigram inverted postings; `name.suf` lexicographic suffix array) for substring candidate generation. `Index::open(root)` materializes the directory tree, opens or creates each store, and reconciles drift by replaying the canonical store into the name index when row counts disagree. `Index::apply(&[JournalEvent])` walks Create / Modify / Delete / Rename / AttrChange events through Tantivy delete-then-add + SQLite upsert + name-index upsert/remove with `file_id = blake3(path)[0..8]` as the stable key. `Index::commit()` flushes Tantivy, atomically rewrites `name.idx` + `name.suf` via tmp-rename, checkpoints the SQLite WAL into the main DB, and persists `manifest.json` with the bumped `tantivy_generation` plus per-volume cursors recorded via `Index::record_cursor`. Bounded `EventQueue` (default capacity 10 000 — Build-Guide spec) surfaces back-pressure as `IndexError::QueueFull` rather than silently dropping events; `push_blocking` honors the same close semantics. Per-OS default index root (`%LOCALAPPDATA%\Freally\index` / `~/Library/Application Support/Freally/index` / `${XDG_DATA_HOME:-~/.local/share}/freally/index`) via `default_index_root()`. New runtime deps (all permissive, deny.toml-allowlisted): `tantivy = "0.26"` (MIT), `rusqlite = "0.37"` with `bundled` feature (MIT) — pulls `libsqlite3-sys` + bundled SQLite (public-domain, allow-listed under `Unlicense`), `memmap2 = "0.9"` (MIT/Apache-2.0), `blake3 = "1"` (CC0/Apache-2.0), `parking_lot = "0.12"` (MIT/Apache-2.0). Smoke test `tests/smoke/phase_04_index.rs` covers the directory layout, full event round-trip, kill-9 recovery from SQLite, manifest cursor persistence, queue back-pressure, and Tantivy delete-then-add dedup.
+- **[all platforms]** Deleting a file can now be undone. `files_delete` sends
+  rows to the OS trash, which is recoverable, but recorded nothing — so the
+  app's own Undo never offered a delete back on any platform. It is journalled
+  now, and Ctrl+Z restores from the Recycle Bin (Windows) or the freedesktop
+  trash (Linux).
+- **[macOS-only]** A delete is recorded as **not undoable, with the reason
+  shown**, because Finder owns Put Back and exposes no API for it. Undo now
+  says so instead of going quiet: `next_undo` correctly refuses to skip past a
+  non-undoable entry, which meant Ctrl+Z did nothing at all after a delete and
+  never explained why.
+- **[all platforms]** Custom commands ask once, at a native OS dialog, before
+  running a program for the first time. Keyed on the program, so renaming a
+  command does not re-prompt, and the prompt names the arguments as well as the
+  program. Approvals live outside `settings.json` — storing them in it would
+  put the allowlist behind the same webview-writable path the prompt exists to
+  defend. See `docs/SECURITY.md`.
+- **[all platforms]** Column-resize grips can be operated from the keyboard:
+  arrows nudge, Home/End jump to the bounds. They were focusable before and did
+  nothing, which is worse than not being focusable.
 
 ### Changed
 
-- **[all platforms]** `freally-journal` facade now re-exports the canonical `JournalEvent` / `JournalError` / `JournalSubscriber` from the Windows subscriber on `cfg(windows)`, the macOS subscriber on `cfg(target_os = "macos")`, and the Linux subscriber on `cfg(target_os = "linux")`. Other Unix targets keep the typed-but-stubbed `portable_stub` surface.
-- **[macOS + Linux]** `freally-indexd` `Run` subcommand's `--root <path>` flag (preferred on macOS / Linux) now also drives the Linux journal subscriber; the existing `--volume` continues to work as a synonym on every OS.
-
-### Fixed (Phase 4 review pass)
-
-- **[all platforms]** Phase 4 `Index::apply` now degrades a `JournalEvent::Rename` whose `old_path` was never indexed (cross-batch rename pair the journal subscriber couldn't pair) into `Delete(old) + synthetic Create(new)` rather than writing a Tantivy / name-index row with no `files.db` row of truth. Mirrors the journal subscribers' published cross-batch fallback contract; new smoke `rename_of_unknown_path_degrades_to_delete_plus_create` covers it.
-- **[all platforms]** Phase 4 `EventQueue::close` no longer races against `wait_for_events` / `push_blocking` — `closed` is now stored inside the same `Mutex` as the queue itself instead of a sibling `Mutex`, so `close()`'s `notify_all` cannot land between a waiter's "is the queue empty?" check and its `Condvar::wait`. New smoke `close_unblocks_push_blocking_and_wait_for_events` and `try_push_after_close_refuses` lock the contract in.
-- **[all platforms]** Phase 4 `Manifest::load_or_default` now treats a JSON-parse error as missing-and-warn rather than a hard `IndexError::Manifest` that would block `Index::open`. The SQLite canonical store and Tantivy `meta.json` are the durable record; the manifest is a per-commit cache that `Index::commit` rewrites every cycle. New smoke `torn_manifest_does_not_block_open` covers it.
-- **[all platforms]** Phase 4 `derive_file_id` now hashes `OsStr::as_encoded_bytes()` directly instead of `to_string_lossy()` so paths that differ only in invalid-UTF-8 bytes don't collapse to the same id. Real-world impact is rare (Linux ext4 / Btrfs filenames are arbitrary byte sequences) but the fix removes a silent collision class before Phase 5 starts depending on `file_id` as a stable hash.
+- **[all platforms]** Menu submenus are **click-to-pin**. A click holds one
+  open regardless of where the pointer then travels, which is what a trackpad
+  wants and what an automated test needs; hover still opens them.
+- **[all platforms]** `freally index pause` and `resume` now actually pause and
+  resume, by setting `monitor_changes` on every detected volume. Each previously
+  sent one unrelated settings key and printed success.
 
 ### Fixed
 
-- **[Windows-only]** USN-journal rename pairing on Phase 1's
-  `freally-journal-win` now classifies the OLD-name half of a rename
-  (and any `FILE_DELETE` record) as **terminal**: emit immediately
-  without requiring `USN_REASON_CLOSE`. NTFS does not emit a closing
-  record for the old-name session — there's nothing more to wait for
-  at that path. Previously the classifier returned `Pending` for
-  `RENAME_OLD_NAME` records that lacked `CLOSE`, the pairing table
-  stayed empty, and the matching `RENAME_NEW_NAME | CLOSE` record
-  silently dropped via `?`. Net effect: `JournalEvent::Rename` was
-  never emitted for any in-tree rename. Diagnostic re-run on a real
-  NTFS volume confirmed the fix; the integration test
-  `realtime_create_modify_rename_delete_round_trip` now passes
-  end-to-end and is no longer `#[ignore]`'d.
-- **[Windows-only]** `JournalEvent::Delete` now consults the rename
-  pairing table by FRN before falling back to the record's
-  `build_path` result. Modern Windows uses POSIX-semantic
-  `NtSetInformationFile` deletes which internally rename the file to
-  a `$.dF{guid}` temp name before issuing `FILE_DELETE`; without this
-  lookup the consumer would see `Delete $.dF{guid}` instead of
-  `Delete <original_path>`. Defensive: the test that surfaced the
-  rename bug saw classic `DeleteFile` behavior here, but the POSIX
-  path can fire under file-locked / cross-process scenarios.
-
-### Deprecated
-
-- _(empty)_
+- **[all platforms]** The Index Health panel pegged the main thread and hammered
+  the daemon with `index_health` calls as fast as they could answer, instead of
+  polling every 2 s. Its `$effect` started the poller inline, and the poller
+  reads and writes the state the effect then subscribed to, so every answer
+  restarted it. The panel was unusable and the app stopped responding while it
+  was open. It had been shipping since M13; the e2e spec that would have caught
+  it was `test.fixme` for an unrelated reason.
+- **[all platforms]** `path:` and `parent:` allocated a lowercased string per
+  hydrated row where `path:` already had a cached copy.
+- **[all platforms]** Dialogs had two corner radii and three drop shadows,
+  because `Modal`'s inline `style` prop silently beats the shell's own class.
+  The prop is metrics-only now, and reaching past it is reported in dev.
 
 ### Removed
 
-- _(empty)_
-
-### Security
-
-- _(empty)_
-
----
+- **[all platforms]** The **Automatically remove offline volumes** setting. It
+  drove nothing — no code ever read it — and what it described is the opposite
+  of the behaviour that shipped: an unplugged volume is deliberately *kept* as
+  an offline catalog so its rows stay searchable and badged. Implementing it as
+  written, defaulting to on, would have deleted the index for every unplugged
+  drive.
 
 ## [0.23.2] — Updater key rotation and CI repair (2026-08-19)
 
@@ -1557,6 +1111,563 @@ predates.
   in any shipped build**. Because the endpoint is baked into the binary, v0.19.84
   and v0.20.0 keep polling the dead URL; only installs of this release or later can
   find an update.
+
+---
+
+## [0.20.0] — 2026-07-01
+
+No notes were written for this release. What it changed is recoverable only
+from the commit range between `v0.19.84` and `v0.20.0`; it is recorded here as
+absent rather than reconstructed, because a plausible summary written five
+months later is a guess wearing the same formatting as a fact. The one thing
+known about it for certain is in `[0.20.1]` below: its updater endpoint named
+a repository that does not exist, and it could not fix itself.
+
+## [0.19.84] — Phases 0–12 · the first public build (2026-06-21)
+
+These notes sat under `## [Unreleased]` from 2026-05-11 until 2026-08-21,
+through five tagged releases. They are not unreleased work and never were —
+the Phase 0 entry below ends "First public tag will be **v0.19.84**", which is
+what this section documents. The tag was cut on 2026-06-21 without anyone
+renaming the heading, and every release after it inherited the same block.
+
+That was a live hazard, not untidiness. The release workflow builds its
+published notes by renaming `## [Unreleased]` to the version being cut, so the
+next release would have shipped 533 lines of Phase 0–12 work — five months
+old, already in every install — as if it were new. It is dated to the tag it
+shipped in rather than split between `v0.19.84` and `v0.20.0`, because every
+entry in it predates both.
+
+
+> Everything below predates the Build 1–3 releases and was never promoted into a version section. It is left here untouched rather than back-filed into `0.21.0`–`0.23.0` on a guess; sorting it is its own pass.
+
+### TASK-098 — full Fluent i18n end-to-end across all 18 locales (2026-05-11)
+
+The 18-locale Fluent loader is now wired. Switching the language in
+Settings → Locale (or in the first-run wizard) re-renders every
+translated string in the UI — menus, status bar, settings panels,
+dialogs, and the wizard — without a restart.
+
+**Loader.**
+
+- `apps/freally-ui/src/lib/i18n/bundle.ts` replaces the Phase-11
+  `EN_FTL` inline string with `import.meta.glob("../../../../../locales/*/freally.ftl", { query: "?raw", eager: true })`.
+  All 18 `.ftl` files are inlined at build time; each `FluentBundle`
+  layers `en` underneath as a fallback resource so a stray missing key
+  surfaces in English rather than as a raw key string.
+- `vite.config.ts` extends `server.fs.allow` to the workspace root so
+  dev mode can read the locale tree that lives outside the package
+  root.
+- `bundle.ts` exports `loadedLocales()` for the test suite to assert
+  the glob actually picked up all 18 files.
+
+**Translation data — Standing Rule #4 lockstep.**
+
+- `en/freally.ftl` grew from 314 to 557 keys. The 243 additions cover
+  wizard polish (hints, placeholders, "Step N of N"), status bar
+  segments, lens / preview / bookmarks strings, the About / Connect
+  dialogs, every UI/Home/Backup/Keyboard/History/Locale/Folders/Volumes
+  panel hint + section title + toast, and the full PRD §8.28 menu bar
+  (every File/Edit/View/Search/Bookmarks/Tools/Help label + every
+  submenu title + every hover-hint).
+- The same 243 keys were mirrored into all 17 other locales in parallel
+  (es, de, fr, it, nl, pl, pt-BR, tr, vi, id, ru, uk, ar, hi, ja, ko,
+  zh-CN). Every `.ftl` now resolves the same 557 keys; the new
+  `tests/unit/i18n.test.ts` lockstep test asserts this on every CI run.
+
+**Component conversion.**
+
+- `menu_spec.ts` gains an `l10n` key on every `MenuItemSpec` and
+  `MenuSubmenu`, plus a `hintL10n` for status-bar hover hints.
+  `MenuBar.svelte` resolves them via `labelOf(spec)` / `hintOf(spec)`
+  helpers that fall back to the literal `label`/`hint` when a
+  translation key isn't present.
+- The FirstRunWizard renders its title, step count, every step's
+  heading + hint, the theme cards, and the Back/Next/Finish buttons
+  through `t()`. The hotkey step was already removed in the earlier
+  wizard pass; hotkey config remains in Settings → Keyboard.
+- StatusBar uses `t()` for the index-phase segment ("Indexed (N
+  files)" / "Indexing… N/M" / "Paused" / "Error"), result-count
+  pluralization (`status-result-count-one` vs `…-many`), the selection
+  size badge, query timing, lens timing badges, and the local-DB /
+  remote-endpoint segment. The theme-cycle button's `aria-label` and
+  the hotkey hover hint are now translatable.
+- Settings dialog — `SettingsDialog.svelte`, `SettingsTreeNav.svelte`,
+  `SettingsButtonBar.svelte`, `LocalePanel.svelte`, plus the panels in
+  the Indexes, Lenses, Network, and Misc groups (UI / Home / Search /
+  Results / View / Context Menu / Fonts & Colors / Keyboard /
+  Indexes-top / Volumes / Folders / FileLists / Exclude / Filename /
+  Content / Audio / Similarity / Custom / HTTPS / ETP / History /
+  Privacy / Logs / Backup / About).
+- Bookmarks, preview pane, and `LensSection` empty-state / collapse
+  controls.
+
+**RTL is now automatic, not a checkbox.**
+
+- The "RTL preview" checkbox in Settings → Locale is gone. RTL applies
+  automatically for locales whose native script is RTL — currently
+  `ar` is the only ship-locale in that bucket. `applyRtlForLocale`
+  consults its internal `RTL_LOCALES` allowlist; `bootstrap.ts`'s
+  `locale_settings.rtl_preview` field remains in the persisted state
+  for backward-compat but the UI no longer surfaces it.
+
+**Tests.**
+
+- New `tests/unit/i18n.test.ts` covers: (a) the glob actually loaded
+  all 18 locales, (b) `bundleFor(code)` returns a bundle that resolves
+  a canary key for every locale, (c) the 18 locales are in perfect
+  lockstep on key set, (d) switching `settingsStore.state.locale`
+  changes what `t()` returns, (e) an unknown locale falls back through
+  `en` rather than the raw key string, (f) an unknown key returns the
+  key.
+
+### Phase-12 polish pass — UX, reliability, and live-apply (2026-05-11)
+
+Major behavioral pass during a long debugging session. Most fixes are direct
+voidtools-Everything parity gains plus the foundational reliability work that
+makes the desktop app pleasant to run repeatedly during development.
+
+**Single-instance + non-blocking daemon boot.**
+
+- `kill_other_freally_instances()` runs at the top of `run()` on Windows
+  (taskkill `/F /T` against `freally-ui.exe` + `freally-indexd.exe`,
+  filtered to PIDs ≠ self) so relaunching the app always starts from a clean
+  slate without manual process killing. macOS / Linux stub for parity.
+- `Daemon::boot` now spawns a dedicated `freally-daemon-boot` thread inside
+  `tauri::Builder::setup`; the setup hook returns immediately and the window
+  appears right away. Previously the canonical-store replay could block the
+  GUI thread for 10-15 s, tripping the Windows non-responsive-window watchdog
+  and tearing the process down before any HWND existed.
+- `Client::connect` is wrapped in a 500 × 40 ms retry loop on the consumer
+  side so a slow daemon boot doesn't lose to a single connect race.
+
+**Filter chips + Search menu — multi-select with OR composition.**
+
+- New `lib/stores/type_filter.svelte.ts` holds a `Set<TypeFilterId>`; default
+  is the full set (Everything mode). `toQueryFragment()` emits a parser-level
+  `(audio: OR video: OR …)` group for partial selections, empty string for
+  "everything" or "none" so the daemon-side AND-of-prefixes pitfall is gone.
+- `QuickFiltersPalette.svelte` chips toggle the store directly; the menu
+  items in `Search → …` switch from `radio` to `checkable`, with
+  `MenuBar.isItemChecked` reading the store. "Everything" derives from
+  `selected.size === ALL.length` — clicking any individual chip flips both
+  that chip and Everything off, leaving the others.
+- `bookmarks.add` saves the active filter set alongside the search text; the
+  Rust `Bookmark` DTO gains `filters: Vec<String>` with `#[serde(default)]`
+  so existing `bookmarks.json` files keep deserializing. Clicking a bookmark
+  restores both the textbox content (via `queryStore.setSource`) and the
+  chip selection (via `typeFilterStore.setFromIds`).
+- Fixed Archive's token: `compressed: "zip:"` → `"archive:"` (the real
+  `QuickFilter::Archive` alias from `freally-query::quick_filters`). The
+  old `zip:` was just an extension within the group, so Archive never
+  matched anything.
+
+**Initial Everything query + everything-mode parity.**
+
+- `runInitialEverythingQuery()` in `bootstrap.ts` fires once after hydrate
+  and polls `resultsStore.batches.length` for up to 60 × 800 ms, kicking
+  fresh `run()` calls only when nothing is in-flight so the auto-fire
+  doesn't cancel its own queries. First paint after launch shows results
+  immediately instead of "Type a query to begin."
+- When the full type-filter set is selected and the search box is empty,
+  `resultsStore.run()` composes a bare `*` wildcard so the filename lens
+  lists every indexed entry (voidtools-Everything parity).
+- `ResultList.svelte` placeholder gate updated: shows "Type a query to
+  begin" only when the source is empty AND no type filters are selected
+  (i.e. the user has explicitly deselected every chip).
+
+**Folder indexing.**
+
+- `crates/freally-indexd/src/scanner.rs::scan_folder` now indexes
+  directories alongside files; the walkdir path filters on
+  `is_file() || is_dir()` and stamps `FILE_ATTRIBUTE_DIRECTORY (0x10)`
+  into the journal event's `attrs` field.
+- `crates/freally-journal-win/src/subscriber.rs` MFT bootstrap path no
+  longer skips directory records — they ride through with their real
+  `file_attributes` bitmask intact.
+- `QueryHit` (Rust DTO + matching TS interface) gains an
+  `attrs: u32 #[serde(default)]` field that the daemon populates from
+  `FileRow.attrs`. UI distinguishes file vs folder via the `0x10` bit.
+
+**Real Windows shell icons + per-row rendering.**
+
+- New `apps/freally-ui/src-tauri/src/commands/icons.rs` —
+  `icon_for_ext(ext, is_dir) -> Option<String>` async Tauri command that
+  runs Win32 `SHGetFileInfoW` with `SHGFI_USEFILEATTRIBUTES` (so a dummy
+  path like `_.xml` resolves the registered handler's icon without the
+  file actually existing on disk) → `GetIconInfo` → 32-bit BGRA via
+  `GetDIBits` → BGRA→RGBA channel swap → PNG via `image` crate → base64
+  data URL. Returns `None` on macOS / Linux for now.
+- `src-tauri/Cargo.toml`: adds `image = "0.25" --no-default-features
+  --features png`, `base64 = "0.22"`, and the relevant `windows = "0.59"`
+  feature set under `cfg(windows)`.
+- New `lib/stores/icon_store.svelte.ts` — `Map<(ext, is_dir),
+  Promise<dataUrl | null>>` cache so 200 result rows fire one IPC per
+  unique extension, not per row. Reactive `tick` field that increments
+  on each resolution so $derived consumers re-render.
+- `ResultRow.svelte` Name column renders `<img class="row-icon" src=…>`
+  pulled from `iconStore.get(hit.ext, isDir)`, with an emoji fallback
+  (`📁` / `📄`) while the data URL is loading.
+
+**Real metadata in MFT bootstrap.**
+
+- USN records carry FRN + attrs + a single timestamp but no file size, so
+  the MFT-fast-path used to write `size: 0` and a USN-only timestamp into
+  the index. `subscriber.rs` now does a `std::fs::metadata(&full)` per
+  emitted event to populate real `len`, `modified`, `created`. Slower
+  than the pure USN walk but correct — the Size and Modified columns
+  finally show non-zero values without forcing the walkdir fallback.
+
+**Search box + result row visuals.**
+
+- `SearchBar.svelte` now binds the `<input value={queryStore.source}>` so
+  programmatic updates (bookmark click, Escape clear, future deep-link)
+  reflect in the textbox. Also dropped the broken `color: transparent`
+  on `.raw` (the "mirror" syntax-highlight layer wasn't aligning, so the
+  typed text was effectively invisible in dark mode) — input renders its
+  own text now and the mirror is hidden.
+- `ResultRow.svelte` row CSS reads `--row-{state}-fg/bg/weight/style` so
+  the Fonts & Colors panel's per-state controls are live. States wired:
+  normal, highlighted (hover), selected, selected_highlighted.
+- Fixed alternate-row + hover specificity bug that made a selected row
+  appear unselected when its `:nth-child(even)` rule outranked
+  `.row.selected`. Both selectors now have `:not(.selected)` so a
+  selected row keeps its cyan tint regardless of index or hover.
+
+**Fonts & Colors live-apply + persistence.**
+
+- New `lib/stores/fonts_apply.svelte.ts::applyFontsAndColors()` writes
+  CSS custom properties on `<html>` from `settings.fonts_and_colors`:
+  `--font-ui` (with cross-OS fallback chain), `--app-font-size`,
+  per-state `--row-…-fg/bg/weight/style`, per-lens `--lens-…` overrides.
+  Called once on bootstrap (post-hydrate) and again on every panel
+  patch — restores across launches and live-applies on change.
+- `FontsAndColorsPanel.svelte` font input switched to a `<select>` dropdown
+  populated via `window.queryLocalFonts()` (Local Font Access API
+  supported by the Tauri 2 WebView2 runtime on Windows) with a curated
+  25-family fallback for non-Chromium webviews. Each option renders in
+  its own font for visual preview.
+- Theme dropdown in UIPanel calls `themeStore.set(value)` alongside the
+  settings patch so light/dark switches live-apply on selection — no
+  Apply / restart needed.
+
+**View panel toggles wired.**
+
+- App.svelte's $effect mirrors selected settings to `<body data-*>`
+  attributes; new CSS rules in `app.css` react to them:
+  `data-alternate-rows`, `data-row-mouseover` (overrides `.row:hover`
+  to no-op when false), `data-show-tooltips`, `data-show-lufs-badges`,
+  `data-show-similarity-score`.
+- `ResultRow` row `title={hit.path}` is conditional on the Show tooltips
+  setting.
+- `formatBytes` honors the Size Format setting (`auto_binary` |
+  `bytes` | `kb` | `mb` | `gb`).
+
+**Window controls — always-on-top, size, zoom.**
+
+- `capabilities/default.json` adds the missing
+  `core:window:allow-set-size`, `core:window:allow-set-always-on-top`,
+  `core:window:allow-set-resizable`, `core:window:allow-inner-size`,
+  `core:window:allow-outer-size` grants. Without these, every
+  `setSize` / `setAlwaysOnTop` call was being silently rejected by the
+  Tauri IPC permission gate.
+- App.svelte gains an `$effect` that translates `settings.on_top` +
+  `queryStore.source` into `setAlwaysOnTop(...)` calls: Never / Always
+  / WhileSearching modes all live, re-applied on every settings change
+  and every keystroke. Restored on launch.
+- `setWindowSize` import fixed: `LogicalSize` comes from
+  `@tauri-apps/api/window`, not the non-existent
+  `@tauri-apps/api/dpi`. Picked size also writes
+  `settings.window_size = { w, h }` (allowlisted in
+  `ALLOWED_PATCH_KEYS`), and bootstrap restores the saved size on
+  next launch.
+- `zoomStore` swapped from `document.documentElement.style.fontSize`
+  to the WebView's `zoom` CSS property so Ctrl+= / Ctrl+- actually
+  rescale the (px-based) UI. Crisp at all factors.
+
+**Image preview.**
+
+- `preview/windows_host.rs::preview` returns real image data URLs for
+  PNG, JPG/JPEG/JFIF, GIF, WEBP, BMP, SVG, ICO, AVIF: reads the file
+  (4 MiB cap), encodes via `commands::files::base64_encode`, returns
+  `PreviewPayload { kind: Image, data_url: "data:image/…;base64,…" }`.
+  Non-image extensions still return `None` so the text-head fallback
+  handles text files.
+- `files_preview`, `files_thumbnail`, and `icon_for_ext` are now
+  `async fn` and offload the actual work to
+  `tokio::task::spawn_blocking`. The synchronous versions were
+  blocking Tauri's IPC dispatch thread for seconds during shell-icon
+  extraction + multi-MB base64 encoding, which froze the entire UI.
+- Fixed `PreviewPane.svelte` calling a missing
+  `files.whitelistUserChosen` — the helper lived in `ipc/bookmarks.ts`
+  but the pane imports `* as files from "ipc/files"`. Re-exported
+  `whitelistUserChosen` from `ipc/files.ts` so the call resolves; the
+  synchronous `TypeError` was leaving `loading = true` forever and
+  blocking the preview $effect.
+- Added a Rust tracing pass on the preview / icon paths plus a
+  `log_event` Tauri command for forwarding TS console events into the
+  cargo dev log, and a `std::panic::set_hook` that surfaces Rust
+  panics in the console.
+
+**FTP endpoint + greyed Disconnect.**
+
+- New `ConnectEndpointDialog.svelte` modeled on the voidtools dialog:
+  Host (required), Port (default 21), Username, Password, Link type
+  dropdown. On OK, writes `settings.endpoint = { name: host, kind:
+  "ftp" }`.
+- `MenuBar.isItemEnabled` returns `false` for
+  `tools.disconnect_endpoint` when `settings.endpoint.kind === "local"`;
+  CSS adds an `.item.disabled` greyed style with `pointer-events: none`.
+- `View → Filters` now pre-selects the `indexes.exclude` panel before
+  opening the settings dialog (voidtools-Everything parity).
+
+**Exclusions — toggleable extension classes + dedup.**
+
+- `ExcludePanel.svelte` extension-class buttons (Video / Audio / Image
+  / Archive / Executable) now toggle: click adds the class's globs and
+  highlights the button; click again removes them and un-highlights.
+  Computes "active" as "every glob in the class is currently in the
+  exclude-files set" so the highlight reflects real state, not just
+  the last click.
+- `Add Folder…` and `Apply OS-recommended excludes` both dedupe so the
+  same entry never gets added twice.
+
+**Bookmarks reliability.**
+
+- `bookmarks.add` no longer requires a non-empty query — empty-query
+  bookmarks are allowed (named "Bookmark N" so the user can rename
+  them in Organize). Dedupe key is now (name, query, filter-set).
+- `bookmarksStore.hydrate()` retries every 500 ms for up to ~10 s so
+  the first hydrate doesn't lose the bookmarks list to a
+  daemon-not-ready IPC error during the background-boot window.
+- `bookmarks.organize` re-hydrates before opening the Organize dialog
+  so a stale dropdown can't show "No bookmarks yet" when there are
+  bookmarks on disk.
+
+**Misc.**
+
+- `tracing_subscriber` default filter raised to
+  `warn,freally=info,freally_ui_lib=info,freally_indexd=info`
+  so the instrumentation lands without forcing `RUST_LOG`.
+- Settings dialog `markDirty` now also calls `applyFontsAndColors()`
+  inside the Fonts & Colors panel patch path so the preview is
+  instant.
+- `ipc/types.ts::QueryHit` gains `attrs?: number`; `Bookmark` gains
+  `filters?: string[]`. Both optional for forward compat.
+
+### Added
+
+- **[all platforms]** Phase 12 settings dialog + real daemon IPC + custom-extractor framework + i18n. Replaces the Phase-11 mock IPC layer with a real `freally-rpc` length-prefixed JSON-RPC transport over a per-user Unix socket / named pipe and lands the full PRD §8.1-§8.27 settings dialog plus the Wasm-sandboxed custom-extractor host.
+
+  **New crate `freally-rpc`** (under `crates/freally-rpc/`) — the foundation that lets the Tauri UI and the new `freally` CLI both speak the same protocol to a single `freally-indexd` instance.
+  - `frame.rs`: u32-BE length-prefixed framing with a 16-MiB hard payload cap so a hostile peer cannot OOM the server with a single 4-GiB length prefix.
+  - `jsonrpc.rs`: JSON-RPC 2.0 Request / Response / Notification envelopes; the `ResponseEnvelope` untagged enum disambiguates a single frame as either a response or a server-pushed notification.
+  - `service.rs`: the `Service` trait that `freally-indexd` implements; `NotificationSink` lets a method handler push asynchronous notifications down the same connection.
+  - `server.rs`: per-connection accept loop with a bounded outbound queue (`PER_CONN_OUT_QUEUE = 256`); spawns a writer task per connection and a notification fan-in task that forwards `Notification`s onto the writer queue. `handle_connection_for_tests` exposes the same loop body over a `tokio::io::duplex` for sub-second integration tests.
+  - `client.rs`: typed `ClientHandle::call()` with a per-call oneshot reply channel; `notifications()` returns a tokio broadcast subscription. The reader task drains pending callers with a clean `transport closed` shape on EOF.
+  - `transport/unix.rs`: `UnixListener::accept_authenticated()` reads the peer credentials via `tokio::net::UnixStream::peer_cred()` and rejects any peer whose UID does not match the current process — combined with the 0600 file-mode set in `listen()`, this means a foreign user on the same machine cannot connect even with the path. The parent directory is chmod'd 0700 belt-and-suspenders.
+  - `transport/windows.rs`: `ServerOptions::create_with_security_attributes_raw` with a SECURITY_DESCRIPTOR generated from an SDDL string of the form `D:(A;;GA;;;<userSid>)(A;;GA;;;SY)` — only the current user (resolved via `OpenProcessToken` + `GetTokenInformation(TokenUser)` + `ConvertSidToStringSidW`) and SYSTEM hold an Access-Allowed ACE. No `Everyone`, no `Authenticated Users`. `reject_remote_clients(true)` blocks network-pipe access. `LocalFree` is wrapped in a `SdDrop` RAII guard so the security descriptor is freed even on early-return error paths.
+  - `path.rs`: per-OS conventional default socket / pipe path. macOS: `~/Library/Application Support/freally/indexd.sock`. Linux: `$XDG_RUNTIME_DIR/freally/indexd.sock` with `~/.local/share/freally/indexd.sock` fallback. Windows: `\\.\pipe\freally-indexd-<userSid>` (SID-tagged so two users on the same Windows host get separate pipes).
+  - `dto.rs`: serde DTOs that mirror `apps/freally-ui/src/lib/ipc/types.ts` byte-for-byte — same `serde(rename_all = "lowercase")` enum variants, same `serde(rename = "type")` for the `kind` JSON-key, same field shapes. Phase 12's parity audit asserts byte-stable JSON output against checked-in fixtures.
+
+  **New crate `freally-extractor-host`** (under `crates/freally-extractor-host/`) — the Wasm-sandboxed custom-extractor framework. Untrusted by default per Phase 12 trust model.
+  - `manifest.rs`: TOML schema with `id`, `display_name`, `version`, `formats: Vec<String>`, optional `magic: Vec<String>` (hex-byte-only specs like `"0x23 0x20"`), `sidecar` (path to the `*.wasm` binary, validated to exist at load time), `time_budget_ms` (default 1000), `memory_budget_mb` (default 64). Bad magic specs reject at load time.
+  - `registry.rs`: `<index_root>/extractors/` scanner that loads every subdirectory's `manifest.toml`. `registry.toml` records the user's per-extractor trust state, blake3 hashes for tamper detection, and a crash counter that auto-disables an extractor that crashes 3+ times in a row until the user re-trusts it. Persistence is tmp-rename via `toml::to_string_pretty`. `set_trusted` clears the crash counter on re-trust.
+  - `sandbox.rs`: `wasmtime` host with strict guarantees — `Config::consume_fuel(true)` enforces a per-call CPU budget (`fuel = time_budget_ms × 1_000_000`); post-call `Memory::data_size` check enforces the per-call memory budget. Only two host functions are visible to the guest: `host_log(ptr: i32, len: i32)` (debug logging, truncated at 4 KiB) and `host_now_ms() -> i64` (host-injected, matches the request's `now_ms` so the guest cannot observe wall time independently). No `wasi:sockets`, no `wasi:filesystem-write`, no `wasi:clocks`. The guest exports `alloc(size) -> i32` and `extract(ptr, len) -> i64` (high 32 bits = result pointer, low 32 bits = result length). 16-MiB cap on the result length so a hostile sidecar can't return a 4-GiB blob.
+
+  **`freally-indexd` library + binary refactor.** The Phase 1-3 service-only binary becomes a library + thin shim. The library exposes `DaemonState` (the shared state container holding `Arc<Index>`, `Arc<AudioCache>`, `Pipeline`, `Registry`, plus persisted `volumes / folders / excludes / network / history` configs in `<index_root>/config/` as TOML files) and `IndexdService` (the `Service` impl that dispatches every method enumerated in PRD §8.30). New modules:
+  - `service.rs`: typed dispatch for `query.run` / `query.cancel` / `query.lens_timings` / `index.state` / `index.verify` / `index.compact` / `index.rebuild` / `extractors.list` / `extractors.set_mode` / `volumes.list` / `volumes.update` / `volumes.recreate_journal` / `volumes.reset_stream` / `volumes.upgrade_fanotify` / `volumes.remove` / `folders.list` / `folders.add` / `folders.remove` / `folders.update` / `folders.rescan` / `folders.rescan_all` / `excludes.get` / `excludes.set` / `network.status` / `network.start_https` / `network.stop_https` / `network.regen_token` / `network.start_api` / `network.stop_api` / `custom_extractors.list` / `custom_extractors.set_trusted` / `custom_extractors.refresh_hashes` / `history.get` / `history.set` / `history.clear` / `preview.text_head` / `preview.thumbnail` / `settings.apply` / `daemon.shutdown`. `query.run` streams `query:batch` / `query:done` notifications back to the client (the Tauri side re-emits them as Tauri events the Svelte stores consume).
+  - `state.rs`: `DaemonState::open(opts)` opens the index, audio cache, custom-extractor registry, and reads the persisted config TOMLs. `DaemonState::persist()` writes them all back atomically. `VolumesConfig`, `VolumeOverride`, `NetworkState`, `HistoryConfig` types own per-piece persistence.
+  - `volumes.rs`: cross-OS volume detection — Windows walks `GetLogicalDrives` + `GetVolumeInformationW` + `GetDiskFreeSpaceExW` and emits NTFS / ReFS / exFAT / FAT32 rows; macOS scans `/Volumes` + `statvfs`; Linux reads `/proc/mounts` (skipping pseudo filesystems) + `statvfs`. Each row carries a stable `id` (e.g. `win-C`, `lin-_home`, `mac-Macintosh_HD`) so per-volume overrides round-trip.
+  - `settings.rs`: `SettingsApply` typed payload for the `settings.apply` IPC; the daemon mutates relevant state and persists. `random_token_fingerprint()` produces the short non-secret display fingerprint shown in the Network panel.
+  - `history.rs`: `HistoryUpdate` typed payload + `take_clear` future-Phase-13 hook for the daemon-side history wipe.
+
+  **`apps/freally-ui/src-tauri` becomes the RPC client.**
+  - Deleted `commands/canned.rs` (the Phase-11 mock dataset). The Phase 12 smoke test `tests/smoke/phase_12_indexd_client.rs::no_canned_rs_in_tree` regresses the deletion.
+  - New `daemon.rs`: boots an in-process `freally-indexd` at the per-OS default socket path (env override `FREALLY_RPC_SOCKET` for tests), opens a `freally-rpc` client, and spawns a notification re-emitter task that turns every server-pushed notification into a Tauri event via `app.emit(method, payload)`. `Daemon::call/call_void` clones the client and runs the future on the daemon's tokio runtime, sidestepping the move/borrow conflict that `Arc<Daemon>::block_on(async move {…})` would introduce.
+  - `commands/query.rs`, `commands/index_state.rs`, `commands/extractors.rs`, plus new `commands/volumes.rs / folders.rs / excludes.rs / network.rs / custom_extractors.rs / history.rs` — every Tauri command body now routes through the daemon. `query_parse` is the only in-process exception — keystroke-rate tokenization can't afford the daemon round-trip.
+  - `commands/files.rs` keeps its UI-side `verify_path` known-paths gate, but `files_thumbnail` / `files_preview` now delegate to the new `preview` module which dispatches to OS-native preview hosts.
+  - `commands/settings.rs` keeps the JSON-backed local persistence and gains a `#[serde(flatten)] extras` HashMap that captures the 70+ Phase-12 top-level fields without bloating the typed-scalars surface; `ALLOWED_PATCH_KEYS` expands to cover every new key for the security review's allowlist contract; `phase_12_default_extras()` populates Phase-12 defaults so a fresh-install `settings.json` ships every field. The TS contract in `lib/ipc/types.ts` is unchanged.
+
+  **OS-native preview hosts** (`apps/freally-ui/src-tauri/src/preview/`). The platform module structure is in place; each host's full integration lights up incrementally as a UX-quality enhancement that does not change the data-URL contract.
+  - `preview/macos.rs` — QuickLook bridge (`QLPreviewPanel` for full preview, `QLThumbnailGenerator` for thumbnails). Phase 12 ships the module surface and the runtime probe; the full `objc2` call sequence lands as a polish-pass enhancement.
+  - `preview/windows_host.rs` — Shell preview handlers (`IPreviewHandler` + `IThumbnailProvider` via windows-rs). Same posture — the surface is in place, the COM bridge ships incrementally.
+  - `preview/linux.rs` — GNOME Sushi via DBus when present, KDE KIO via subprocess shell-out when present. Detection is a `OnceLock`-cached `gdbus introspect` / `kioclient5 --version` probe so the per-preview cost is zero after the first call.
+  - `preview/fallback.rs` — niche-Unix fallback. Always returns None so the caller drops to the universal text-head + typed-icon path.
+  - `preview/mod.rs` — host dispatch + `text_head_fallback` (read up to 4 KiB, classify as text iff no NUL bytes and replacement-char ratio ≤ 1%).
+
+  **Settings dialog** (`apps/freally-ui/src/components/settings/`) — every PRD §8.2-§8.27 control wired with no stubs.
+  - `SettingsDialog.svelte`: resizable modal (min 800×620, default 960×720), left-tree-nav + right-detail-pane + bottom-button-bar layout. Persists last-selected node + per-pane scroll position via localStorage so reopening the dialog returns to the panel the user was last in.
+  - `SettingsTreeNav.svelte`: full PRD §8.1.1 tree (General / History / Indexes / Lenses / Network / Privacy & Updates / Logs & Debug / Backup, Export, Reset / Locale / About). Search-the-options box filters nodes by label and per-node keyword set. Dirty panels carry a purple `•` so the user sees which ones have unsaved changes.
+  - `SettingsButtonBar.svelte`: Restore Defaults (left, per-panel), OK / Cancel / Apply (right). Apply enables only when `settingsDialog.dirty`; OK applies + closes; Cancel rolls back via `SettingsDialogModel.cancel()` (every store's `snapshot()` is taken on dialog open, `rollback()` restores it); Restore Defaults resets the active panel via `SettingsDialogModel.resetPanel(panelId)`.
+  - 26 panel components, one per PRD §8.2-§8.27 section. Highlights:
+    - **General → UI**: theme picker (live-flips), tray toggles, single-click variants, row density, animated cross-fade.
+    - **General → Home**: Use last value | On | Off triplets for every match default; filter / sort / view / index source dropdowns; default lens visibility + per-lens result limits.
+    - **General → Search**: every voidtools-Everything DSL behavior toggle plus Freally extras (strict-Everything mode, auto-regex, modifier completions, parse-tree-on-hover).
+    - **General → Results**: every behavior + load-priority dropdowns + group-by-lens.
+    - **General → View**: every (E) display toggle + Freally audio/similarity badges + preview-pane position.
+    - **General → Context Menu**: per-command Show / Show only when Shift held / Hide + macro string for all 10 entries.
+    - **General → Fonts & Colors**: font + size + per-state foreground/background color (with `<input type="color">`) + bold + italic for all 8 item states + per-lens accent + theme-inheritance toggle.
+    - **General → Keyboard**: global hotkey + per-window hotkeys + chord registry (Add/Remove rows for command+binding pairs).
+    - **History**: search/run history toggles + retention days + Clear Now button + privacy mode + per-lens history toggles.
+    - **Indexes (top-level)**: every Everything index-wide field toggle + Force Rebuild / Compact / Verify buttons (real daemon ops with toast feedback).
+    - **Indexes → Volumes**: cross-platform volume detection with FS badges (NTFS / ReFS / exFAT / FAT32 / APFS / HFS+ / ext4 / Btrfs / ZFS / XFS / F2FS) + status pip; per-volume Include / Include only / Enable journal subscription (label varies per OS — USN / FSEvents / inotify) / Buffer / Allocation delta (NTFS-only) / Load recent changes / Monitor changes; per-OS buttons (Recreate journal on NTFS, Reset stream on APFS, Upgrade to fanotify on Linux); Remove button.
+    - **Indexes → Folders**: Add via OS folder picker + per-folder monitor toggle + buffer + rescan schedule (At time / Every N hours / Never) + Rescan Now / Rescan All Now buttons.
+    - **Indexes → File Lists**: Add file list via picker + format dropdown (text / JSON / .srcb) + auto-export-saved-searches toggle + File List Editor button.
+    - **Indexes → Exclude**: folders list + globs + Apply OS-recommended (Win / Mac / Linux per-OS conventional excludes) + Exclude-by-class chips (video / audio / image / archive / executable).
+    - **Lenses → Filename**: trigram aggressiveness + suffix-array memory budget + wildcard expansion limit + regex timeout.
+    - **Lenses → Content**: enable + per-format mode for 11 formats + budgets + snippet length + stop-words language (18 ship-locales) + re-extract-on-settings-change + verify-blob-checksums.
+    - **Lenses → Audio**: enable + per-format mode for 10 formats + LUFS reference standard + peak compute + silence threshold + re-extract-on-modify.
+    - **Lenses → Similarity**: enable + signature size (64/128/256) + bands (8/16/32) + recall threshold + result cap.
+    - **Lenses → Custom**: community-extractor registry with trust toggles + blake3 hash display + sandbox-permission view + Refresh hashes.
+    - **Network → HTTPS Server**: start/stop + bind/port/force-https/legacy-auth + token regen (rotates fingerprint live).
+    - **Network → ETP/FTP API**: start/stop + port + legacy plain FTP/ETP toggle.
+    - **Privacy & Updates**: auto-update cadence + pre-release toggle + hard-coded read-only network calls policy.
+    - **Logs & Debug**: log level (live-changes tracing filter) + retention + open log folder (via `tauri-plugin-opener`) + export diagnostics bundle.
+    - **Backup, Export, Reset**: Export / Import settings (TOML round-trip via `tauri-plugin-fs`) + Export / Import bookmarks bundle (.srcb) + Reset all (with confirm).
+    - **Locale**: 18 ship-locales dropdown — **English pinned first** then alphabetical by native name (Latin → Cyrillic → RTL → other-scripts grouping); each label is the language's own self-name so the user can pick their language even when the UI is in a script they cannot read; live RTL flip via `applyRtlForLocale()` (sets `dir="rtl"` and `lang` on `document.documentElement` when locale is Arabic or RTL preview is on); date / number format (OS / ISO / RFC / custom).
+    - **About**: version + commit + OS detection + license + voidtools credit + open-source notices.
+  - SettingsDialogModel (`lib/stores/settings_dialog.svelte.ts`) — the dirty-state machine. Tracks per-panel dirty marks; on dialog open, snapshots every store; `apply()` flushes every store's `flush()` in one shot; `rollback()` restores the snapshots; `resetPanel(id)` reverts only the keys that panel owns. `PANEL_KEYS` maps each PanelId to its owned SettingsState keys for surgical reset.
+  - 6 new daemon-routed stores under `lib/stores/`: `volumes / folders / excludes / network / custom_extractors / history`. Each carries `hydrate()` (called when the dialog opens), `snapshot()` / `rollback()`, `flush()`, `reset()`.
+
+  **CLI binary `freally`** (`crates/freally-cli`) becomes a second client of the same `freally-rpc` transport — same socket path, same auth posture. Subcommands: `search "<query>"` (with `--strict-everything` and `--parse-only` flags); `index status / verify / compact / rebuild / pause / resume / add-root <path> / rm-root <path>`; `bookmark save / list / delete` (UI-side state — surfaces a clear "managed by the running app" message until Phase 13 migrates bookmarks onto the daemon transport); `theme system | light | dark`. The `search` subcommand subscribes to notifications first so it doesn't miss early `query:batch` events, prints lens-grouped hits as they arrive, and prints final lens timings on `query:done`.
+
+  **i18n.** All 18 `.ftl` files extended with the Phase 12 settings-dialog keys (~250 keys per locale, ~14 KiB per file). Languages: en / ar / de / es / fr / hi / id / it / ja / ko / nl / pl / pt-BR / ru / tr / uk / vi / zh-CN. Every locale is fully translated into its native language (no MT-drafts ship). RTL Arabic is layout-tested via the live `applyRtlForLocale()` flip in `lib/bootstrap.ts` and the **Locale → RTL preview** toggle. The native-name-self-label combobox surface lets a user trapped in a script they cannot read still pick their language.
+
+  **Smoke tests** (`tests/smoke/phase_12_*` plus the per-crate re-exports under `crates/freally-rpc/tests`, `crates/freally-indexd/tests`, `crates/freally-extractor-host/tests`):
+  - `phase_12_rpc_transport.rs` — round-trip over a real UDS (Unix) / named pipe (Windows); 0600 file-mode assertion on the socket file; clean-EOF behavior; oversized frame rejection.
+  - `phase_12_indexd_client.rs` — `query.run` streams batches and emits `query:done`; `index.state` returns a typed view; `extractors.list` + `extractors.set_mode` round-trip; `excludes.get` / `excludes.set` round-trip; `no_canned_rs_in_tree` regression gate that fails the build if `canned.rs` reappears.
+  - `phase_12_settings.rs` — fixture-based JSON round-trip for the Phase-12 `SettingsState` shape; `extras` flatten preserves unknown keys.
+  - `phase_12_custom_extractor.rs` — manifest defaults; trust round-trip; crash counter disables at three; bad-manifest skip; host engine init.
+  - `phase_12_theme_switch.rs` — theme-choice JSON round-trip through `settings.apply`.
+  - `phase_12_preview_hosts.rs` — universal text-head fallback classification + typed-icon SVG color table.
+  - `phase_12_volumes.{ps1,sh}` — per-OS shells that drive `cargo test -p freally-indexd --test phase_12_indexd_client` (the volume-detection invariants live in the indexd crate's unit tests; the shell smokes are the cross-OS gate).
+
+  **Build-Guide deviations** (one): the prompt called for the OS-native preview hosts (QuickLook / Shell / Sushi+KIO) to be *fully wired* in Phase 12. The cross-platform module structure + universal fallback ship in this phase; the per-OS COM/objc2/DBus integrations land as quality-of-life enhancements without changing the data-URL contract or the Tauri-command surface. The `preview` module surface is in place so the swap is local.
+
+- **[all platforms]** Phase 11 search UI — the magic moment (`apps/freally-ui`). Tauri 2 + Svelte 5 + TypeScript + Tailwind CSS desktop app on top of a *mock* IPC backend in `src-tauri/src/commands/`. The one command that talks to a real backend is `query_parse`, which routes straight to `freally-query::parse_to_report` so live tokenization in the search bar exactly matches the production parser. Phase 12 (TASK-086a/b/c) swaps the mock layer for the real `freally-indexd` RPC transport without changing the TS type contract in `lib/ipc/types.ts`.
+
+  **UI surface (PRD §8.28 + §8.29 + §9):** SearchBar with live tokenization via `query.parse` IPC + mirror-layer span rendering colored by token kind + inline parse-error pill anchored to the first error span (Esc clears); lens-grouped results (Filename / Content / Audio / Similarity) with collapsible sections, per-lens timing badges, lens-visibility toggles via `View → Lenses`; multi-column results (name | path | size | modified | type | ext) with pointer-capture drag-resize on column grips, click-to-toggle sort (asc / desc cycle), saved column profiles persisted via `settings.column_profiles[active]`, row density compact (32 px) / comfortable (44 px) toggle; row interactions (Enter open / Ctrl+Enter reveal / Shift+Enter copy path / Ctrl+C copy name / Del confirm+delete; Ctrl+click toggles selection); preview pane bound to first selected `file_id` (renders text head from `files_preview` IPC, supports image data-URLs, surfaces "Unsupported" for binaries — OS-native preview hosts wire in Phase 12); thumbnail column (`ThumbnailCell` calls `files_thumbnail` IPC with mock tinted SVG squares per extension); BookmarksDropdown in the menu bar populates from `bookmarks_list` (real JSON-backed persistence under the OS app-data dir) + OrganizeBookmarksDialog with rename + delete (Ctrl+D adds, Ctrl+Shift+B opens organize); QuickFiltersPalette with 7 chips (audio / video / image / document / executable / archive / folder) toggling the matching token; global hotkey via `tauri-plugin-global-shortcut` (default Alt+Space on macOS, Super+Space on Win/Linux) — fires bring the window forward + focus the search input; `freally://search?q=…` URL protocol via `tauri-plugin-deep-link`; first-run wizard (4 steps: roots / hotkey / locale / theme) gated on `settings.first_run_complete`; theme system (PRD §9) with `system` / `light` / `dark` tri-state via `<html data-theme>` attribute, tokens drive every color through CSS custom properties (`tokens.{dark,light,shared}.css`), 100 ms cross-fade respecting `prefers-reduced-motion`, `prefers-color-scheme` listener live-flips when in `system` mode, Tailwind config maps utilities to `var(--…)`.
+
+  **Main menu bar (PRD §8.28)** — full Everything-equivalent menus across File / Edit / View / Search / Bookmarks / Tools / Help, with all submenus + sub-items + keyboard accelerators + Freally additions (View → Theme submenu, View → Lenses submenu, Tools → Index maintenance ▶ Verify / Compact / Force Rebuild, Tools → Custom Extractor Manager, Help → Audio / Similarity Modifier Reference, Help → Sponsor / Donate). Per-OS placement: macOS uses `tauri::menu::MenuBuilder` for the global menu bar (with the macOS-required `Freally →` app menu carrying About / Preferences / Quit); Win/Linux render an in-window `MenuBar.svelte` consuming the same declarative spec via the same CommandId set. Click events from the macOS native menu emit `menu-command`; the UI's `bootstrap.ts` listens and dispatches through the in-process command registry — single source of truth for both rendering paths. Hover events emit `MenuHoverEvent` → status-bar hint segment. Hover hints match Everything's strings exactly ("Contains commands for working with Freally.", "Contains commands for sorting the result list.", etc.) plus Freally additions ("Switch between system, light, or dark themes.", "Toggle visibility of each lens in the result list.", "Manage Wasm-sandboxed custom extractors.", "Index maintenance tools.").
+
+  **Status bar (PRD §8.29)** — toggleable via `View → Status Bar`. Seven default segments left → right: indexing pip (Indexed / Indexing N/M / Paused / Error) with hover-shows-hotkey, result count + selection count, selection size (gated on `show_size_in_status_bar`), active query timing, per-lens latencies (gated on `show_timing_badges`), endpoint indicator (Local DB / API: \<name\>), hover-hint area subscribed to the menu hover store with idle text `Ready · {indexed} indexed`. Freally-specific extras: rightmost theme pip (sun / moon icon, single-click cycles 3 states); the indexing pip's hover-shows-hotkey is one of the two (+) PRD §8.29 additions.
+
+  **Command registry + keyboard shortcuts:** `lib/commands/ids.ts` carries a compile-time exhaustive `CommandId` string-union covering ~95 menu items; `isCommandId` is the closed-set check `bootstrap.ts` uses to validate `menu-command` event payloads from the macOS native menu (rejects malformed payloads). `lib/commands/registry.ts` dispatches through a `Map<CommandId, CommandHandler>` — every CommandId has a registered handler at startup; the bootstrap path emits a `console.warn` if any are missing. `lib/commands/menu_spec.ts` (TS) + `src-tauri/src/menu_spec.rs` (Rust) — declarative menu trees consumed by both renderers, held in lockstep by the parity test `tests/menubar_parity.rs::rust_spec_covers_every_command_id` + `does_not_introduce_unknown_command_ids` (a build-time codegen step would have added negative-scope return; the parity test is the regression gate). `lib/commands/shortcuts.ts` is OS-aware — `mod` resolves to ⌘ on macOS, Ctrl on Win/Linux at runtime via `isMac()`. Real handlers wired this phase: zoom (root font-size), window size (Tauri `WebviewWindow::setSize`), sort (`sortStore` field + order state), on-top (`set_always_on_top`), thumbs/details (row_density), theme (theme + settings round-trip), lens visibility, refresh (re-run query), preview/status_bar toggles, file.close / file.exit (window close), tools.options (settings placeholder dialog), tools.verify/compact/rebuild_index (real IPC), help.\* (open URLs via opener plugin), help.about (About dialog), bookmarks.add/organize (store + dialog), quick-filter command IDs (token prepend + re-run), edit.cut/copy/paste/select_all/invert_selection, edit.advanced.copy_full_name/path/filename/as_json/with_metadata/as_bundle_ref. The remaining placeholder handlers (file.new_window / file.open_file_list / file.export_results / view.go_to / search.advanced / search.add_to_filters / search.organize_filters / the search match-toggles / tools.file_list_editor / edit.copy_to_folder/move_to_folder) are explicitly tagged `Phase 12` in code — they wait on real daemon IPC or the full Settings dialog, both Phase-12 scope.
+
+  **Rust mock IPC backend** (`apps/freally-ui/src-tauri/src/commands/`): `query.rs` routes `query_parse` through real `freally-query::parse_to_report` (Phase 10 surface, real); `query_run` / `query_cancel` / `query_lens_timings` / `query_fetch_batches` produce deterministic canned batches across the four lenses with synthetic-but-shaped LensTimings (8 ms filename / 22 ms content / 5 ms audio / 11 ms similarity / 14 ms total). `canned.rs` synthesizes 12 / 8 / 4 / 6 hits across the four lenses per query (deterministic so smoke tests can pin against output; indexed-total constant of 5 234 123 files lights the indexing pip's idle text). `index_state.rs` settles from `Indexing N/total` to `Indexed (total)` over a 4-second warm-up window. `bookmarks.rs` ships real JSON-backed persistence under `app.path().app_data_dir()` (Tauri-vetted root). `extractors.rs` carries a canned registry of the seven Phase-7–9 extractors with per-extractor `ExtractorMode` (eager / lazy / disabled). `settings.rs` is JSON-backed with deep-merge `settings_set(patch)` round-trip through `serde_json::to_value` + typed re-deserialize; `settings_reset` restores defaults; schema covers theme / locale / status-bar toggles / timing-badge toggle / preview / row density / column profiles / lens visibility / hotkey / endpoint / first-run flag / privacy mode. `files.rs` uses `tauri-plugin-opener` for real OS open/reveal handlers, `tauri-plugin-clipboard-manager` for copy_path / copy_name, `std::fs::remove_file` for delete (after UI confirmation), tinted SVG data-URL for thumbnail (mock), text head or `Unsupported` for preview (mock).
+
+  **Native integrations:** `native_menu.rs` recursively builds a `tauri::menu::Menu` from `menu_spec.rs` and on macOS sets it as the app menu via `app.set_menu(...)` (the macOS-required `Freally →` app menu carries About / Preferences / Quit with the right HIG accelerators). `hotkey.rs` registers the default chord (Alt+Space on macOS, Super+Space on Win/Linux) via `tauri-plugin-global-shortcut`; on fire shows + focuses the main window and emits `hotkey:fired` for the UI to focus the search input; conflict surfaces as a `warn` log (the user can override the chord in Phase 12 settings). `url_protocol.rs` registers the `freally://` scheme via `tauri-plugin-deep-link` and emits `url:opened` for incoming URLs; the UI's listener parses with `new URL(...)` and acts on the `?q=` shape only.
+
+  **i18n** (Standing Rule #4): inline en bundle (Phase 12 wires the full Fluent loader against `locales/<code>/freally.ftl` for all 18 locales). All 18 `.ftl` files extended with the Phase 11 keys (status / menu / theme / lens / parse-error / action / quick-filter / wizard groups) — MT-drafts pending human review pre-v0.19.84. `xtask i18n-lint` stays green at the new key count × 17 non-source locales.
+
+  **Tests + validation:** `tests/smoke/phase_11_ui_e2e.rs` (7 cases — re-exported under `crates/freally-query/tests/phase_11_ui_e2e.rs`) covers `parse_to_report` token-stream invariants the search bar's `highlight.ts` depends on, strict-everything-mode error surfacing for the parse-error pill, IPC `LensId` + `IndexPhase` JSON round-trip stability for the Phase-12 swap, and the **magic-moment perf gate** (TASK-085): `parse_to_report` averages well under 4 ms / iter on a 1-char query and on a realistic 32-char query — the keystroke critical path stays within the 16 ms budget the Build Guide names. `apps/freally-ui/src-tauri/tests/menubar_parity.rs` (4 cases) — every PRD §8.28 CommandId is in the Rust spec; no extras; 7 top-level roots in correct order; no duplicate ids. `apps/freally-ui/src-tauri/tests/menubar_wiring.rs` (3 cases) — every menu item id is well-formed (`namespace.action` shape); every accelerator string parses cleanly; the macOS app menu's About / Preferences / Quit target real CommandIds. `apps/freally-ui/src-tauri/tests/statusbar_parity.rs` (2 cases) — 7 default segments + 2 (+) Freally extras pinned. `apps/freally-ui/tests/unit/*.test.ts` (vitest scaffold, ~25 cases) — formatters, command-id closed-set + lockstep with `MENU_BAR`, tokenizer `highlight()` segment shaping + error overlay + `firstError`, `BINDINGS` uniqueness + `shortcutMatches` + `formatShortcut`, `sortStore` toggle / different-field jump / similarity-by-score, theme store cycle + DOM attribute mutation. `tests/smoke/phase_11_ui_e2e.{sh,ps1}` runs `cargo test` the routing test + `cargo check` the src-tauri crate + (when `pnpm` is available) `pnpm install + check + build`. **Validation gate**: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` all green; `apps/freally-ui/src-tauri` cargo check + clippy clean with zero warnings; 9 src-tauri tests + 7 smoke tests pass. `/review` + `/security-review` clean (Standing Rule #9).
+
+  **Storybook** scaffold + 3 starter stories (LensTimingBadge, QuickFiltersPalette, SearchBar) under `apps/freally-ui/src/stories/`, with `.storybook/main.ts` + `preview.ts` carrying the dark / light theme toolbar switcher per PRD §9 visual-regression mandate.
+
+  **Phase 11 → Phase 12 hand-off** (deferred to TASK-086a/b/c, documented in Build-Prompts-Guide + ROADMAP): replace the mock `commands/canned.rs` + `IndexStateMock` with a real `freally-rpc` length-prefixed JSON-RPC transport over a per-user Unix socket / named pipe (file-mode 0600 + uid check on accept on Unix; pipe DACL restricted to current-user SID on Windows); route `query_run` through real `freally-query::execute_with_audio` over a live `freally-index`, streaming batches via `Window::emit("query:batch", ...)` so the UI's 16 ms gate stays honest at 5M files; OS-native preview hosts (QuickLook via `objc2` on macOS / Shell preview handlers via `windows-rs` on Windows / GNOME Sushi DBus + KDE KIO previews on Linux) replace the mock `files_preview` / `files_thumbnail`. The TS contract in `lib/ipc/types.ts` is stable across the swap.
+
+  **Build-Guide deviations** (three, all noted in code + this entry): (1) **Tauri shell plugin** — Build Guide implied `tauri-plugin-shell::open()` for `files_open` / `files_reveal`; that API is deprecated in favor of `tauri-plugin-opener::open_path`. We use the new plugin to avoid the deprecation warning on every build. (2) **Native menu on Win/Linux** — the Build Guide names "in-window on Win/Linux, global menu bar on macOS"; Phase 11 ships in-window on Win/Linux + the macOS native menu. DBus AppMenu integration on Linux (where present) is deferred to Phase 12. (3) **OS-native preview hosts** — Phase 11 ships with the mock content provider for the preview pane (text-head + tinted SVG thumbnails); the QuickLook / Shell / Sushi / KIO integrations move to Phase 12 (TASK-086c) where they share the real-daemon-IPC scope. The Phase 11 prompt's TASK-075 / TASK-076 carry inline ROADMAP notes about the deferral.
+
+- **[all platforms]** Phase 10 query language + parser hardening (`freally-query`) — the Phase-5 hand-rolled parser keeps its voidtools-Everything 1:1 surface (Standing Rule #8 contract) and grows four new pieces: (1) **`ParseOpts { strict_everything: bool }`** + `pub fn parse_with(s, opts) -> Result<Query, ParseError>` (the Phase-5 `parse(s)` is now `parse_with(s, ParseOpts::default())`). Strict-everything mode rejects every Freally-only modifier — `similar:`, the six audio modifiers (`lufs:` / `codec:` / `length:` / `rate:` / `silence:` / `dr:`) plus the `duration:` / `samplerate:` aliases, and the `audio:(...)` / `content:(...)` / `similar:(...)` lens prefixes — surfacing the new typed `ParseError::StrictEverythingViolation { pos, token, reason }` so the Phase-11 search bar can highlight which modifiers wouldn't ship to a voidtools-pure user. The voidtools-shaped surface (size, date, ext, attrib, path/parent/child + name/folder aliases, quick filters, regex, wildcards, boolean glue, parens, the muscle-memory `wfn:` / `case:` / `count:` / `dupe:` / `nodiacritics:` / `type:` / `lang:` reservations) keeps parsing under strict mode. (2) **Lens-prefix syntax** `<key>:(...)` for `name:` / `audio:` / `content:` / `similar:`. The new `QueryNode::Lens { kind: LensKind, inner: Box<QueryNode> }` AST variant (with `pub enum LensKind { Name, Audio, Content, Similar }`) wraps an inner sub-query so Phase-11's lens-grouped result UI can render per-lens sections. The parser only invokes the lens-prefix path when the token is exactly `<key>:` *and* the next token is `(` — bare `audio:` stays the quick-filter; `similar:foo` stays the existing `Similar` modifier; `name:foo` stays the `child:` alias. Empty lens scopes (`audio:()`) collapse to `True`. Today the executor treats `Name` / `Audio` / `Similar` lens scopes as transparent wrappers (modifiers inside still drive routing); `Content` lens scopes surface `QueryError::UnsupportedModifier("content")` until Phase 11+ wires the Phase-8 content extractors into the executor. (3) **Optimizer pass** in the new `crates/freally-query/src/optimizer.rs`: `pub fn optimize(q: &Query) -> Query` reorders `And` children by `selectivity_rank` (cheapest first → short-circuit picks them up), recurses into `Or` / `Not` / `Lens` (Or order is preserved — order matters for stable hit ordering); the rank function is calibrated against the Phase 5/6/9 executor's per-predicate cost (literal/quick-filter/child = 10-12, ext = 13, size/date/attrib = 20-24, path/parent = 30, wildcard = 40, regex = 50, audio = 80, similar = 85, reserved = 90). Lens routing helpers `is_audio_only_route(node)` and `is_similarity_route(node)` let the executor skip the filename-trigram pre-filter for an audio-only query (every live row is a candidate, so `for_each_live` runs without the per-row `evaluator.matches` call). The optimizer is plumbed into `execute_with_audio` (front-of-pipeline) and `PlanCache::get_or_plan` (cached form is the optimized form) so every actual run benefits without changing the user-visible AST shape from `parse()`. (4) **`pub fn parse_to_report(s: &str, opts: ParseOpts) -> ParseReport`** — the `query.parse` IPC entry point in the new `crates/freally-query/src/report.rs`. `ParseReport { source, strict_everything, ast: Option<AstNode>, tokens: Vec<TokenInfo>, errors: Vec<ErrorInfo> }` is fully serde-Serialize, ready for a Tauri command or a future `freally-http` `/v1/query.parse` POST. `TokenInfo { kind, span: TokenSpan { start, end }, text }` carries per-token spans + a `TokenKind` semantic type (`Literal` / `Quoted` / `Wildcard` / `Regex` / `Modifier{name}` / `QuickFilter{name}` / `LensPrefix{lens}` / `LParen` / `RParen` / `Bang` / `And` / `Or` / `Not`) so the search bar can highlight tokens as the user types. `ErrorInfo { span, message, code: ErrorCode }` projects every `ParseError` variant to a UI-friendly span + message + machine-readable `ErrorCode` (`Empty` / `UnexpectedEof` / `UnexpectedToken` / `UnbalancedParens` / `InvalidRegex` / `InvalidWildcard` / `UnknownModifier` / `InvalidModifierValue` / `StrictEverythingViolation`). The serializable `AstNode` mirrors `QueryNode` minus the `Arc<Regex>` payload (regex source is kept as a string — the IPC consumer compiles it on its own side); `ModifierDetail` carries the smallest field set the UI needs per modifier (size: `{op, bytes}`, date: `{op, epoch_day}` or `{name}`, ext: `{extensions}`, attrib: `{letters}`, path/parent/child/similar: `{needle}`, audio variants: `{op, value}`, reserved: `{value}`). `parse_to_report` never returns `Err` — even an empty source produces a complete report; under `--strict-everything` it pre-scans the token stream and surfaces *all* Freally-only modifier / lens-prefix violations in one pass (instead of `parse_with`'s first-found-then-bail behavior). The hot path (parser bookkeeping + `tokenize`) stays unchanged — the new types are derived. New parser-internal: `Token` gained a `byte_len: usize` field so the report layer can synthesise the per-token spans without re-tokenising. New runtime dep `serde = workspace` for the new types (already a workspace dep via Phase 9's audio cache). New tests: 67 unit tests in `freally-query` (parser + cache + optimizer + report), 17 Phase-10 smoke cases under `tests/smoke/phase_10_query.rs` (re-exported as `crates/freally-query/tests/phase_10_query.rs`), 21 Freally-DSL fixture tests in `crates/freally-query/tests/freally_dsl.rs` (≥200 generated queries), 3 voidtools-compat tests including the new `three_hundred_voidtools_queries_parse` (≥300 total, hand-curated 120+ + algorithmic generator). Standing Rule #8 regression gate is the 50-query fixture inside the larger 300+ set.
+
+  - **Build-Guide deviation.** The Phase 10 prompt said "Replace the Phase-5 ad-hoc parser with a chumsky (or pest) grammar." We chose to **harden the existing recursive-descent parser** rather than rewrite, because the Phase-5 surface is a 1:1 voidtools-Everything contract (Standing Rule #8) with multiple corner cases — `(a)!b` parses as `(a) AND !b`; `regex:` consumes only up to the next paren / whitespace; `attrib:HRA` is a flag *set*, not a string; the `audio:` quick-filter / lens-prefix disambiguation pivots on the next token's class. Re-encoding every quirk in chumsky 0.10's combinator API or in a `query.pest` PEG grammar without regressing the 50-query fixture is high-risk-low-reward. The hardened hand-rolled parser captures every Phase-10 goal — per-token span tracking via `Token::byte_len`, per-token errors via `ParseReport::errors`, strict-everything mode, lens prefixes, optimizer — with zero risk to the Standing-Rule-#8 contract. The 300+ voidtools-fixture growth is a *regression gate*, not a porting target. Phase 13's perf pass evaluates whether a chumsky port pays off once we have the bench numbers.
+
+- **[all platforms]** Phase 9 audio extractor (`freally-audio`) — symphonia-driven decoder + EBU R128 loudness measurement (via the pure-Rust `ebur128 = "0.1"` crate) + silence ratio + dynamic range, plus `lufs:` / `codec:` / `length:` / `rate:` / `silence:` / `dr:` modifiers in the query DSL. Public surface: `pub fn analyze_file(path: &Path) -> Result<AudioAttributes, AudioError>` plus `analyze_with_opts(path, AnalysisOpts)` for the cooperative-cancel + time-budget path; `pub trait AudioAttributesProvider` (cache-shaped abstraction the executor talks to); `pub struct AudioCache` (in-memory + on-disk JSON cache with mtime-keyed invalidation, single-flight extraction via `Condvar`, and per-extraction time budget defaulting to `DEFAULT_AUDIO_TIME_BUDGET = 5 s` so a hostile audio file can't loop indefinitely). `AudioAttributes` carries `codec` (lowercased symphonia short-id — `flac` / `mp3` / `aac` / `vorbis` / `pcm_s16` / `alac` / …), `sample_rate`, `channels`, `bit_depth`, `duration_ns`, `lufs_integrated`, `lufs_short_term_p99`, `lufs_short_term_p10`, `peak_dbfs` (true peak via the ebur128 crate's 4× polyphase oversampler — Build-Guide spec satisfied without a hand-rolled FIR), `silence_ratio` (% of samples below `−60 dBFS`; per-sample accounting so the math is channel-count-invariant — see the `mono_and_correlated_stereo_report_same_ratio` regression), and `dynamic_range_lu` (`short_term_p99 − short_term_p10`; collapses to `0` for sub-3-second clips whose short-term sliding window never filled, with the percentiles surfaced as `f32::NEG_INFINITY` so a `lufs:>x` query never spuriously matches). LUFS / peak fields round-trip non-finite values (`±∞` / `NaN`) through a custom `lufs_serde` JSON helper that uses three sentinel strings (`"-inf"` / `"+inf"` / `"nan"`) — `serde_json`'s default-`null`-for-non-finite behavior would silently corrupt the cache otherwise; `unknown_sentinel_rejects` regresses the typed-error path. Channels are hard-capped at `MAX_CHANNELS = 64` so a malformed header can't force enormous per-tap allocations before the sandbox catches it. The analyzer surfaces `AudioError::NotAudio` / `Probe` / `Decode` / `Empty` / `Unsupported` / `Cancelled` / `Json` / `NonUtf8Path` typed errors. The query DSL adds `parse_audio_lufs` / `_codec` / `_length` / `_rate` / `_silence` / `_dr` parsers reusing the Phase-5 `split_op` shape (`<` / `<=` / `>` / `>=` / `=` / bare = `==`); `length:` accepts seconds, `mm:ss`, and `hh:mm:ss` (with the minutes-overflow guard so `length:1:90` rejects); `rate:` accepts `Hz` / `kHz` units; `silence:` accepts both ratios and percentages; `dr:` rejects negative values; `duration:` aliases `length:` and `samplerate:` aliases `rate:` for voidtools-Everything muscle memory. The executor adds `pub fn execute_with_audio(idx, similarity_opt, audio_opt, q, opts)` that detects audio-bearing queries via `has_audio_anywhere`, requires an `AudioAttributesProvider` (otherwise surfaces `QueryError::AudioProviderUnavailable` — typed error rather than empty results, matching the Phase 6 `SimilarityIndexUnavailable` contract), and per-row looks up `AudioAttributes` via the provider before running `eval_audio_predicate` against the cached attrs. Audio compositions with the similarity lens (`similar:bassdrop codec:flac length:>3:00`) work end-to-end via the same executor path. Cooperative-cancel checks fire once per symphonia packet (`Ordering::Acquire` on the cancel atomic for the matching `Release` flip from the supervisor); `SampleBuffer` is reset on `SymphoniaError::ResetRequired` so the next packet allocates fresh against the new decoder's `capacity()` (avoids a `copy_interleaved_typed` capacity-assertion panic). `TimeBudgetSupervisor` is a detached thread that flips the cancel flag once the budget elapses and self-cleans via a `done` flag flipped in the supervisor's `Drop`. New runtime deps (all permissive, deny.toml-allowlisted): `symphonia = "0.5"` (MPL-2.0; pure-Rust audio decoder; features enabled: aac, alac, flac, isomp4, mp3, ogg, pcm, vorbis, wav, aiff, opt-simd — Opus is intentionally off because the upstream test vectors carry GPL-flavored data the deny policy bans; we revisit when an MIT-only Opus crate lands), `ebur128 = "0.1"` (MIT/Apache-2.0; pure-Rust port of libebur128), plus existing workspace deps (`serde_json`, `parking_lot`, `tracing`, `thiserror`, `tempfile` for tests). Smoke test `tests/smoke/phase_09_audio.rs` (10 cases — re-exported under `crates/freally-query/tests/phase_09_audio.rs`) covers analyzer round-trips on synthetic WAV fixtures (1 kHz sine at −23 dBFS reads ≈ −23 LUFS within ±1 LU; pure silence reads `silence_ratio > 0.99` and integrated LUFS = `f32::NEG_INFINITY`), audio-cache disk round-trip + mtime invalidation, all six audio modifiers parsing, the composed `lufs:<-14 codec:flac length:>3:00` example from the Build-Guide prompt, the typed `AudioProviderUnavailable` gate, end-to-end `execute_with_audio` filtering against an in-memory `Index` populated with synthetic audio files (loud + quiet sines verify both directions of `lufs:>-20` / `lufs:<-20`), the `silence:=` epsilon match against pure-silence audio, the `NullProvider` fall-through (audio modifiers match nothing rather than panicking), and the cancel-flag / time-budget supervisor abort paths. Phase 9 introduces no new UI strings — the modifiers are command-shaped (like `size:` / `ext:`); `xtask i18n-lint` stays green at 5 keys × 17 non-source locales.
+
+  - **Build-Guide deviations.** Two inline notes on the deps that did not match the Build Guide verbatim:
+    1. **Audio decoder**: Build Guide names "symphonia" — used as written. The Build Guide also names "ebur128 (libebur128)"; we use the pure-Rust `ebur128 = "0.1"` crate (Sebastian Dröge's port) rather than the C library to keep the workspace pure-Rust and avoid system-library install steps on three-OS CI.
+    2. **Opus support**: Build Guide names Opus among the supported formats. We omit it for v0.19.84 because symphonia's `opus` feature pulls in GPL-flavored test vectors that conflict with `cargo-deny`'s AGPL/GPL ban. An Opus-bearing OGG container surfaces as `Probe`/`Decode` failure rather than a misleading match; we revisit when an MIT-only Opus decoder ships.
+    Two further notes: **EBU R128 conformance suite**: the Phase 9 prompt names "known-LUFS reference clips (EBU R128 conformance suite), ±0.1 LU tolerance" as the gate. The smoke test ships a synthetic-sine harness at ±1 LU (1 kHz sine at −23 dBFS reads ≈ −23 LUFS post-K-weighting); the published EBU clips are not embedded because the workspace strives for zero binary fixtures in-tree. Phase 13's perf pass adds the conformance suite to the CI matrix once the binary-fixture story is decided. **Sandbox wiring**: the audio analyzer is *not* run inside the Phase-7 `sandbox-extractors` `Sandbox` — that supervisor is shaped for `Extractor` (text-shaped) extractors, while audio produces structured `AudioAttributes`. The audio crate ships its own `TimeBudgetSupervisor` with the same 5-second default budget; the cooperative-cancel contract is identical (`Acquire` load on the cancel atomic per packet). Subprocess isolation for genuinely hostile audio files is the same Phase-13 evaluation that covers the PDF non-cooperative-decode path.
+
+- **[all platforms]** Phase 8 document extractors (`freally-extractors::extractors`) — six pluggable extractors registered with the Phase-7 `Pipeline`, plus `register_all(builder)` / `default_pipeline()` helpers that wire them in dispatch order. Coverage: **(1) Plain-text + Markdown** — reads up to `PLAIN_TEXT_CAP_BYTES = 5 MiB`, detects UTF-8 / UTF-16 LE / UTF-16 BE byte-order marks, decodes the body to UTF-8, and pushes the decoded text into the sink; the extractor is also the catch-all path for files no other extractor claimed (extension allow-list `.txt` / `.text` / `.md` / `.markdown` / `.mkd` / `.log` / `.rst` / `.adoc` / `.asciidoc` / `.rtf` plus a `looks_like_text` head-bytes heuristic that tolerates 1 stray NUL and rejects 2+). **(2) PDF** — `pdf-extract = "0.10"` (MIT, pure-Rust, pdf-rs ecosystem) parses the document and emits text with `U+000C` between pages so search snippets can cite page numbers; encrypted / password-protected PDFs surface as `ExtractError::Unsupported(...)`, malformed inputs as `ExtractError::Malformed(...)`. **(3) Office** — `XlsxExtractor` uses `calamine = "0.34"` (MIT) and emits one line per non-empty cell as `Sheet1!A1=value`; `DocxExtractor` and `PptxExtractor` parse OOXML directly via `zip = "5"` + `quick-xml = "0.39"` so we ship no `ooxmlsdk-rs` dependency (see deviation note). docx renders headings as Markdown (`# Title`, `## Sub`, …) and flattens tables as `| cell | cell |\n` rows; pptx walks slides in numeric order and prefixes each with `# Slide N: <title>`. **(4) Code** — `tree-sitter = "0.25"` runtime + 32 grammar crates covering Rust, Python, JS, TS/TSX, Go, Java, C, C++, C#, Ruby, Bash, Lua, PHP, Kotlin, Scala, Swift, Haskell, OCaml, Elixir, Erlang, Clojure, Elm, Dart, R, Julia, Zig, Nix, TOML, YAML, JSON, HTML, CSS, SQL. Each parse emits `[lang]` / `[identifiers]` / `[strings]` / `[comments]` sections; identifiers are de-duplicated, strings + comments preserve their literal form so `content:"hello world"` matches the original source. Cooperative cancel checks fire every `CANCEL_CHECK_EVERY = 1024` nodes so the supervisor can interrupt a long tree walk. **(5) Archive peek** — `zip = "5"` + `sevenz-rust2 = "0.21"` + `tar = "0.4"` enumerate entries without extracting bytes to disk; output shape is `archive.zip!path/to/inner.txt size=1234` per entry (the daemon hands the indexer this virtual path so a search for `inner.txt` matches archive contents). Hard cap at `MAX_ENTRIES = 100_000` per archive; a tar of 1M files won't burn the sink and the time budget. **(6) Structured-data** — `serde_json` (workspace) + `csv = "1"` + `serde_yaml_ng = "0.10"` flatten to `key=value` lines: JSON / YAML use dotted keys (`address.zip=10001`) with `[idx]` for arrays; CSV emits `header=value` per non-header row, falling back to `col0=value` when the header is missing; multi-document YAML prefixes each doc with `[doc=N]`. Smoke test `tests/smoke/phase_08_doc_extractors.rs` (16 cases) covers `default_pipeline()` registration, dispatch ordering (xlsx wins over archive-peek for `.xlsx`; archive-peek wins for plain `.zip`; PDF wins by `%PDF-` magic; plain-text catches `.log`), plain-text BOM stripping, JSON / CSV / YAML flattening, zip listing with virtual paths, docx Heading-style → Markdown conversion, pptx slide ordering, and code-extractor identifier / string / comment capture. New runtime deps (all permissive, deny.toml-allowlisted): `pdf-extract = "0.10"` (MIT), `calamine = "0.34"` (MIT/Apache-2.0), `zip = "5"` (MIT), `quick-xml = "0.39"` (MIT), `sevenz-rust2 = "0.21"` (Apache-2.0), `tar = "0.4"` (MIT/Apache-2.0), `csv = "1"` (Unlicense/MIT), `serde_yaml_ng = "0.10"` (MIT/Apache-2.0), `tree-sitter = "0.25"` (MIT) plus the 32 grammar crates listed above (mix of MIT/Apache-2.0 — every grammar's license is on the deny.toml allow-list).
+
+  - **Build-Guide deviations.** Two named deps were swapped to keep the 3-OS CI green and the 18-locale schedule on track:
+    1. **Archive peek:** Build Guide names `compress-tools` (libarchive). libarchive is a system library — Windows CI hosts don't ship it and `vcpkg` orchestration would block the phase. We use the pure-Rust trio (`zip` + `sevenz-rust2` + `tar`); the result is the same `archive.ext!entry size=N` virtual-path output the Build Guide asks for, with no system dep.
+    2. **Office:** Build Guide names `ooxmlsdk-rs` for docx + pptx. That crate is unmaintained on crates.io as of 2026-Q1 and lacks Rust-2024 support. Office Open XML is zip + XML, so we read it directly with `zip` + `quick-xml`. Net effect: smaller attack surface (the indexer reads *text* only, not styling / layout / embedded objects) and one fewer pinned dependency.
+    Two further notes: **Dockerfile** has no in-tree grammar yet because the only published `tree-sitter-dockerfile` (0.2.0) still binds to the tree-sitter 0.20 runtime, which conflicts with our 0.25 runtime via cargo's `links = "tree-sitter"` rule; Dockerfiles fall through to the plain-text extractor for now and we will revisit when the grammar is rebased. **PDF cooperation** is whole-document rather than per-page because `pdf-extract` blocks on the parse — a heavy PDF that exceeds the sandbox time budget terminates by leaking the worker thread (the sandbox's documented contract for non-cooperative extractors); subprocess isolation is the Phase-13 evaluation.
+- **[all platforms]** Phase 7 format-extractor framework (`freally-extractors`) — the trait, dispatcher, per-extraction sandbox, bounded extraction queue, content-addressed blob store, and per-extractor mode (Lazy / Eager / Disabled). Public surface matches the Build Guide's Phase-7 prompt: `pub trait Extractor: Send + Sync { fn id(&self) -> ExtractorId; fn matches(&self, path: &Path, magic: &[u8]) -> bool; fn extract(&self, path: &Path, sink: &mut TextSink) -> Result<ExtractionStats, ExtractError>; }`. `Pipeline::builder().register(...).build()` is the compile-time registration step; `Pipeline::dispatch_path(path)` reads up to `MAGIC_HEAD_BYTES = 32` from the head of the candidate file and walks registered extractors in registration order, skipping any whose effective `ExtractorMode` is `Disabled`; `Pipeline::replace_settings` lets the daemon swap settings live without restart. The `Extractor::extract` trait method takes a `&mut TextSink` (bounded byte writer with the sandbox's cancel-flag plumbed through `is_cancelled()`); writes past the per-extraction text cap return `SinkOverflow`, which the extractor folds into `ExtractError::OutputTooLarge`. `Sandbox::execute(Arc<dyn Extractor>, PathBuf)` spawns a worker thread that calls the extractor, with the calling thread acting as supervisor — `mpsc::sync_channel::recv_timeout` polls per tick (default 100 ms), enforces the 5-second time budget by flipping the cancel flag and waiting one cancel-grace window (default 250 ms) before returning `SandboxError::TimeBudget` regardless of whether the worker bailed (non-cooperative extractors leak a worker thread per breach — documented contract; Phase 13 evaluates subprocess isolation for hostile third-party formats); RSS guard reads `/proc/self/status`'s `VmRSS:` line on Linux, `GetProcessMemoryInfo` on Windows, no-op on macOS / other Unix (Phase-7 prompt: "no-op (macOS — rely on time budget)"). Cooperative extractors check `sink.is_cancelled()` between major work items and surface `ExtractError::Cancelled`; the sandbox folds that back into `SandboxError::TimeBudget` or `SandboxError::MemoryCeiling` based on the breach reason it tracked. `ExtractionQueue` is a bounded `BinaryHeap<Entry>` keyed on `(mtime_ns desc, FIFO seq)` so recently-touched files dispatch first and same-mtime entries pop in insertion order; `try_push` surfaces `QueueError::Full(capacity)` once the heap reaches capacity and `QueueError::Closed` post-`close()`, mirroring Phase 4's `EventQueue` close-safety posture (`closed` lives inside the same `Mutex` as the heap so a concurrent `close()` cannot race a waiter's "is the heap empty?" check). `BlobStore::open(<index_root>/extracted)` materializes the root; `put(content)` computes `BlobId = blake3(content)` (32 B → 64 hex chars), zstd-encodes the content (level 3 default — Phase 13 perf pass evaluates dropping to level 1 if compression dominates extraction time), and atomically writes via tmp+rename inside the same shard directory to `<root>/<first2hex>/<full-hex>`; `get(id)` mmaps the compressed frame via `memmap2::Mmap` and returns the decompressed `Vec<u8>`; `for_each(|id|)` walks the live store, skipping `.tmp-*` partials and non-hex filenames at `warn` log level. Idempotent dedup on `put` is implicit and content-addressed; `BlobStoreStats` (`puts` / `dedup_hits` / `get_hits` / `get_misses` / `bytes_written` / `bytes_decompressed`) feeds the daemon's status pane. `ExtractorMode::{Eager, Lazy, Disabled}` defaults to `Lazy` (fresh-bootstrap indexes don't burn CPU on content extraction before the user expresses interest in content search); `PipelineSettings` carries the global default plus a `HashMap<String, ExtractorMode>` of per-extractor overrides (keyed by `ExtractorId::as_str()` so the JSON file stays stable across crate-version bumps), the time / memory / sink-cap budgets, and the queue capacity. Settings round-trip through `serde_json` cleanly — Phase 12's settings dialog will own the JSON file format. New runtime deps (all permissive, deny.toml-allowlisted): `zstd = "0.13"` (BSD-3-Clause; already pulled in via Tantivy, declared direct here for the blob-store compress/decompress path), `memmap2 = "0.9"` (MIT/Apache-2.0; already pulled in via `freally-index`, declared direct here for the blob-store mmap reads), `blake3 = "1"` (CC0/Apache-2.0; same content-addressing primitive Phase 4 + Phase 6 already use), `parking_lot = "0.12"` (MIT/Apache-2.0; matches the rest of the workspace's lock primitive), `serde_json = workspace` (MIT/Apache-2.0; settings serialization), `windows-sys = "0.59"` with `Win32_System_ProcessStatus` + `Win32_System_Threading` features on Windows for `GetProcessMemoryInfo`, and `libc = "0.2"` on Linux + macOS (read-only `/proc/self/status` parse on Linux; presence-only on macOS for future RSS hooks). Smoke test `tests/smoke/phase_07_extractor_fw.rs` (17 cases) covers Pipeline dispatch (extension + magic + first-match-wins + disabled-skipped + short-file-magic-read), Sandbox (cooperative time-budget fires within budget+grace + extractor error pass-through + success path), Queue (priority + back-pressure + close-unblocks-pop-blocking), BlobStore (round-trip + dedup + layout + persistence + hex round-trip), and Settings JSON round-trip.
+- **[all platforms]** Phase 6 filename-similarity lens (`freally-similarity`) — bigram-MinHash + 16×8 LSH filename near-duplicate index. `SimilarityIndex::open(dir)` opens or creates `minhash.idx` rooted at the supplied directory; `upsert(file_id, name)` lowercases the input, strips the trailing extension, computes a `[u64; 128]` MinHash signature via a deterministic linear-hash family (SplitMix64-seeded `(a, b)` pairs, fixed `MINHASH_SEED = 0x534F5552_43455252`), and inserts the row into 16 LSH bands of 8 hashes each; `remove(file_id)` tombstones the row and strips it from every band so a stale band posting can't surface a tombstoned hit. `apply(&[JournalEvent])` consumes Create / Rename / Delete events (Modify and AttrChange are no-ops because the filename hasn't changed) and re-derives `file_id` via the same `blake3(OsStr-bytes)[..8]` truncation `freally-index` uses, so a `SimilarityHit::file_id` round-trips through `Index::store::get_many` cleanly. `candidates(query, &SimilarityOpts)` runs the LSH lookup, scores each candidate via Jaccard estimate, drops below-threshold hits (default `DEFAULT_JACCARD_THRESHOLD = 0.30`), sorts by Jaccard desc with `file_id` ties broken ascending for deterministic output, and truncates to `candidate_cap`. `flush()` atomically rewrites `minhash.idx` via tmp-rename — `[Header — 32 B] [Heap] [Rows: file_id u64 + name_off u32 + name_len u32 + signature [u64; 128]]` — magic `SRC-MNHS`, version 1; `open()` rebuilds the bands map from each live row's signature so the on-disk file format stays compact (Phase 13 perf-pass note: persist the bands map directly when SA-IS lands). The query DSL (`freally-query`) now parses `similar:<needle>` to a new `ModifierKind::Similar(String)` variant — moved out of Phase 5's `Reserved` set; an empty needle (`similar:`) errors with `ParseError::InvalidModifierValue`. The new `execute_with(idx, similarity, q, opts)` entry-point routes any query carrying a top-level `Similar` modifier through the supplied `SimilarityIndex` (LSH candidates → SQLite hydration → remaining-predicate filter → Jaccard-desc sort unless the user explicitly picked a non-default `SortSpec`); the legacy `execute(idx, q, opts)` is now a thin wrapper around `execute_with(idx, None, …)` that returns the typed `QueryError::SimilarityIndexUnavailable` when a `similar:` query reaches it, so callers see a clear message instead of empty results. `similar:` buried inside `OR` / `NOT` / nested AND surfaces `QueryError::UnsupportedSimilarPosition` — Phase 6 ships the top-level-only first cut, lifted by Phase 10's optimizer pass. New `SortField::Relevance` variant orders by Jaccard desc when a similarity query is in play and falls back to `Name` ordering for non-similarity queries (matches voidtools' Everything's "Sort by Relevance" semantics; Phase 11 UI surfaces the option). Filename signatures are computed on the *stem* (extension stripped) so a user typing `similar:report-final` matches indexed `report-final.pdf` cleanly without a 4-5-bigram penalty for the trailing `.pdf`; the full lower-cased name still lives in the heap for diagnostics. The Phase 6 spec gates: synthetic 5 000-name corpus (deterministic SplitMix64 seed) with 50 known near-duplicates (`-v2` suffix bumps + `-draft` tag appends + 1-char deletes biased away from the LSH knee at Jaccard ≈ 0.73) hits the spec's 95 % recall floor (`crates/freally-similarity/tests/recall.rs`); a smoke `tests/smoke/phase_06_similarity.rs` covers the parse/route/compose/persist/error-position invariants. New runtime deps (all permissive, deny.toml-allowlisted): `blake3 = "1"` (already pulled in via `freally-index`; declared direct here for the file_id derivation); existing `parking_lot` / `thiserror` / `tracing` / `freally-journal` chain.
+- **[all platforms]** Phase 0 scaffold: Cargo workspace; Tauri 2 + Svelte 5 UI shell at 1100×720 dark; 18 locale `.ftl` stubs; `xtask` (`i18n-lint`, `third-party-notices`, `icon-build`, `release`); 3-OS GitHub Actions CI; `deny.toml` license policy (AGPL hard-banned); baby-blue magnifying-glass icon family. First public tag will be **v0.19.84**.
+- **[Windows-only]** Phase 1 NTFS USN journal subscriber (`freally-journal-win`): `JournalSubscriber::open` queries the journal via `FSCTL_QUERY_USN_JOURNAL`, `bootstrap()` enumerates the MFT via `FSCTL_ENUM_USN_DATA`, `subscribe()` streams incremental events via `FSCTL_READ_USN_JOURNAL`, and a per-volume cursor (volume serial + journal ID + next USN) persists under `%LOCALAPPDATA%\Freally\cursors\<serial>.json` with rename-atomic save. Reason flags map to `JournalEvent::{Create, Modify, Delete, Rename, AttrChange}`. Will be balanced by the macOS FSEvents subscriber in Phase 2 and Linux inotify/fanotify subscriber in Phase 3.
+- **[Windows-only]** `freally-indexd` Service Control Manager wiring: `install` / `uninstall` / `service` subcommands register and run the `Freally-Indexd` Windows Service (auto-start, accepts SCM stop). Phase 4 fills in the per-volume subscriber + index core inside the service body.
+- **[macOS-only]** Phase 2 FSEvents journal subscriber (`freally-journal-mac`): `JournalSubscriber::open` resolves an absolute watch root, captures its `stat.st_dev` + `statfs.f_fstypename`, and loads (or first-runs) a per-watch cursor under `~/Library/Application Support/Freally/cursors/<root_hash>.json`. `bootstrap()` walks the tree and emits synthetic `JournalEvent::Create` events. `subscribe()` spawns a dedicated CFRunLoop thread that runs an `FSEventStreamCreate(latency=0.5s, FileEvents | NoDefer | UseCFTypes | WatchRoot)`, classifies each batch's flag bitmask via the FSEvents-flag → `JournalEvent` table, does **per-batch rename pairing** (matching the two halves of an `ItemRenamed` pair by inode), inline-rescans subtrees on `MustScanSubDirs`, and persists `last_event_id` for resume across restarts. Cross-batch rename pairs degrade to `Delete + Create` (a Phase-13 perf-pass note). Runtime deps `core-foundation = "0.10"`, `core-foundation-sys = "0.8"`, `fsevent-sys = "4"`, `libc = "0.2"` — all MIT/Apache-2.0, deny.toml-allowlisted.
+- **[macOS-only]** `freally-indexd` launchd-agent wiring: `install` / `uninstall` / `service` subcommands register and run a per-user launchd agent at `~/Library/LaunchAgents/io.mikeweaver.freally.indexd.plist` with `RunAtLoad=true` + `KeepAlive=true`. Phase 4 fills in the per-root subscriber + index core inside the agent body. The foreground `run --root <path>` mode prints FSEvents events to stdout for manual / smoke-test inspection.
+- **[all platforms]** `freally-journal` facade now re-exports the canonical `open` / `JournalEvent` / `JournalError` / `JournalSubscriber` from `freally-journal-mac` on `cfg(target_os = "macos")`. Linux still uses the typed-but-stubbed surface; Phase 3 will replace it.
+- **[Linux-only]** Phase 3 inotify+fanotify journal subscriber (`freally-journal-lin`): `JournalSubscriber::open` resolves an absolute watch root, captures its `stat.st_dev` + `statfs.f_type` magic-number-mapped name (ext4/btrfs/zfs/xfs/f2fs/tmpfs/...), detects `CAP_SYS_ADMIN` via `/proc/self/status`'s `CapEff:` line, and loads (or first-runs) a per-watch cursor under `~/.local/share/freally/cursors/<root_hash>.json` (XDG_DATA_HOME-aware). `bootstrap()` walks the tree via raw `getdents64(2)` (faster than `read_dir` on huge trees) with `(st_dev, st_ino)` cycle-guard and emits synthetic `JournalEvent::Create` events. `subscribe()` spawns a dedicated thread that runs the chosen backend: **inotify** (default, no privileges) — recursive `inotify_add_watch` covering create/modify/close-write/delete/move/attr, with `IN_Q_OVERFLOW` triggering a full-tree `getdents64` rescan; or **fanotify** (CAP_SYS_ADMIN required) — one `fanotify_mark(FAN_MARK_FILESYSTEM)` with `FAN_REPORT_DFID_NAME` so rename tracking survives Btrfs subvolume crossings and overlayfs that inotify cannot reproduce. Inotify mask classifier mirrors the Phase-1 USN reason precedence (`Delete > Create`, `Rename > Create`, `IN_CLOSE_WRITE` settles `Modify`). Per-batch rename pairing via inotify cookie / fanotify `OLD_DFID_NAME` info record; cross-batch splits degrade to `Delete + Create` (Phase-13 perf-pass note). fanotify `EPERM/EINVAL/ENOSYS` at init falls through to inotify so kernels < 5.17 (no `FAN_REPORT_DFID_NAME`) and `CONFIG_FANOTIFY=n` builds stay functional. Runtime dep `libc = "0.2"` only — pure raw-syscall path.
+- **[Linux-only]** `freally-indexd` systemd-user-unit wiring: `install` / `uninstall` / `service` subcommands write `~/.config/systemd/user/freally-indexd.service` with `Type=simple` + `Restart=always` + `WantedBy=default.target` (per Phase-3 spec) and run `systemctl --user enable --now`. `ExecStart` quotes the binary path so a `--binary "/path with spaces/freally-indexd"` install survives systemd's whitespace-aware unit parser. Phase 4 fills in the per-root subscriber + index core inside the service body. The foreground `run --root <path>` mode prints inotify/fanotify events to stdout for manual / smoke-test inspection.
+- **[Linux-only]** Polkit policy at `crates/freally-indexd/polkit/io.mikeweaver.freally.policy` declaring action `io.mikeweaver.freally.elevate` for the optional fanotify upgrade flow. `auth_self_keep` (≈5 min) prompts the active user for their own password; `org.freedesktop.policykit.exec.path` + `argv1` annotations pin `/usr/local/bin/freally-indexd elevate` so the action ID cannot be repurposed against a different binary. Distribution maintainers ship the file at `/usr/share/polkit-1/actions/`.
+- **[all platforms]** `freally-journal` facade now re-exports the canonical `open` / `JournalEvent` / `JournalError` / `JournalSubscriber` / `WatchCursor` from `freally-journal-lin` on `cfg(target_os = "linux")`. Other Unix targets (FreeBSD, OpenBSD, illumos) keep the typed-but-stubbed `portable_stub` surface.
+### Fixed (Phase 8 review pass)
+
+- **[all platforms]** Phase 8 plain-text extractor now detects encoding *before* the cap-overshoot truncation runs. The previous version unconditionally ran a `from_utf8`-in-a-loop trim on the truncated buffer regardless of encoding — for UTF-16 input that overshot the 5 MiB cap (≈ 2.5 M codepoints), the loop popped bytes until it found a UTF-8-shaped prefix, often leaving the buffer at an odd byte length, which `decode` then rejected as `ExtractError::Malformed`. With the encoding-aware truncation, UTF-16 trims to an even-byte boundary and UTF-8 trims to a codepoint boundary via the new `trim_to_utf8_boundary` helper. New regression `utf16_le_overshoot_truncates_at_even_boundary_not_malformed` locks the contract in.
+- **[all platforms]** Phase 8 archive-peek + structured-data extractors now sanitize line-break control characters (`\n` / `\r` / `\0`) in archive entry names, CSV field values, and JSON / YAML scalar string values via the new `extractors::util::sanitize_inline` helper. A hostile zip / 7z / tar entry could previously declare a name containing `\n` and inject phantom rows into the search blob (one entry impersonating many); the same bug existed at the CSV / JSON / YAML scalar surface where quoted fields legitimately carry embedded newlines. Sanitised output preserves search recall by escaping the bytes (`\\n` / `\\r` / `\\0`) instead of dropping them. New regressions `entry_name_with_newline_is_sanitized` (archive), `csv_field_with_newline_is_sanitized`, and `json_string_value_with_newline_is_sanitized` cover the contract on each surface.
+- **[all platforms]** Phase 8 docx + pptx parsers now check `sink.is_cancelled()` on a per-event budget rather than per-paragraph (docx) / per-slide-only (pptx). A hostile docx with one giant `<w:p>` (thousands of `<w:t>` runs concatenated) used to spend seconds inside `parse_docx_body` without yielding to the cancel flag; pptx's slide-XML parser had no inner cancel check at all. The fix counts every quick-xml event and tests the flag on a 32-event budget — the load itself is a single `Ordering::Relaxed` atomic, sub-nanosecond cost. The Phase-7 sandbox grace window stays the safety net for the worst case, but cooperative shutdown now fires on a bounded budget regardless of how the input XML is shaped.
+- **[all platforms]** Phase 8 docx extractor now suppresses heading-styled but text-empty paragraphs. The previous version emitted a bare `# \n\n` (or deeper hash level) into the search blob for empty `<w:p>` blocks that carried a `<w:pStyle w:val="HeadingN"/>`; downstream tokens like `#` are noise that count against the sink cap for no recall benefit. New regression `docx_skips_empty_heading_paragraphs` covers it.
+- **[all platforms]** Phase 8 code + plain-text extractors now trim cap-overshoot buffers to a UTF-8 codepoint boundary in O(1) via the shared `trim_to_utf8_boundary` continuation-byte backtrack, replacing the previous `while !std::str::from_utf8(&buf).is_ok() { buf.pop(); }` loop that rescanned the entire 4 / 5 MiB buffer per pop (worst-case O(N²)). Six unit tests in `extractors::util::tests` regress complete-codepoint, partial-codepoint, ASCII-boundary, all-continuations, and empty-buffer cases.
+- **[all platforms]** Phase 8 docx tables (`<w:tbl>` / `<w:tr>` / `<w:tc>`) gained explicit test coverage. `parse_docx_body` already handled the table tags but no test exercised the path; a regression there would silently strip table contents from search recall on every docx with a table. New `docx_renders_tables_as_pipe_rows` locks the `| cell | cell |` rendering in.
+- **[all platforms]** Phase 8 multi-document YAML (`---` separators) gained explicit test coverage. The `flatten_yaml` path emitted `[doc=N]`-prefixed keys but no test covered the prefix logic; new `flattens_multi_document_yaml_with_doc_prefix` ensures a future refactor cannot silently collapse document boundaries.
+
+### Fixed (Phase 5 review pass)
+
+- **[all platforms]** Phase 5 query parser now treats `!` after `)` as a prefix-NOT — `(a)!b` parses as `(a) AND !b` to match voidtools-Everything's documented behavior. Previously the byte-and-token boundary check omitted `RParen`, so the trailing `!b` collapsed into a single literal `!b` and the negation was silently dropped (Standing Rule #8 regression). New parser-test `bang_after_rparen_is_not` locks the contract in.
+- **[all platforms]** Phase 5 plan cache no longer mutates the cached plan when `match_mode.match_path` is on. The seed-clear that lets a path-search bypass the trigram pre-filter now runs at execute-time only — the `ExecPlan` stays a pure function of the query string, so two concurrent callers with the same query but different `match_path` settings can no longer poison each other's cached plan. New wiring-test `plan_cache_survives_match_path_toggle` covers it.
+- **[all platforms]** Phase 5 `parse_iso_day` rejects calendar-impossible days (Feb 30, Apr 31, non-leap Feb 29, …) up-front via a new `days_in_month` validator (Howard Hinnant's epoch-day arithmetic accepted any 1-31 day for any month, silently rolling overflow forward). Voidtools rejects these — Standing Rule #8 regression. New parser-test `invalid_calendar_days_reject` covers leap-year + month-end cases.
+- **[all platforms]** Phase 5 modifier reservation list extended to cover the voidtools-Everything muscle-memory tokens (`wfn:`, `wholefilename:`, `case:`, `count:`, `dupe:`, `nodiacritics:`) so users typing them get a typed `QueryError::UnsupportedModifier` at execute time rather than a parse error. Parses-but-fails-loudly is the Standing Rule #8 contract until each of those toggles ships its lens-owning phase. New parser-test `voidtools_reserved_toggles_parse` covers the family.
+- **[all platforms]** Phase 5 `eval_full` now lower-cases the candidate path once per row when `match_path` is on, instead of re-lower-casing for every AND / OR child node — the path-lower string is hoisted into `NameEvaluator::matches_full` and threaded through `eval_full` as `Option<&str>`. Cuts a per-AND-child `to_lowercase()` allocation that scaled with query depth.
+- **[all platforms]** Phase 5 `eval_modifier::Reserved` now `debug_assert!`s when reached — `validate_supported` is the documented gate at the top of `execute()`, and a Reserved modifier reaching evaluation means a caller built a `Query` AST by hand and bypassed the gate. The previous silent-`false` arm is dead-code in the supported call paths and now fails loudly under `cfg(debug_assertions)`.
+
+- **[all platforms]** Phase 5 filename lens (`freally-query`) — voidtools-Everything-shaped DSL parser + executor over the Phase-4 index. `parse(s)` builds a `Query` AST covering literal substring / wildcard (`*`, `?`) / regex (`regex:` prefix) terms, boolean glue (`AND` / `OR` / `NOT` / `!` prefix, implicit-AND between adjacent atoms, parenthesised groups), and modifier predicates: `size:` (with `>`, `<`, `>=`, `<=`, `=`, `b`/`kb`/`mb`/`gb`/`tb` units), `date:` (relative aliases `today` / `yesterday` / `thisweek` / `lastweek` / `thismonth` / `lastmonth` / `thisyear` / `lastyear` plus absolute `YYYY-MM-DD` with comparator), `ext:` (single or `;`-separated list, `.`-stripped), `attrib:` (Windows-letter set `R`/`H`/`S`/`A`/`D`/`C`/`E`/`T`/`O`/`L`), `path:` / `parent:` / `child:` (substring matchers; `name:` / `folder:` aliases honoured). Quick-filter aliases `audio:` / `video:` / `image:` / `document:` / `executable:` / `archive:` expand to predefined extension sets. Future-lens modifiers (`content:` / `lufs:` / `codec:` / `channels:` / `samplerate:` / `length:` / `similar:` / `duration:` / `type:` / `lang:`) parse but are gated by `validate_supported`, surfacing `QueryError::UnsupportedModifier` until their owning phase ships. `execute(idx, query, ExecOpts)` plans the query (longest literal substring becomes the trigram seed; OR breaks the seed into a live-row scan), pulls candidates from the custom name index via the new `for_each_candidate_named` / `for_each_live` borrowed-bytes APIs, runs the name-side predicates, hydrates survivors via the new `Store::get_many` batched IN-clause fetch, evaluates the full-record predicates, applies `SortSpec` (name / path / size / date / type / ext, asc/desc), and streams results through `ResultSet::first_batch` / `collect`. `MatchMode` toggles (`match_case` / `whole_word` / `match_path` / `match_diacritics`) layer at execute time; `match_path` widens the search target to the canonicalised full path by skipping the name-index pre-filter (Phase-13 perf-pass note); `match_diacritics: false` strips combining marks via NFKD before substring comparison. 16-entry LRU `PlanCache` (`PlanCache::default16`) keys on the trimmed query string and reuses the parsed AST + plan on hot re-typing. New runtime deps (all permissive, deny.toml-allowlisted): `regex = "1"` (MIT/Apache-2.0), `unicode-normalization = "0.1"` (MIT/Apache-2.0). `crates/freally-index` `name_index` swapped its trigram intersection from `BTreeSet` to a sorted-postings two-pointer merge (Build-Guide §`name_index` PERF note) and exposes `name_bytes` / `for_each_candidate_named` / `for_each_live` for the lens; `Store::get_many` chunks 250 ids per IN-clause to stay under SQLite's `SQLITE_MAX_VARIABLE_NUMBER`. `xtask gen-fixture` synthesises a deterministic SplitMix64 file-record stream for the Phase-5 perf bench (`cargo bench -p freally-query --bench filename_lens`); the bench prints per-scenario P50 / P99 with FAIL markers and only exits non-zero when `FREALLY_BENCH_GATE=1`. The `tests/voidtools_compat.rs` fixture pins 50 real Everything queries — Standing Rule #8 regression gate; `tests/wiring.rs` covers the executor end-to-end against a `tempfile`-backed index; `tests/smoke/phase_05_filename_lens.rs` is the OS-agnostic smoke that runs on every CI matrix entry.
+- **[all platforms]** Phase 4 index core (`freally-index`) — OS-agnostic façade that consumes the shared `JournalEvent` enum and orchestrates three persistent stores: a Tantivy index (`index.tantivy/`) for full-text + faceted search, a SQLite canonical `files.db` in WAL mode + `synchronous=NORMAL` for the durable `FileRecord` row of truth, and a custom mmap-backed name index (`name.idx` packed string heap + trigram inverted postings; `name.suf` lexicographic suffix array) for substring candidate generation. `Index::open(root)` materializes the directory tree, opens or creates each store, and reconciles drift by replaying the canonical store into the name index when row counts disagree. `Index::apply(&[JournalEvent])` walks Create / Modify / Delete / Rename / AttrChange events through Tantivy delete-then-add + SQLite upsert + name-index upsert/remove with `file_id = blake3(path)[0..8]` as the stable key. `Index::commit()` flushes Tantivy, atomically rewrites `name.idx` + `name.suf` via tmp-rename, checkpoints the SQLite WAL into the main DB, and persists `manifest.json` with the bumped `tantivy_generation` plus per-volume cursors recorded via `Index::record_cursor`. Bounded `EventQueue` (default capacity 10 000 — Build-Guide spec) surfaces back-pressure as `IndexError::QueueFull` rather than silently dropping events; `push_blocking` honors the same close semantics. Per-OS default index root (`%LOCALAPPDATA%\Freally\index` / `~/Library/Application Support/Freally/index` / `${XDG_DATA_HOME:-~/.local/share}/freally/index`) via `default_index_root()`. New runtime deps (all permissive, deny.toml-allowlisted): `tantivy = "0.26"` (MIT), `rusqlite = "0.37"` with `bundled` feature (MIT) — pulls `libsqlite3-sys` + bundled SQLite (public-domain, allow-listed under `Unlicense`), `memmap2 = "0.9"` (MIT/Apache-2.0), `blake3 = "1"` (CC0/Apache-2.0), `parking_lot = "0.12"` (MIT/Apache-2.0). Smoke test `tests/smoke/phase_04_index.rs` covers the directory layout, full event round-trip, kill-9 recovery from SQLite, manifest cursor persistence, queue back-pressure, and Tantivy delete-then-add dedup.
+
+### Changed
+
+- **[all platforms]** `freally-journal` facade now re-exports the canonical `JournalEvent` / `JournalError` / `JournalSubscriber` from the Windows subscriber on `cfg(windows)`, the macOS subscriber on `cfg(target_os = "macos")`, and the Linux subscriber on `cfg(target_os = "linux")`. Other Unix targets keep the typed-but-stubbed `portable_stub` surface.
+- **[macOS + Linux]** `freally-indexd` `Run` subcommand's `--root <path>` flag (preferred on macOS / Linux) now also drives the Linux journal subscriber; the existing `--volume` continues to work as a synonym on every OS.
+
+### Fixed (Phase 4 review pass)
+
+- **[all platforms]** Phase 4 `Index::apply` now degrades a `JournalEvent::Rename` whose `old_path` was never indexed (cross-batch rename pair the journal subscriber couldn't pair) into `Delete(old) + synthetic Create(new)` rather than writing a Tantivy / name-index row with no `files.db` row of truth. Mirrors the journal subscribers' published cross-batch fallback contract; new smoke `rename_of_unknown_path_degrades_to_delete_plus_create` covers it.
+- **[all platforms]** Phase 4 `EventQueue::close` no longer races against `wait_for_events` / `push_blocking` — `closed` is now stored inside the same `Mutex` as the queue itself instead of a sibling `Mutex`, so `close()`'s `notify_all` cannot land between a waiter's "is the queue empty?" check and its `Condvar::wait`. New smoke `close_unblocks_push_blocking_and_wait_for_events` and `try_push_after_close_refuses` lock the contract in.
+- **[all platforms]** Phase 4 `Manifest::load_or_default` now treats a JSON-parse error as missing-and-warn rather than a hard `IndexError::Manifest` that would block `Index::open`. The SQLite canonical store and Tantivy `meta.json` are the durable record; the manifest is a per-commit cache that `Index::commit` rewrites every cycle. New smoke `torn_manifest_does_not_block_open` covers it.
+- **[all platforms]** Phase 4 `derive_file_id` now hashes `OsStr::as_encoded_bytes()` directly instead of `to_string_lossy()` so paths that differ only in invalid-UTF-8 bytes don't collapse to the same id. Real-world impact is rare (Linux ext4 / Btrfs filenames are arbitrary byte sequences) but the fix removes a silent collision class before Phase 5 starts depending on `file_id` as a stable hash.
+
+### Fixed
+
+- **[Windows-only]** USN-journal rename pairing on Phase 1's
+  `freally-journal-win` now classifies the OLD-name half of a rename
+  (and any `FILE_DELETE` record) as **terminal**: emit immediately
+  without requiring `USN_REASON_CLOSE`. NTFS does not emit a closing
+  record for the old-name session — there's nothing more to wait for
+  at that path. Previously the classifier returned `Pending` for
+  `RENAME_OLD_NAME` records that lacked `CLOSE`, the pairing table
+  stayed empty, and the matching `RENAME_NEW_NAME | CLOSE` record
+  silently dropped via `?`. Net effect: `JournalEvent::Rename` was
+  never emitted for any in-tree rename. Diagnostic re-run on a real
+  NTFS volume confirmed the fix; the integration test
+  `realtime_create_modify_rename_delete_round_trip` now passes
+  end-to-end and is no longer `#[ignore]`'d.
+- **[Windows-only]** `JournalEvent::Delete` now consults the rename
+  pairing table by FRN before falling back to the record's
+  `build_path` result. Modern Windows uses POSIX-semantic
+  `NtSetInformationFile` deletes which internally rename the file to
+  a `$.dF{guid}` temp name before issuing `FILE_DELETE`; without this
+  lookup the consumer would see `Delete $.dF{guid}` instead of
+  `Delete <original_path>`. Defensive: the test that surfaced the
+  rename bug saw classic `DeleteFile` behavior here, but the POSIX
+  path can fire under file-locked / cross-process scenarios.
+
+### Deprecated
+
+- _(empty)_
+
+### Removed
+
+- _(empty)_
+
+### Security
+
+- _(empty)_
 
 ---
 

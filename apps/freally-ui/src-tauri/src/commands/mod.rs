@@ -14,6 +14,7 @@
 
 pub mod app_env;
 pub mod bookmarks;
+pub mod command_approvals;
 pub mod content_view;
 pub mod custom_extractors;
 pub mod excludes;
@@ -32,4 +33,5 @@ pub mod regex_test;
 pub mod rename;
 pub mod settings;
 pub mod shell_verbs;
+pub mod trash_undo;
 pub mod volumes;

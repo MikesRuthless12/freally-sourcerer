@@ -5,34 +5,32 @@
 //! - `run_as_service()` — invoked by SCM via the registered ImagePath
 //!   (`<exe> service`); spins up the dispatcher.
 //!
-//! The service body is a placeholder loop in Phase 1: it transitions to
-//! `RUNNING`, sleeps until SCM signals stop, and transitions to `STOPPED`.
-//! Phase 4 will wire actual per-volume subscribers + the index core here.
+//! - `status()`  — asks the SCM what it knows about the registration.
+//!
+//! The daemon body itself lives in `freally_indexd::installed`, shared
+//! with the launchd agent and the systemd user unit. Only the start /
+//! stop conventions are Windows-specific, and those are the two closures
+//! this module hands it.
 
 #![cfg(windows)]
 
 use std::ffi::{OsStr, c_void};
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result};
-use freally_index::service_index_root;
-use freally_rpc::{Server, ServerConfig, SocketPath, service_pipe_name, service_sddl};
-
-use freally_indexd::service;
-use freally_indexd::{DaemonOptions, DaemonState, IndexdService};
 use windows::Win32::Foundation::{ERROR_SERVICE_DOES_NOT_EXIST, NO_ERROR};
 use windows::Win32::System::Services::{
     ChangeServiceConfig2W, CloseServiceHandle, CreateServiceW, DeleteService, ENUM_SERVICE_TYPE,
-    OpenSCManagerW, OpenServiceW, RegisterServiceCtrlHandlerExW, SC_HANDLE, SC_MANAGER_ALL_ACCESS,
-    SERVICE_ACCEPT_SHUTDOWN, SERVICE_ACCEPT_STOP, SERVICE_ALL_ACCESS, SERVICE_AUTO_START,
-    SERVICE_CONFIG, SERVICE_CONTROL_INTERROGATE, SERVICE_CONTROL_SHUTDOWN, SERVICE_CONTROL_STOP,
-    SERVICE_DESCRIPTIONW, SERVICE_ERROR_NORMAL, SERVICE_RUNNING, SERVICE_START_PENDING,
-    SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE, SERVICE_STATUS_HANDLE, SERVICE_STOP_PENDING,
-    SERVICE_STOPPED, SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS, SetServiceStatus,
-    StartServiceCtrlDispatcherW,
+    OpenSCManagerW, OpenServiceW, QueryServiceStatus, RegisterServiceCtrlHandlerExW, SC_HANDLE,
+    SC_MANAGER_ALL_ACCESS, SC_MANAGER_CONNECT, SERVICE_ACCEPT_SHUTDOWN, SERVICE_ACCEPT_STOP,
+    SERVICE_ALL_ACCESS, SERVICE_AUTO_START, SERVICE_CONFIG, SERVICE_CONTROL_INTERROGATE,
+    SERVICE_CONTROL_SHUTDOWN, SERVICE_CONTROL_STOP, SERVICE_DESCRIPTIONW, SERVICE_ERROR_NORMAL,
+    SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_START_PENDING, SERVICE_STATUS,
+    SERVICE_STATUS_CURRENT_STATE, SERVICE_STATUS_HANDLE, SERVICE_STOP_PENDING, SERVICE_STOPPED,
+    SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS, SetServiceStatus, StartServiceCtrlDispatcherW,
 };
 use windows::core::PCWSTR;
 
@@ -163,7 +161,7 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut windows::core::PW
 
     // Run the daemon body on a fresh tokio runtime. The runtime is
     // owned by this thread for the service's lifetime; STOP signals
-    // from SCM flip `STOP_REQUESTED`, which the daemon polls.
+    // from SCM flip `STOP_REQUESTED`, which `scm_stop` below polls.
     let runtime_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let rt = match tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -176,7 +174,16 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut windows::core::PW
             }
         };
         rt.block_on(async {
-            if let Err(e) = run_service_daemon().await {
+            let ready = || {
+                // SCM expects this transition promptly after start; the
+                // shared body calls it once the RPC endpoint is bound.
+                set_state(
+                    SERVICE_RUNNING,
+                    SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN,
+                    0,
+                );
+            };
+            if let Err(e) = freally_indexd::installed::run(ready, scm_stop()).await {
                 tracing::error!(error = %e, "service: daemon body returned error");
             }
         });
@@ -224,84 +231,51 @@ fn init_service_logging() {
     );
 }
 
-async fn run_service_daemon() -> Result<()> {
-    // Service writes to %PROGRAMDATA%\Freally\index (system-wide) so
-    // the per-user UI can still read `index.state` stats.
-    let index_root = service_index_root().context("service_index_root")?;
-    tracing::info!(index_root = %index_root.display(), "service: opening daemon state");
-
-    let opts = DaemonOptions {
-        index_root: Some(index_root),
-        // One daemon, one pipe, every user on the machine — so the
-        // per-user undo journal is refused rather than shared.
-        shared_multi_user: true,
-        ..Default::default()
-    };
-    let state: Arc<DaemonState> = DaemonState::open(opts)?;
-
-    // Well-known pipe + permissive SDDL so unelevated user processes
-    // can connect to the elevated service.
-    let socket = SocketPath::Pipe(service_pipe_name());
-    let sddl = service_sddl();
-    tracing::info!(pipe = %service_pipe_name(), "service: binding RPC pipe");
-
-    let service_impl = Arc::new(IndexdService::new(state.clone()));
-    let server = Server::new(ServerConfig {
-        socket,
-        sddl_override: Some(sddl),
-    });
-    let server_handle = server.spawn(service_impl);
-
-    // SCM expected us to transition RUNNING by now.
-    set_state(
-        SERVICE_RUNNING,
-        SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN,
-        0,
-    );
-
-    // Kick off an initial scan for every configured folder so the
-    // service does useful work on its own — the per-user UI may not
-    // launch until much later (or ever, if Freally is being used
-    // exclusively via its CLI / HTTP endpoint).
-    {
-        // Catalogs first, and watchers second, exactly as `spawn_at`
-        // does. This path does not go through `spawn_at`, so without
-        // these the service would bootstrap a full-volume scan against
-        // an empty volume map — stamping every row with no volume,
-        // permanently, until a rescan — and would never start live
-        // journaling at all.
-        state.reconcile_catalogs().await;
-        state.reconcile_watchers().await;
-
-        let folders = state.folders.read().await.clone();
-        if folders.is_empty() {
-            tracing::info!("service: no folders configured yet; waiting for IPC");
-        } else {
-            tracing::info!(count = folders.len(), "service: starting initial scans");
-            for f in folders {
-                let path = std::path::PathBuf::from(&f.path);
-                service::scan(&state, &path);
-            }
-        }
-    }
-
-    // Wait for SCM stop or the server task to exit.
-    loop {
-        if STOP_REQUESTED.load(Ordering::SeqCst) {
-            tracing::info!("service: stop requested by SCM");
-            break;
-        }
+/// Resolves when SCM asks the service to stop.
+///
+/// SCM delivers `SERVICE_CONTROL_STOP` on its own thread, into a handler
+/// that may not block, so it can only flip an atomic. Polling that atomic
+/// is what turns it back into something the shared daemon body can await
+/// alongside its accept loop.
+async fn scm_stop() {
+    while !STOP_REQUESTED.load(Ordering::SeqCst) {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        if server_handle.is_finished() {
-            tracing::warn!("service: RPC accept loop exited unexpectedly");
-            break;
-        }
     }
+    tracing::info!("service: stop requested by SCM");
+}
 
-    server_handle.abort();
-    state.watchers.shutdown();
-    let _ = state.persist().await;
-    tracing::info!("service: clean shutdown");
+/// What the SCM knows about the registration, if anything.
+///
+/// Registered and *running* are different facts: a service can be
+/// installed, set to auto-start, and stopped because its last start
+/// failed. Printing only "installed" would hide exactly that case.
+pub fn status() -> Result<()> {
+    let scm = unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT) }
+        .context("OpenSCManagerW")?;
+    let _scm_guard = ScHandleGuard(scm);
+    let name_w = wide_z(SERVICE_NAME);
+    let svc = unsafe { OpenServiceW(scm, PCWSTR(name_w.as_ptr()), SERVICE_QUERY_STATUS) };
+    let svc = match svc {
+        Ok(h) => h,
+        Err(e) if e.code() == ERROR_SERVICE_DOES_NOT_EXIST.to_hresult() => {
+            println!("freally-indexd: not installed (no `{SERVICE_NAME}` service).");
+            return Ok(());
+        }
+        Err(e) => return Err(e).context("OpenServiceW"),
+    };
+    let _svc_guard = ScHandleGuard(svc);
+    println!("freally-indexd: installed as service `{SERVICE_NAME}`.");
+
+    let mut status = SERVICE_STATUS::default();
+    unsafe { QueryServiceStatus(svc, &mut status) }.context("QueryServiceStatus")?;
+    let state = match status.dwCurrentState {
+        SERVICE_RUNNING => "running",
+        SERVICE_STOPPED => "stopped",
+        SERVICE_START_PENDING => "start pending",
+        SERVICE_STOP_PENDING => "stop pending",
+        _ => "other",
+    };
+    println!("  SCM reports: {state}");
     Ok(())
 }
 

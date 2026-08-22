@@ -3,7 +3,7 @@
 //
 // Mirrors the single matrix `ci` job (windows / macOS / ubuntu):
 //   Rust: cargo fmt --check · clippy -D warnings · nextest · doctests ·
-//         src-tauri fmt+clippy · xtask i18n-lint (+ cargo-deny if
+//         src-tauri fmt+clippy+test · xtask i18n-lint (+ cargo-deny if
 //         installed — CI runs it on Linux only)
 //   UI (apps/freally-ui, pnpm): svelte-check · vitest unit · tauri build
 //         --debug --no-bundle
@@ -98,12 +98,31 @@ if (!uiOnly && hasRust) {
   // of the two above ever reaches it. CI grew its own step for this after
   // three clippy errors sat there unnoticed; local CI has to match or it
   // stops being a pre-push gate.
+  //
+  // These two run for THIS platform only, which is the gate's remaining
+  // blind spot: this crate is full of `#[cfg(windows)]` / `#[cfg(unix)]`
+  // branches, and it builds under `-D warnings`. A variable assigned
+  // unconditionally but read only inside a `cfg(windows)` block compiles
+  // clean here and fails both other legs — which is exactly what happened
+  // on 2026-08-22. To check the Linux side before pushing:
+  //
+  //   docker build -f scripts/docker/bench-linux.Dockerfile \
+  //     -t freally-bench-linux scripts/docker
+  //   docker run --rm -v "$PWD:/src" -v freally-linux-target:/target \
+  //     freally-bench-linux bash -lc \
+  //     'cd /src/apps/freally-ui/src-tauri && cargo clippy --all-targets --locked -- -D warnings'
+  //
+  // macOS has no equivalent here; that leg is still push-and-see.
   rustLane.push(["rust: fmt (src-tauri)", "cargo fmt -- --check", tauriDir]);
   rustLane.push([
     "rust: clippy (src-tauri)",
     "cargo clippy --all-targets --locked -- -D warnings",
     tauriDir
   ]);
+  // Its tests too. Same exclusion, same consequence one step over: the
+  // menu-bar / status-bar parity suites and the Phase-13 packaging +
+  // updater gates live here, and `--workspace` has never run them.
+  rustLane.push(["rust: test (src-tauri)", "cargo test --locked", tauriDir]);
   rustLane.push([hasNextest ? "rust: nextest" : "rust: test", testCmd, repoRoot]);
   // nextest does not run doctests, so CI runs them separately (Linux
   // only, since they are not platform-specific). Mirrored here or a

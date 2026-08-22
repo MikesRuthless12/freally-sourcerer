@@ -51,7 +51,7 @@
   {onClose}
   label={t("settings-title")}
   dismissOnBackdrop={false}
-  style="width: min(960px, 95vw); height: min(720px, 90vh); min-width: 800px; min-height: 620px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);"
+  style="width: min(960px, 95vw); height: min(720px, 90vh); min-width: 800px; min-height: 620px; display: flex; flex-direction: column; overflow: hidden;"
 >
   <header>
     <h2>{t("settings-title")}</h2>

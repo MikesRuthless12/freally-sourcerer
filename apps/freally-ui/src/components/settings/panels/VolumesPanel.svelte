@@ -37,21 +37,18 @@
   type VolumesConfigPatch = {
     auto_include_fixed?: boolean;
     auto_include_removable?: boolean;
-    auto_remove_offline?: boolean;
   };
   let volsCfg = $derived(volsConfigFromStore());
   function volsConfigFromStore(): {
     auto_include_fixed: boolean;
     auto_include_removable: boolean;
-    auto_remove_offline: boolean;
   } {
     const extras =
       (settingsStore.state as unknown as { extras?: Record<string, unknown> }).extras ?? {};
     const vc = (extras.volumes_config as VolumesConfigPatch | undefined) ?? {};
     return {
       auto_include_fixed: vc.auto_include_fixed ?? true,
-      auto_include_removable: vc.auto_include_removable ?? false,
-      auto_remove_offline: vc.auto_remove_offline ?? true
+      auto_include_removable: vc.auto_include_removable ?? false
     };
   }
 
@@ -133,8 +130,6 @@
     checked={volsCfg.auto_include_fixed} onChange={(v) => patchTopLevel({ auto_include_fixed: v })} />
   <Checkbox id="vols-auto-removable" label={t("settings-vol-auto-removable")}
     checked={volsCfg.auto_include_removable} onChange={(v) => patchTopLevel({ auto_include_removable: v })} />
-  <Checkbox id="vols-auto-remove-offline" label={t("settings-vol-auto-remove-offline")}
-    checked={volsCfg.auto_remove_offline} onChange={(v) => patchTopLevel({ auto_remove_offline: v })} />
 </Section>
 
 <div class="split">
@@ -221,7 +216,10 @@
   .vlist .size { color: var(--text-secondary); font-size: 11px; }
   .status { font-size: 16px; line-height: 0; }
   .status-indexed, .status-indexing { color: var(--accent-cyan); }
-  .status-paused { color: #888; }
+  /* Was a hard-coded #888. Every sibling status here reads a token,
+     and mid-grey on the light theme’s pale canvas is the one that
+     disappears — which is the state a user most needs to see. */
+  .status-paused { color: var(--text-secondary); }
   .status-offline, .status-error { color: var(--accent-orange); }
   .remove { margin-top: 8px; padding: 4px 10px; background: var(--bg-canvas); border: 1px solid var(--border); color: var(--text-primary); border-radius: 3px; cursor: pointer; }
   .vdetail { flex: 1; }

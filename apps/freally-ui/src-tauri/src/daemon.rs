@@ -75,11 +75,12 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    /// Boot the daemon connection. On Windows, prefers the installed
-    /// elevated service (well-known pipe `\\.\pipe\freally-indexd`);
-    /// falls back to spawning an unelevated child process if the
-    /// service isn't running. This is the lever that gives users
-    /// Everything-grade speed once they've installed the service.
+    /// Boot the daemon connection. Prefers the installed daemon at
+    /// [`freally_rpc::service_socket_path`] — the Windows service, the
+    /// launchd agent, or the systemd user unit — and falls back to
+    /// spawning a child process when nothing answers there. This is the
+    /// lever that gives users Everything-grade speed once they have
+    /// installed the daemon.
     pub fn boot(app: &AppHandle) -> anyhow::Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -88,16 +89,21 @@ impl Daemon {
         let runtime = Arc::new(runtime);
         let app_for_emit = app.clone();
 
-        // 1) Service-pipe fast path. If the elevated service is
+        // 1) Installed-daemon fast path. If the service / agent / unit is
         //    running, connect to it and skip spawning a child entirely.
         //
-        //    Not in portable mode: the service owns the *installed*
-        //    index under %PROGRAMDATA%, so adopting it would silently
-        //    give a USB-stick launch the host machine's index and write
-        //    the stick's searches into it.
-        #[cfg(windows)]
-        if !freally_rpc::portable::is_active() {
-            let service_socket = SocketPath::Pipe(freally_rpc::service_pipe_name());
+        //    Not in portable mode: the installed daemon owns the
+        //    *installed* index, so adopting it would silently give a
+        //    USB-stick launch the host machine's index and write the
+        //    stick's searches into it.
+        //
+        //    Not when `FREALLY_RPC_SOCKET` names an endpoint either. A
+        //    smoke test or dev session that sets it is saying which
+        //    daemon it means, and adopting a machine's installed one
+        //    instead would run the test against the wrong index — and
+        //    pass, which is the worst version of that.
+        if !freally_rpc::portable::is_active() && freally_rpc::socket_override().is_none() {
+            let service_socket = freally_rpc::service_socket_path();
             let probe = runtime.block_on(async {
                 tokio::time::timeout(
                     std::time::Duration::from_millis(500),
@@ -106,7 +112,7 @@ impl Daemon {
                 .await
             });
             if let Ok(Ok(client)) = probe {
-                tracing::info!(pipe = %freally_rpc::service_pipe_name(), "connected to freally-indexd service");
+                tracing::info!(socket = ?service_socket, "connected to the installed freally-indexd");
                 let mut stream = client.notifications();
                 let app_for_emit2 = app_for_emit.clone();
                 let notif_join = runtime.spawn(async move {
@@ -126,7 +132,7 @@ impl Daemon {
                     socket: service_socket,
                 });
             }
-            tracing::info!("freally-indexd service not detected; falling back to child process");
+            tracing::info!("no installed freally-indexd detected; falling back to child process");
         }
 
         // 2) Per-user child-spawn fallback (unelevated; uses walkdir).
@@ -255,11 +261,8 @@ impl Drop for Daemon {
 /// Determine where to listen — per-OS default unless `FREALLY_RPC_SOCKET`
 /// is set (smoke tests / dev sessions use the env override).
 fn pick_socket(app: &AppHandle) -> SocketPath {
-    if let Ok(path) = std::env::var("FREALLY_RPC_SOCKET") {
-        if path.starts_with(r"\\.\pipe\") || path.starts_with(r"\\?\pipe\") {
-            return SocketPath::Pipe(path);
-        }
-        return SocketPath::Path(PathBuf::from(path));
+    if let Some(pinned) = freally_rpc::socket_override() {
+        return pinned;
     }
     let _ = app;
     // SRC-M17 — a portable instance binds its own endpoint so it never
